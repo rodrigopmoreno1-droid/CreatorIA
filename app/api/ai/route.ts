@@ -8,6 +8,7 @@ import {
   generateHooks,
   generateIdeas,
   generateScript,
+  generateScriptVariants,
   generateStories,
   generateStoryboard,
   rewriteHumanTone,
@@ -37,6 +38,8 @@ export async function POST(request: Request) {
       return NextResponse.json({ content: await generateHooks((body.payload ?? {}) as never) });
     case 'generateScript':
       return NextResponse.json({ content: await generateScript((body.payload ?? {}) as never) });
+    case 'generateScriptVariants':
+      return NextResponse.json({ content: await generateScriptVariants((body.payload ?? {}) as never) });
     case 'generateStoryboard':
       return NextResponse.json({ content: await generateStoryboard((body.payload ?? {}) as never) });
     case 'generateStories':

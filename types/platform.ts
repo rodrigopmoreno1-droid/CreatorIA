@@ -1,0 +1,100 @@
+export type PlatformModuleKey =
+  | 'dashboard'
+  | 'scripts'
+  | 'recordings'
+  | 'posts'
+  | 'creators'
+  | 'metrics'
+  | 'products'
+  | 'ai'
+  | 'competitors';
+
+export type ProductItem = {
+  id: string;
+  name: string;
+  benefits: string;
+  audience: string;
+  price: string;
+  restrictions: string;
+  createdAt: string;
+};
+
+export type ScriptStatus = 'draft' | 'approved';
+
+export type ScriptItem = {
+  id: string;
+  title: string;
+  productId?: string;
+  productName?: string;
+  prompt: string;
+  referenceContext: string;
+  hook: string;
+  spoken: string;
+  takes: string[];
+  cta: string;
+  caption: string;
+  status: ScriptStatus;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type RecordingColumnKey = 'approved' | 'recording' | 'drive' | 'edited';
+
+export type RecordingCard = {
+  id: string;
+  scriptId: string;
+  title: string;
+  hook: string;
+  spoken: string;
+  takes: string[];
+  cta: string;
+  caption: string;
+  column: RecordingColumnKey;
+  order: number;
+  notes: string;
+  driveUrl?: string;
+  updatedAt: string;
+};
+
+export type CreatorItem = {
+  id: string;
+  name: string;
+  handle: string;
+  niche: string;
+  status: string;
+  notes: string;
+};
+
+export type PostItem = {
+  id: string;
+  title: string;
+  channel: 'Feed' | 'Reels' | 'Stories';
+  status: 'draft' | 'scheduled' | 'published';
+  scheduledFor: string;
+};
+
+export type CompetitorItem = {
+  id: string;
+  name: string;
+  handle: string;
+  note: string;
+};
+
+export type AiMessage = {
+  id: string;
+  role: 'user' | 'assistant';
+  content: string;
+  createdAt: string;
+};
+
+export type WorkspacePlatformState = {
+  companyName: string;
+  companyDescription: string;
+  products: ProductItem[];
+  scripts: ScriptItem[];
+  recordings: RecordingCard[];
+  posts: PostItem[];
+  creators: CreatorItem[];
+  competitors: CompetitorItem[];
+  aiMessages: AiMessage[];
+};

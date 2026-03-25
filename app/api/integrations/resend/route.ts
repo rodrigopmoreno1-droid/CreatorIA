@@ -6,9 +6,9 @@ export async function GET() {
     ok: true,
     provider: 'resend',
     data: await sendNotificationEmail({
-      to: 'demo@contentos.local',
-      subject: 'ContentOS integration check',
-      html: '<p>Resend is configured.</p>'
+      to: process.env.RESEND_TEST_EMAIL ?? 'rodrigomoreno.pessoal@gmail.com',
+      subject: 'Creator AI integration check',
+      html: '<p>Resend is configured for Creator AI.</p>'
     })
   });
 }

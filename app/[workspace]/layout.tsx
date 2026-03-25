@@ -2,8 +2,7 @@ import type { ReactNode } from 'react';
 import { redirect } from 'next/navigation';
 
 import { AppShell } from '@/components/layout/app-shell';
-import { getCurrentUser } from '@/lib/auth';
-import { getWorkspaceSnapshot } from '@/lib/demo-data';
+import { getWorkspaceContextForSlug } from '@/lib/workspace-server';
 
 export default async function WorkspaceLayout({
   children,
@@ -13,17 +12,15 @@ export default async function WorkspaceLayout({
   params: Promise<{ workspace: string }>;
 }) {
   const { workspace } = await params;
-  const auth = await getCurrentUser();
+  const context = await getWorkspaceContextForSlug(workspace);
 
-  if (!auth.user && !auth.isDemo && workspace !== 'demo') {
+  if (!context) {
     redirect('/login');
   }
 
-  const snapshot = getWorkspaceSnapshot(workspace);
-
   return (
-    <AppShell workspace={snapshot.slug}>
-      <div className="mx-auto max-w-[1440px]">{children}</div>
+    <AppShell workspace={context.workspaceSlug} companyName={context.companyName}>
+      {children}
     </AppShell>
   );
 }

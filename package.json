@@ -1,5 +1,5 @@
 {
-  "name": "contentos",
+  "name": "creator-ai",
   "version": "0.1.0",
   "private": true,
   "type": "module",
@@ -7,9 +7,8 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "typecheck": "mkdir -p .next/types && next typegen && tsc --noEmit",
-    "lint": "next lint",
-    "seed:demo": "tsx scripts/seed-demo.ts"
+    "typecheck": "rm -rf .next && mkdir -p .next/types && next typegen && tsc --noEmit",
+    "lint": "next lint"
   },
   "dependencies": {
     "@dnd-kit/core": "^6.3.1",

@@ -11,6 +11,13 @@ type ScriptInput = {
   tone?: string;
 };
 
+type ScriptVariantInput = {
+  prompt: string;
+  productName?: string;
+  productContext?: string;
+  referenceContext?: string;
+};
+
 type StoryInput = {
   theme: string;
   count?: number;
@@ -220,6 +227,49 @@ export async function generateScript(input: ScriptInput) {
     `Tema: ${input.topic}`,
     input.goal ? `Objetivo: ${input.goal}` : null,
     input.tone ? `Tom: ${input.tone}` : null
+  ]
+    .filter(Boolean)
+    .join('\n');
+
+  return parseStructuredResponse(await callProvider(prompt), fallback);
+}
+
+export async function generateScriptVariants(input: ScriptVariantInput) {
+  const fallback = Array.from({ length: 3 }, (_, index) => ({
+    title: `Roteiro ${index + 1} - ${input.productName ?? 'Creator AI'}`,
+    hook:
+      index === 0
+        ? 'Comece pela dor principal do cliente e entregue a virada logo nos primeiros segundos.'
+        : index === 1
+          ? 'Abra com uma situacao real, puxe curiosidade e entregue um passo pratico no meio.'
+          : 'Use uma provocacao curta, um exemplo atual e termine com CTA objetivo.',
+    spoken:
+      index === 0
+        ? `Hoje eu quero te mostrar um jeito direto de transformar ${input.prompt.toLowerCase()} em conteudo que gera conversa e desejo.`
+        : index === 1
+          ? `Se voce sente que ${input.prompt.toLowerCase()} ainda fica generico, esse roteiro resolve isso com contexto, prova e CTA.`
+          : `Tem um jeito mais inteligente de abordar ${input.prompt.toLowerCase()} sem parecer repetitivo, e e isso que eu vou te mostrar agora.`,
+    takes: [
+      'Abertura com enquadramento rapido da dor',
+      'Contexto visual ou noticia recente',
+      'Explicacao objetiva em linguagem humana',
+      'Prova, exemplo ou quebra de objecao',
+      'CTA para comentario, direct ou clique'
+    ],
+    cta: 'Comente "quero" para eu te enviar a proxima ideia dessa serie.',
+    caption: `Legenda enxuta sobre ${input.prompt}, conectando contexto atual, beneficio pratico e CTA.`
+  }));
+
+  const prompt = [
+    'Voce cria roteiros de Instagram e videos curtos em portugues do Brasil.',
+    'Responda somente JSON valido.',
+    'Retorne exatamente um array com 3 objetos.',
+    'Formato esperado: [{"title":"","hook":"","spoken":"","takes":["","",""],"cta":"","caption":""}]',
+    `Pedido principal: ${input.prompt}`,
+    input.productName ? `Produto principal: ${input.productName}` : null,
+    input.productContext ? `Contexto do produto: ${input.productContext}` : null,
+    input.referenceContext ? `Contexto e referencias para aproveitar: ${input.referenceContext}` : null,
+    'Cada roteiro deve ter um angulo diferente, parecer pronto para gravacao e evitar frases genericas.'
   ]
     .filter(Boolean)
     .join('\n');

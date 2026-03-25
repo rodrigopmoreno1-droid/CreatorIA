@@ -15,11 +15,11 @@ const siteUrl = process.env.NEXT_PUBLIC_SITE_URL ?? 'http://localhost:3000';
 export const metadata: Metadata = {
   metadataBase: new URL(siteUrl),
   title: {
-    default: 'ContentOS',
-    template: '%s | ContentOS'
+    default: 'Creator AI',
+    template: '%s | Creator AI'
   },
-  description: 'Sistema operacional de produção de conteúdo com IA, multiempresa e PWA.',
-  applicationName: 'ContentOS',
+  description: 'Creator AI, operacao de conteudo para empresas que precisam produzir com clareza e performance.',
+  applicationName: 'Creator AI',
   icons: {
     icon: '/icon',
     apple: '/apple-icon'
