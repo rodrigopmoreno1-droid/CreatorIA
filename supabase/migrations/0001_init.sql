@@ -1,58 +1,5 @@
 create extension if not exists "pgcrypto";
 
-create or replace function public.touch_updated_at()
-returns trigger
-language plpgsql
-as $$
-begin
-  new.updated_at = now();
-  return new;
-end;
-$$;
-
-create or replace function public.is_super_admin()
-returns boolean
-language sql
-stable
-as $$
-  select exists (
-    select 1
-    from public.memberships m
-    where m.user_id = auth.uid()
-      and m.role_id = 'super_admin'
-      and m.status = 'active'
-  );
-$$;
-
-create or replace function public.is_company_member(target_company_id uuid)
-returns boolean
-language sql
-stable
-as $$
-  select exists (
-    select 1
-    from public.memberships m
-    where m.company_id = target_company_id
-      and m.user_id = auth.uid()
-      and m.status = 'active'
-  );
-$$;
-
-create or replace function public.is_company_admin(target_company_id uuid)
-returns boolean
-language sql
-stable
-as $$
-  select exists (
-    select 1
-    from public.memberships m
-    where m.company_id = target_company_id
-      and m.user_id = auth.uid()
-      and m.status = 'active'
-      and m.role_id in ('super_admin', 'admin')
-  );
-$$;
-
 create table if not exists public.roles (
   id text primary key,
   label text not null,
@@ -364,6 +311,59 @@ create table if not exists public.usage_logs (
   metadata jsonb not null default '{}'::jsonb,
   created_at timestamptz not null default now()
 );
+
+create or replace function public.touch_updated_at()
+returns trigger
+language plpgsql
+as $$
+begin
+  new.updated_at = now();
+  return new;
+end;
+$$;
+
+create or replace function public.is_super_admin()
+returns boolean
+language sql
+stable
+as $$
+  select exists (
+    select 1
+    from public.memberships m
+    where m.user_id = auth.uid()
+      and m.role_id = 'super_admin'
+      and m.status = 'active'
+  );
+$$;
+
+create or replace function public.is_company_member(target_company_id uuid)
+returns boolean
+language sql
+stable
+as $$
+  select exists (
+    select 1
+    from public.memberships m
+    where m.company_id = target_company_id
+      and m.user_id = auth.uid()
+      and m.status = 'active'
+  );
+$$;
+
+create or replace function public.is_company_admin(target_company_id uuid)
+returns boolean
+language sql
+stable
+as $$
+  select exists (
+    select 1
+    from public.memberships m
+    where m.company_id = target_company_id
+      and m.user_id = auth.uid()
+      and m.status = 'active'
+      and m.role_id in ('super_admin', 'admin')
+  );
+$$;
 
 create index if not exists memberships_company_idx on public.memberships (company_id);
 create index if not exists memberships_user_idx on public.memberships (user_id);

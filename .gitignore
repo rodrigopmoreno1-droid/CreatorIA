@@ -12,3 +12,4 @@ vercel.json
 public/sw.js
 .vercel
 tsconfig.tsbuildinfo
+supabase/.temp/
