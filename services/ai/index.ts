@@ -58,6 +58,157 @@ type ChatInput = {
 
 type Provider = 'anthropic' | 'gemini';
 
+type AnthropicCitation = {
+  type?: string;
+  title?: string;
+  url?: string;
+  cited_text?: string;
+  encrypted_index?: string;
+};
+
+type AnthropicTextBlock = {
+  type?: string;
+  text?: string;
+  citations?: AnthropicCitation[];
+  content?: unknown;
+};
+
+type AnthropicMessagesPayload = {
+  content?: AnthropicTextBlock[];
+  error?: {
+    message?: string;
+  };
+};
+
+type WebSource = {
+  title: string;
+  url: string;
+  citedText?: string;
+  pageAge?: string;
+};
+
+function getCurrentDateLabel() {
+  return new Intl.DateTimeFormat('sv-SE', { timeZone: 'America/Recife' }).format(new Date());
+}
+
+function supportsAnthropicWebSearch(model: string) {
+  const normalized = model.toLowerCase();
+  return normalized.includes('4-6') || normalized.includes('4.6');
+}
+
+function resolveAnthropicWebSearchToolType() {
+  const model = process.env.ANTHROPIC_MODEL ?? 'claude-sonnet-4-20250514';
+  return supportsAnthropicWebSearch(model) ? 'web_search_20260209' : 'web_search_20250305';
+}
+
+function formatWebSources(sources: WebSource[]) {
+  if (!sources.length) {
+    return '';
+  }
+
+  return [
+    'Fontes atuais:',
+    ...sources.map((source, index) => {
+      const age = source.pageAge ? ` (${source.pageAge})` : '';
+      return `${index + 1}. ${source.title} — ${source.url}${age}`;
+    })
+  ].join('\n');
+}
+
+function extractAnthropicResponse(payload: AnthropicMessagesPayload) {
+  const sources = new Map<string, WebSource>();
+  const textParts: string[] = [];
+
+  for (const block of payload.content ?? []) {
+    if (block.type === 'text' && typeof block.text === 'string') {
+      textParts.push(block.text);
+
+      for (const citation of block.citations ?? []) {
+        if (!citation.url || !citation.title) {
+          continue;
+        }
+
+        if (!sources.has(citation.url)) {
+          sources.set(citation.url, {
+            title: citation.title,
+            url: citation.url,
+            citedText: citation.cited_text
+          });
+        }
+      }
+    }
+
+    if (block.type === 'web_search_tool_result' && Array.isArray(block.content)) {
+      for (const item of block.content as Array<{ title?: string; url?: string; page_age?: string }>) {
+        if (!item?.url || !item.title) {
+          continue;
+        }
+
+        if (!sources.has(item.url)) {
+          sources.set(item.url, {
+            title: item.title,
+            url: item.url,
+            pageAge: item.page_age
+          });
+        }
+      }
+    }
+  }
+
+  return {
+    text: textParts.join('\n').trim(),
+    sources: [...sources.values()]
+  };
+}
+
+async function callAnthropicMessages(
+  prompt: string,
+  options?: {
+    webSearch?: boolean;
+    temperature?: number;
+    maxTokens?: number;
+  }
+) {
+  const model = process.env.ANTHROPIC_MODEL ?? 'claude-sonnet-4-20250514';
+  const tools = options?.webSearch
+    ? [
+        {
+          type: resolveAnthropicWebSearchToolType(),
+          name: 'web_search'
+        }
+      ]
+    : undefined;
+
+  const response = await fetch('https://api.anthropic.com/v1/messages', {
+    method: 'POST',
+    headers: {
+      'content-type': 'application/json',
+      'x-api-key': process.env.ANTHROPIC_API_KEY ?? '',
+      'anthropic-version': '2023-06-01'
+    },
+    body: JSON.stringify({
+      model,
+      max_tokens: options?.maxTokens ?? 1400,
+      temperature: options?.temperature ?? 0.5,
+      tools,
+      messages: [
+        {
+          role: 'user',
+          content: prompt
+        }
+      ]
+    })
+  });
+
+  const payload = (await response.json().catch(() => null)) as AnthropicMessagesPayload | null;
+
+  if (!response.ok) {
+    throw new Error(payload?.error?.message ?? `Anthropic error ${response.status}`);
+  }
+
+  return payload ?? {};
+}
+
 function getProviderCandidates(): Provider[] {
   const providers: Provider[] = [];
 
@@ -73,32 +224,29 @@ function getProviderCandidates(): Provider[] {
 }
 
 async function callAnthropic(prompt: string) {
-  const response = await fetch('https://api.anthropic.com/v1/messages', {
-    method: 'POST',
-    headers: {
-      'content-type': 'application/json',
-      'x-api-key': process.env.ANTHROPIC_API_KEY ?? '',
-      'anthropic-version': '2023-06-01'
-    },
-    body: JSON.stringify({
-      model: process.env.ANTHROPIC_MODEL ?? 'claude-sonnet-4-20250514',
-      max_tokens: 1400,
-      temperature: 0.5,
-      messages: [
-        {
-          role: 'user',
-          content: prompt
-        }
-      ]
-    })
+  const payload = await callAnthropicMessages(prompt);
+  return extractAnthropicResponse(payload).text || null;
+}
+
+async function callAnthropicWithWebSearch(
+  prompt: string,
+  options?: {
+    temperature?: number;
+    maxTokens?: number;
+  }
+) {
+  const payload = await callAnthropicMessages(prompt, {
+    webSearch: true,
+    temperature: options?.temperature ?? 0.35,
+    maxTokens: options?.maxTokens ?? 1800
   });
 
-  if (!response.ok) {
-    throw new Error(`Anthropic error ${response.status}`);
+  const extracted = extractAnthropicResponse(payload);
+  if (!extracted.text && !extracted.sources.length) {
+    return null;
   }
 
-  const payload = await response.json();
-  return payload?.content?.[0]?.text ?? null;
+  return extracted;
 }
 
 async function callGemini(prompt: string) {
@@ -182,21 +330,24 @@ function shouldUseWebSearch(prompt: string) {
   const text = prompt.toLowerCase();
 
   return [
-    'tendenc',
-    'trend',
-    'recent',
-    'última semana',
-    'ultima semana',
-    'hoje',
-    'agora',
-    'atual',
-    'internet',
-    'notícia',
-    'noticia',
-    'pesquise',
-    'web',
-    'google trends'
-  ].some((term) => text.includes(term));
+    /tendenc/i,
+    /trend/i,
+    /recent/i,
+    /atualiz/i,
+    /atual/i,
+    /hoje/i,
+    /agora/i,
+    /(?:últim|ultim)[ao]s?\s+(?:7|15|30)\s+dias/i,
+    /(?:últim|ultim)[ao]s?\s+semana/i,
+    /semana passada/i,
+    /referenc/i,
+    /pesquis/i,
+    /fonte/i,
+    /not[ií]ci/i,
+    /current/i,
+    /latest/i,
+    /google trends/i
+  ].some((pattern) => pattern.test(text));
 }
 
 async function searchWeb(query: string) {
@@ -234,6 +385,38 @@ async function buildWebContext(prompt: string) {
     return '';
   }
 
+  if (process.env.ANTHROPIC_API_KEY) {
+    try {
+      const currentDate = getCurrentDateLabel();
+      const response = await callAnthropicWithWebSearch(
+        [
+          'Voce e um pesquisador web para apoiar uma plataforma de conteudo e estrategia.',
+          `Data atual: ${currentDate}.`,
+          'Busque apenas informacoes recentes e confiaveis.',
+          'Se a resposta envolver tendencias, diga a janela temporal usada e sinalize se a fonte parecer antiga.',
+          'Responda em portugues do Brasil com um breve resumo, 3 a 6 achados atuais e uma lista de fontes.',
+          `Tema de pesquisa: ${prompt}`
+        ].join('\n\n'),
+        {
+          temperature: 0.2,
+          maxTokens: 1100
+        }
+      );
+
+      if (response && (response.text || response.sources.length)) {
+        return [
+          'Contexto web atual coletado para apoiar a resposta. Use apenas como suporte, sem inventar alem do que estiver aqui.',
+          response.text,
+          formatWebSources(response.sources)
+        ]
+          .filter(Boolean)
+          .join('\n\n');
+      }
+    } catch {
+      // Fallback to the light web search scraper below.
+    }
+  }
+
   const results = await searchWeb(prompt);
 
   if (!results.length) {
@@ -246,20 +429,23 @@ async function buildWebContext(prompt: string) {
   ].join('\n');
 }
 
-const creatorAiBaseRules = [
-  'Voce e o Creator AI, o assistente oficial de conteudo, estrategia e operacao da plataforma Creator AI.',
-  'Responda sempre de forma objetiva, organizada e util para pessoas que trabalham com conteudo.',
-  'Evite respostas genericas, velhas ou pouco acionaveis. Quando o pedido envolver conteudo, use referencias atuais, tendencia e repertorio recente quando possivel.',
-  'Quando houver contexto web, priorize-o. Se nao houver contexto suficiente, diga isso com honestidade e siga com a melhor alternativa segura.',
-  'Quando fizer sentido, use listas, subtitulos curtos e proximos passos acionaveis.',
-  'Mantenha a linguagem humana, direta e pratica.'
-];
+function getCreatorAiBaseRules() {
+  return [
+    'Voce e o Creator AI, o assistente oficial de conteudo, estrategia e operacao da plataforma Creator AI.',
+    `Data atual: ${getCurrentDateLabel()}. Use essa data como referencia quando o usuario pedir tendencias, novidades ou recortes temporais.`,
+    'Se o pedido envolver pesquisas atuais, referencias recentes, tendencias, noticias ou algo de "hoje", use contexto web e diga claramente a janela temporal usada.',
+    'Evite respostas genericas, velhas ou pouco acionaveis. Nunca invente ano ou tendencia antiga quando o pedido pedir atualidade.',
+    'Responda em markdown leve, com negrito nos pontos-chave, subtitulos curtos, listas objetivas e um proximo passo claro.',
+    'Quando houver contexto web, priorize-o. Se nao houver contexto suficiente, diga isso com honestidade e siga com a melhor alternativa segura.',
+    'Mantenha a linguagem humana, direta e pratica.'
+  ];
+}
 
 async function buildCreatorAiPrompt(lines: Array<string | null | undefined>, webQuery?: string) {
   const webContext = webQuery ? await buildWebContext(webQuery) : '';
 
   return [
-    ...creatorAiBaseRules,
+    ...getCreatorAiBaseRules(),
     webContext ? `Contexto web:\n${webContext}` : null,
     ...lines
   ]
@@ -554,7 +740,8 @@ export async function suggestCalendar(input: CalendarInput) {
 }
 
 export async function chatWithAi(input: ChatInput) {
-  const prompt = await buildCreatorAiPrompt([
+  const useWebSearch = shouldUseWebSearch([input.prompt, input.context, input.history?.map((message) => message.content).join(' ') ?? ''].join(' '));
+  const promptContext = [
     input.workspace ? `Workspace atual: ${input.workspace}` : null,
     input.context ? `Contexto: ${input.context}` : null,
     input.history?.length
@@ -564,10 +751,33 @@ export async function chatWithAi(input: ChatInput) {
           .join('\n')}`
       : null,
     `Pedido do usuario: ${input.prompt}`,
+    useWebSearch ? 'Use o web_search para validar referencias atuais, datas e fontes recentes antes de responder.' : null,
     'Objetivo: ajudar a criar conteudo, organizar operacao, revisar ideias e sugerir proximos passos acionaveis.'
-  ], `${input.prompt} instagram reels tiktok trends`);
+  ];
 
-  const response = await callProvider(prompt);
+  const prompt = await buildCreatorAiPrompt(promptContext);
+
+  if (useWebSearch && process.env.ANTHROPIC_API_KEY) {
+    try {
+      const response = await callAnthropicWithWebSearch(prompt, {
+        temperature: 0.35,
+        maxTokens: 1800
+      });
+
+      if (response && (response.text || response.sources.length)) {
+        const sources = formatWebSources(response.sources);
+        return [response.text?.trim() ?? '', sources].filter(Boolean).join('\n\n') || sources;
+      }
+    } catch {
+      // Fall back to the regular provider chain below.
+    }
+  }
+
+  const fallbackPrompt = useWebSearch
+    ? await buildCreatorAiPrompt(promptContext, `${input.prompt} ${input.context ?? ''} ${input.history?.map((message) => message.content).join(' ') ?? ''}`)
+    : prompt;
+
+  const response = await callProvider(fallbackPrompt);
 
   return (
     response ??

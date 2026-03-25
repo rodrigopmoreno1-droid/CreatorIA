@@ -2,9 +2,10 @@
 
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { Loader2, Sparkles } from 'lucide-react';
+import { Loader2 } from 'lucide-react';
 import { toast } from 'sonner';
 
+import { BrandMark } from '@/components/brand/brand-mark';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
@@ -151,9 +152,9 @@ export function LoginForm() {
   return (
     <Card className="border-white/70 bg-white/92 shadow-[0_30px_60px_rgba(15,23,42,0.08)]">
       <CardHeader className="space-y-4">
-        <div className="inline-flex w-fit items-center gap-2 rounded-full border border-border bg-background px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.22em] text-muted-foreground">
-          <Sparkles className="h-3.5 w-3.5" />
-          Creator AI
+        <div className="inline-flex w-fit items-center gap-2 rounded-full border border-border bg-background px-2 py-1 pr-4 text-[11px] font-semibold uppercase tracking-[0.22em] text-muted-foreground">
+          <BrandMark tone="light" className="h-7 w-7" />
+          <span>Creator AI</span>
         </div>
         <div className="space-y-1">
           <CardTitle>Acesse sua operacao de conteudo</CardTitle>

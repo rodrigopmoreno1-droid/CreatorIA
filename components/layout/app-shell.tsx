@@ -3,22 +3,13 @@
 import Link from 'next/link';
 import { useMemo, useState } from 'react';
 import { usePathname } from 'next/navigation';
-import { Bot, CalendarDays, ChevronLeft, ChevronRight, LogOut, Menu, Plus, Search, Sparkles, X } from 'lucide-react';
+import { Bot, CalendarDays, ChevronLeft, ChevronRight, LogOut, Menu, Plus, Search, X } from 'lucide-react';
 
+import { BrandMark } from '@/components/brand/brand-mark';
 import { Button, buttonVariants } from '@/components/ui/button';
 import { Separator } from '@/components/ui/separator';
 import { platformNavigation } from '@/lib/platform-navigation';
 import { cn } from '@/lib/utils';
-
-function getInitials(name: string) {
-  return name
-    .split(' ')
-    .filter(Boolean)
-    .map((part) => part[0] ?? '')
-    .join('')
-    .slice(0, 2)
-    .toUpperCase();
-}
 
 export function AppShell({
   workspace,
@@ -45,17 +36,13 @@ export function AppShell({
             desktopMenuCollapsed ? 'w-[64px] p-2.5' : 'w-[248px]'
           )}
         >
-          <div className={cn('flex items-center gap-3 px-2', desktopMenuCollapsed && 'justify-end px-0')}>
+          <div className={cn('flex items-center gap-3 px-2', desktopMenuCollapsed && 'justify-center px-0')}>
+            <BrandMark tone="light" className="h-10 w-10 shrink-0" />
             {!desktopMenuCollapsed ? (
-              <>
-                <div className="flex h-10 w-10 items-center justify-center rounded-2xl bg-white text-[#17171b]">
-                  <Sparkles className="h-4 w-4" />
-                </div>
-                <div className="min-w-0">
-                  <p className="truncate text-[15px] font-semibold tracking-tight">Creator AI</p>
-                  <p className="truncate text-[11px] text-white/55">Operacao de conteudo</p>
-                </div>
-              </>
+              <div className="min-w-0">
+                <p className="truncate text-[15px] font-semibold tracking-tight">Creator AI</p>
+                <p className="truncate text-[11px] text-white/55">Operacao de conteudo</p>
+              </div>
             ) : null}
             <button
               type="button"
@@ -168,9 +155,7 @@ export function AppShell({
             {mobileMenuOpen ? (
               <div className="mt-3 rounded-[22px] border border-border bg-white p-3 shadow-soft lg:hidden">
                 <div className="mb-3 flex items-center gap-3 rounded-2xl bg-muted/50 px-3 py-3">
-                  <div className="flex h-9 w-9 items-center justify-center rounded-2xl bg-[#17171b] text-white">
-                    <span className="text-[11px] font-semibold">{getInitials(companyName)}</span>
-                  </div>
+                  <BrandMark tone="dark" className="h-9 w-9 shrink-0" />
                   <div className="min-w-0">
                     <p className="truncate text-sm font-semibold">{companyName}</p>
                     <p className="truncate text-[11px] text-muted-foreground">Creator AI</p>

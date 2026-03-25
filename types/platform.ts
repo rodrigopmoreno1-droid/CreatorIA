@@ -113,6 +113,8 @@ export type AiConversation = {
   lastMessageAt: string;
   createdAt: string;
   updatedAt: string;
+  deletedAt: string | null;
+  deletedByUserId: string | null;
 };
 
 export type WorkspacePlatformState = {

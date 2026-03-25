@@ -32,9 +32,10 @@ export async function POST(
   const { admin, context } = access;
   const { data: conversation, error: conversationError } = await admin
     .from('ai_conversations')
-    .select('id,company_id,title,created_by_user_id,last_message_at,created_at,updated_at')
+    .select('id,company_id,title,created_by_user_id,last_message_at,created_at,updated_at,deleted_at,deleted_by_user_id')
     .eq('company_id', context.companyId)
     .eq('id', conversationId)
+    .is('deleted_at', null)
     .maybeSingle();
 
   if (conversationError || !conversation) {
@@ -91,7 +92,7 @@ export async function POST(
     })
     .eq('company_id', context.companyId)
     .eq('id', conversationId)
-    .select('id,company_id,title,created_by_user_id,last_message_at,created_at,updated_at')
+    .select('id,company_id,title,created_by_user_id,last_message_at,created_at,updated_at,deleted_at,deleted_by_user_id')
     .single();
 
   if (updateError || !updatedConversation) {

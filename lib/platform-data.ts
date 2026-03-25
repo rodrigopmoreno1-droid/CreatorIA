@@ -41,6 +41,8 @@ type AiConversationRow = {
   last_message_at: string;
   created_at: string;
   updated_at: string;
+  deleted_at: string | null;
+  deleted_by_user_id: string | null;
 };
 
 type AiMessageRow = {
@@ -66,6 +68,11 @@ type ScriptMetadata = {
   dueDate?: string;
   labels?: string[];
   fields?: RecordingField[];
+};
+
+type WorkspaceDataAccess = {
+  admin: NonNullable<ReturnType<typeof createSupabaseAdminClient>>;
+  context: WorkspaceContext;
 };
 
 const recordingColumns = new Set<RecordingColumnKey>(['approved', 'recording', 'drive', 'edited']);
@@ -123,6 +130,12 @@ function parseProductMetadata(metadata: unknown) {
 
 function trimToTitle(input: string) {
   return input.trim().replace(/\s+/g, ' ').slice(0, 64) || 'Nova conversa';
+}
+
+const AI_CONVERSATION_TRASH_RETENTION_DAYS = 30;
+
+function getAiConversationTrashCutoffIso() {
+  return new Date(Date.now() - AI_CONVERSATION_TRASH_RETENTION_DAYS * 24 * 60 * 60 * 1000).toISOString();
 }
 
 export function parseScriptMetadata(storyboard: unknown): ScriptMetadata {
@@ -269,7 +282,9 @@ export function toAiConversationItem(row: AiConversationRow): AiConversation {
     title: row.title,
     lastMessageAt: row.last_message_at,
     createdAt: row.created_at,
-    updatedAt: row.updated_at
+    updatedAt: row.updated_at,
+    deletedAt: row.deleted_at,
+    deletedByUserId: row.deleted_by_user_id
   };
 }
 
@@ -283,7 +298,7 @@ export function toAiMessageItem(row: AiMessageRow): AiMessage {
   };
 }
 
-export async function resolveWorkspaceDataAccess(workspaceSlug: string) {
+export async function resolveWorkspaceDataAccess(workspaceSlug: string): Promise<WorkspaceDataAccess | null> {
   const context = await getWorkspaceContextForSlug(workspaceSlug);
 
   if (!context) {
@@ -411,12 +426,39 @@ export async function getWorkspaceAiConversations(workspaceSlug: string) {
     return [];
   }
 
+  await purgeExpiredDeletedAiConversations(access);
+
   const { admin, context } = access;
   const { data, error } = await admin
     .from('ai_conversations')
-    .select('id,company_id,title,created_by_user_id,last_message_at,created_at,updated_at')
+    .select('id,company_id,title,created_by_user_id,last_message_at,created_at,updated_at,deleted_at,deleted_by_user_id')
     .eq('company_id', context.companyId)
+    .is('deleted_at', null)
     .order('last_message_at', { ascending: false });
+
+  if (error) {
+    throw new Error(error.message);
+  }
+
+  return (data ?? []).map((row) => toAiConversationItem(row as AiConversationRow));
+}
+
+export async function getWorkspaceAiTrashConversations(workspaceSlug: string) {
+  const access = await resolveWorkspaceDataAccess(workspaceSlug);
+
+  if (!access) {
+    return [];
+  }
+
+  await purgeExpiredDeletedAiConversations(access);
+
+  const { admin, context } = access;
+  const { data, error } = await admin
+    .from('ai_conversations')
+    .select('id,company_id,title,created_by_user_id,last_message_at,created_at,updated_at,deleted_at,deleted_by_user_id')
+    .eq('company_id', context.companyId)
+    .not('deleted_at', 'is', null)
+    .order('deleted_at', { ascending: false });
 
   if (error) {
     throw new Error(error.message);
@@ -462,9 +504,11 @@ export async function createWorkspaceAiConversation(workspaceSlug: string, title
       company_id: context.companyId,
       created_by_user_id: user?.id ?? null,
       title: trimToTitle(title),
-      last_message_at: new Date().toISOString()
+      last_message_at: new Date().toISOString(),
+      deleted_at: null,
+      deleted_by_user_id: null
     })
-    .select('id,company_id,title,created_by_user_id,last_message_at,created_at,updated_at')
+    .select('id,company_id,title,created_by_user_id,last_message_at,created_at,updated_at,deleted_at,deleted_by_user_id')
     .single();
 
   if (error || !data) {
@@ -472,6 +516,20 @@ export async function createWorkspaceAiConversation(workspaceSlug: string, title
   }
 
   return toAiConversationItem(data as AiConversationRow);
+}
+
+async function purgeExpiredDeletedAiConversations(access: WorkspaceDataAccess) {
+  const cutoff = getAiConversationTrashCutoffIso();
+  const { error } = await access.admin
+    .from('ai_conversations')
+    .delete()
+    .eq('company_id', access.context.companyId)
+    .not('deleted_at', 'is', null)
+    .lt('deleted_at', cutoff);
+
+  if (error) {
+    throw new Error(error.message);
+  }
 }
 
 async function getWorkspacePostsCount(context: WorkspaceContext) {

@@ -118,3 +118,17 @@ body {
 .shadow-soft {
   box-shadow: 0 8px 20px rgba(15, 23, 42, 0.05);
 }
+
+@keyframes typing-dots {
+  0%,
+  80%,
+  100% {
+    transform: translateY(0);
+    opacity: 0.45;
+  }
+
+  40% {
+    transform: translateY(-4px);
+    opacity: 1;
+  }
+}
