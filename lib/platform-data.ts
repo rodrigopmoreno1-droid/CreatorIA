@@ -4,6 +4,7 @@ import type {
   ProductItem,
   RecordingCard,
   RecordingColumnKey,
+  RecordingField,
   ScriptItem
 } from '@/types/platform';
 
@@ -39,6 +40,10 @@ type ScriptMetadata = {
   boardOrder?: number;
   notes?: string;
   driveUrl?: string;
+  category?: string;
+  dueDate?: string;
+  labels?: string[];
+  fields?: RecordingField[];
 };
 
 const recordingColumns = new Set<RecordingColumnKey>(['approved', 'recording', 'drive', 'edited']);
@@ -53,6 +58,33 @@ function normalizeStringArray(value: unknown) {
   }
 
   return value.filter((item): item is string => typeof item === 'string' && item.trim().length > 0);
+}
+
+function normalizeRecordingFields(value: unknown): RecordingField[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value
+    .map((item) => {
+      if (!item || typeof item !== 'object') {
+        return null;
+      }
+
+      const raw = item as Record<string, unknown>;
+      const key = normalizeString(raw.key).trim();
+      const valueText = normalizeString(raw.value).trim();
+
+      if (!key && !valueText) {
+        return null;
+      }
+
+      return {
+        key,
+        value: valueText
+      };
+    })
+    .filter((item): item is RecordingField => Boolean(item));
 }
 
 export function parseScriptMetadata(storyboard: unknown): ScriptMetadata {
@@ -78,7 +110,11 @@ export function parseScriptMetadata(storyboard: unknown): ScriptMetadata {
       productName: normalizeString(raw.productName) || undefined,
       boardOrder: typeof raw.boardOrder === 'number' ? raw.boardOrder : 0,
       notes: normalizeString(raw.notes),
-      driveUrl: normalizeString(raw.driveUrl)
+      driveUrl: normalizeString(raw.driveUrl),
+      category: normalizeString(raw.category),
+      dueDate: normalizeString(raw.dueDate),
+      labels: normalizeStringArray(raw.labels),
+      fields: normalizeRecordingFields(raw.fields)
     };
   }
 
@@ -95,6 +131,10 @@ export function buildScriptMetadata(input: {
   boardOrder?: number;
   notes?: string;
   driveUrl?: string;
+  category?: string;
+  dueDate?: string;
+  labels?: string[];
+  fields?: RecordingField[];
 }) {
   return {
     caption: input.caption ?? '',
@@ -105,7 +145,11 @@ export function buildScriptMetadata(input: {
     productName: input.productName ?? '',
     boardOrder: input.boardOrder ?? 0,
     notes: input.notes ?? '',
-    driveUrl: input.driveUrl ?? ''
+    driveUrl: input.driveUrl ?? '',
+    category: input.category ?? '',
+    dueDate: input.dueDate ?? '',
+    labels: input.labels ?? [],
+    fields: input.fields ?? []
   };
 }
 
@@ -123,6 +167,7 @@ export function toProductItem(row: ProductRow): ProductItem {
 
 export function toScriptItem(row: ScriptRow): ScriptItem {
   const meta = parseScriptMetadata(row.storyboard);
+  const status = row.status;
 
   return {
     id: row.id,
@@ -136,7 +181,10 @@ export function toScriptItem(row: ScriptRow): ScriptItem {
     takes: meta.takes ?? [],
     cta: row.cta ?? '',
     caption: meta.caption ?? '',
-    status: row.status === 'draft' ? 'draft' : 'approved',
+    status:
+      status === 'draft' || status === 'approved' || status === 'recording' || status === 'drive' || status === 'edited'
+        ? status
+        : 'approved',
     createdAt: row.created_at,
     updatedAt: row.updated_at
   };
@@ -157,6 +205,10 @@ export function toRecordingCard(row: ScriptRow): RecordingCard | null {
     id: row.id,
     scriptId: row.id,
     title: row.title,
+    category: meta.category ?? '',
+    dueDate: meta.dueDate ?? '',
+    labels: meta.labels ?? [],
+    fields: meta.fields ?? [],
     hook: row.hook ?? '',
     spoken: row.spoken_text ?? '',
     takes: meta.takes ?? [],

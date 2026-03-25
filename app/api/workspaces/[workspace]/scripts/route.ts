@@ -17,7 +17,13 @@ type IncomingScript = {
   boardOrder?: number;
   notes?: string;
   driveUrl?: string;
+  category?: string;
+  dueDate?: string;
+  labels?: string[];
+  fields?: Array<{ key?: string; value?: string }>;
 };
+
+const allowedStatuses = new Set(['draft', 'approved', 'recording', 'drive', 'edited']);
 
 function sanitizeScriptPayload(script: IncomingScript) {
   const title = script.title?.trim();
@@ -31,7 +37,7 @@ function sanitizeScriptPayload(script: IncomingScript) {
     hook: script.hook?.trim() || null,
     spoken_text: script.spoken?.trim() || null,
     cta: script.cta?.trim() || null,
-    status: script.status === 'approved' ? 'approved' : 'draft',
+    status: script.status && allowedStatuses.has(script.status) ? script.status : 'draft',
     storyboard: buildScriptMetadata({
       caption: script.caption?.trim() || '',
       prompt: script.prompt?.trim() || '',
@@ -41,7 +47,16 @@ function sanitizeScriptPayload(script: IncomingScript) {
       productName: script.productName?.trim() || '',
       boardOrder: script.boardOrder ?? 0,
       notes: script.notes?.trim() || '',
-      driveUrl: script.driveUrl?.trim() || ''
+      driveUrl: script.driveUrl?.trim() || '',
+      category: script.category?.trim() || '',
+      dueDate: script.dueDate?.trim() || '',
+      labels: script.labels ?? [],
+      fields: (script.fields ?? [])
+        .map((item) => ({
+          key: item.key?.trim() || '',
+          value: item.value?.trim() || ''
+        }))
+        .filter((item) => item.key || item.value)
     })
   };
 }
@@ -125,7 +140,8 @@ export async function POST(
     .insert(
       payload.map((item) => ({
         company_id: context.companyId,
-        ...item
+        ...item,
+        status: item.status && allowedStatuses.has(item.status) ? item.status : 'draft'
       }))
     )
     .select('id,title,hook,spoken_text,cta,storyboard,status,created_at,updated_at');

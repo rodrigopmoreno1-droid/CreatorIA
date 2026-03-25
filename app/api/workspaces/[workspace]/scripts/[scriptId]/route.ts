@@ -19,6 +19,10 @@ type ScriptPatchBody = {
   boardOrder?: number;
   notes?: string;
   driveUrl?: string;
+  category?: string;
+  dueDate?: string;
+  labels?: string[];
+  fields?: Array<{ key?: string; value?: string }>;
 };
 
 export async function PATCH(
@@ -69,7 +73,19 @@ export async function PATCH(
       productName: body.productName === undefined ? existingMeta.productName : body.productName,
       boardOrder: body.boardOrder === undefined ? existingMeta.boardOrder : body.boardOrder,
       notes: body.notes === undefined ? existingMeta.notes : body.notes,
-      driveUrl: body.driveUrl === undefined ? existingMeta.driveUrl : body.driveUrl
+      driveUrl: body.driveUrl === undefined ? existingMeta.driveUrl : body.driveUrl,
+      category: body.category === undefined ? existingMeta.category : body.category,
+      dueDate: body.dueDate === undefined ? existingMeta.dueDate : body.dueDate,
+      labels: body.labels === undefined ? existingMeta.labels : body.labels,
+      fields:
+        body.fields === undefined
+          ? existingMeta.fields
+          : body.fields
+              .map((item) => ({
+                key: item.key?.trim() || '',
+                value: item.value?.trim() || ''
+              }))
+              .filter((item) => item.key || item.value)
     })
   };
 

@@ -3,7 +3,7 @@
 import Link from 'next/link';
 import { useMemo, useState } from 'react';
 import { usePathname } from 'next/navigation';
-import { Bot, CalendarDays, LogOut, Menu, Plus, Search, Sparkles, X } from 'lucide-react';
+import { Bot, CalendarDays, ChevronLeft, ChevronRight, LogOut, Menu, Plus, Search, Sparkles, X } from 'lucide-react';
 
 import { Button, buttonVariants } from '@/components/ui/button';
 import { Separator } from '@/components/ui/separator';
@@ -31,6 +31,7 @@ export function AppShell({
 }) {
   const pathname = usePathname();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const [desktopMenuCollapsed, setDesktopMenuCollapsed] = useState(false);
   const currentLabel = useMemo(() => {
     return platformNavigation.find((item) => pathname.startsWith(item.href(workspace)))?.label ?? 'Dashboard';
   }, [pathname, workspace]);
@@ -38,23 +39,49 @@ export function AppShell({
   return (
     <div className="min-h-screen bg-background">
       <div className="mx-auto flex min-h-screen max-w-[1480px] gap-3 p-3">
-        <aside className="hidden w-[248px] shrink-0 flex-col rounded-[28px] border border-[rgba(15,23,42,0.08)] bg-[#17171b] p-4 text-white shadow-[0_24px_48px_rgba(15,23,42,0.12)] lg:flex">
-          <div className="flex items-center gap-3 px-2">
+        <aside
+          className={cn(
+            'hidden shrink-0 flex-col rounded-[28px] border border-[rgba(15,23,42,0.08)] bg-[#17171b] p-4 text-white shadow-[0_24px_48px_rgba(15,23,42,0.12)] lg:flex',
+            desktopMenuCollapsed ? 'w-[88px]' : 'w-[248px]'
+          )}
+        >
+          <div className={cn('flex items-center gap-3 px-2', desktopMenuCollapsed && 'justify-center px-0')}>
             <div className="flex h-10 w-10 items-center justify-center rounded-2xl bg-white text-[#17171b]">
               <Sparkles className="h-4 w-4" />
             </div>
-            <div className="min-w-0">
-              <p className="truncate text-[15px] font-semibold tracking-tight">Creator AI</p>
-              <p className="truncate text-[11px] text-white/55">Operacao de conteudo</p>
+            {!desktopMenuCollapsed ? (
+              <div className="min-w-0">
+                <p className="truncate text-[15px] font-semibold tracking-tight">Creator AI</p>
+                <p className="truncate text-[11px] text-white/55">Operacao de conteudo</p>
+              </div>
+            ) : null}
+            <button
+              type="button"
+              onClick={() => setDesktopMenuCollapsed((value) => !value)}
+              className={cn(
+                'ml-auto inline-flex h-8 w-8 items-center justify-center rounded-xl border border-white/10 bg-white/5 transition hover:bg-white/10',
+                desktopMenuCollapsed && 'ml-0'
+              )}
+              aria-label={desktopMenuCollapsed ? 'Expandir menu lateral' : 'Recolher menu lateral'}
+            >
+              {desktopMenuCollapsed ? <ChevronRight className="h-4 w-4" /> : <ChevronLeft className="h-4 w-4" />}
+            </button>
+          </div>
+
+          {!desktopMenuCollapsed ? (
+            <div className="mt-6 rounded-[22px] border border-white/10 bg-white/5 px-4 py-4">
+              <p className="text-[10px] font-medium uppercase tracking-[0.2em] text-white/45">Empresa</p>
+              <p className="mt-2 truncate text-sm font-semibold text-white">{companyName}</p>
             </div>
-          </div>
+          ) : (
+            <div className="mt-6 flex justify-center">
+              <div className="flex h-12 w-12 items-center justify-center rounded-[18px] border border-white/10 bg-white/5 text-[11px] font-semibold text-white">
+                {getInitials(companyName)}
+              </div>
+            </div>
+          )}
 
-          <div className="mt-6 rounded-[22px] border border-white/10 bg-white/5 px-4 py-4">
-            <p className="text-[10px] font-medium uppercase tracking-[0.2em] text-white/45">Empresa</p>
-            <p className="mt-2 truncate text-sm font-semibold text-white">{companyName}</p>
-          </div>
-
-          <Separator className="my-5 bg-white/8" />
+          <Separator className={cn('my-5 bg-white/8', desktopMenuCollapsed && 'my-4')} />
 
           <nav className="flex flex-1 flex-col gap-1">
             {platformNavigation.map((item) => {
@@ -67,27 +94,40 @@ export function AppShell({
                   href={item.href(workspace) as never}
                   className={cn(
                     'group flex items-center gap-3 rounded-2xl px-3 py-3 text-[13px] font-medium transition',
+                    desktopMenuCollapsed && 'justify-center px-2',
                     active ? 'bg-white text-[#17171b]' : 'text-white/62 hover:bg-white/7 hover:text-white'
                   )}
+                  aria-label={item.label}
                 >
                   <Icon className="h-4 w-4 shrink-0" />
-                  <span className="truncate">{item.label}</span>
+                  {!desktopMenuCollapsed ? <span className="truncate">{item.label}</span> : null}
                 </Link>
               );
             })}
           </nav>
 
-          <div className="mt-4 grid gap-2">
-            <Link href={`/${workspace}/ai`} className={buttonVariants({ variant: 'glass', size: 'sm' })}>
+          <div className={cn('mt-4 grid gap-2', desktopMenuCollapsed && 'justify-items-center')}>
+            <Link
+              href={`/${workspace}/ai`}
+              className={cn(
+                buttonVariants({ variant: 'glass', size: 'sm' }),
+                desktopMenuCollapsed && 'w-9 px-0'
+              )}
+              aria-label="Abrir IA"
+            >
               <Bot className="h-4 w-4" />
-              Abrir IA
+              {!desktopMenuCollapsed ? 'Abrir IA' : null}
             </Link>
             <Link
               href="/login"
-              className="inline-flex h-9 items-center justify-center gap-2 rounded-xl border border-white/10 bg-white/5 px-3 text-[13px] font-medium text-white/85 transition hover:bg-white/10"
+              className={cn(
+                'inline-flex h-9 items-center justify-center gap-2 rounded-xl border border-white/10 bg-white/5 px-3 text-[13px] font-medium text-white/85 transition hover:bg-white/10',
+                desktopMenuCollapsed && 'w-9 px-0'
+              )}
+              aria-label="Trocar conta"
             >
               <LogOut className="h-4 w-4" />
-              Trocar conta
+              {!desktopMenuCollapsed ? 'Trocar conta' : null}
             </Link>
           </div>
         </aside>

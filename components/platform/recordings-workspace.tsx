@@ -17,7 +17,7 @@ import {
   verticalListSortingStrategy
 } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
-import { Eye, Loader2, PencilLine, X } from 'lucide-react';
+import { Eye, LayoutGrid, List, Loader2, PencilLine, Plus, X } from 'lucide-react';
 import { toast } from 'sonner';
 
 import { Button } from '@/components/ui/button';
@@ -106,6 +106,83 @@ function moveAcrossColumns(
     .concat(normalizedTargetCards.find((item) => item.id === activeId) ?? []);
 }
 
+type RecordingViewMode = 'flow' | 'list' | 'cards';
+
+type RecordingFieldDraft = {
+  key: string;
+  value: string;
+};
+
+type RecordingFormState = RecordingCard;
+
+const recordingViewModes: Array<{ key: RecordingViewMode; label: string; icon: typeof LayoutGrid }> = [
+  { key: 'flow', label: 'Fluxo', icon: LayoutGrid },
+  { key: 'list', label: 'Lista', icon: List },
+  { key: 'cards', label: 'Blocos', icon: LayoutGrid }
+];
+
+function cardCategory(card: RecordingCard) {
+  return card.category?.trim() || recordingColumns.find((column) => column.key === card.column)?.label || 'Geral';
+}
+
+function parseCommaList(value: string) {
+  return value
+    .split(',')
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+function createEmptyRecordingCard(column: RecordingColumnKey): RecordingFormState {
+  const tempId = `draft-${crypto.randomUUID()}`;
+
+  return {
+    id: tempId,
+    scriptId: tempId,
+    title: '',
+    category: recordingColumns.find((item) => item.key === column)?.label ?? 'Geral',
+    dueDate: '',
+    labels: [],
+    fields: [],
+    hook: '',
+    spoken: '',
+    takes: ['', '', '', '', ''],
+    cta: '',
+    caption: '',
+    column,
+    order: 0,
+    notes: '',
+    updatedAt: new Date().toISOString()
+  };
+}
+
+function buildRecordingFormFromCard(card: RecordingCard): RecordingFormState {
+  return {
+    ...card,
+    takes: card.takes.length ? card.takes : ['', '', '', '', ''],
+    labels: card.labels ?? [],
+    fields: card.fields ?? []
+  };
+}
+
+function buildRecordingPayload(card: RecordingFormState, status: RecordingColumnKey) {
+  return {
+    title: card.title.trim(),
+    hook: card.hook.trim(),
+    spoken: card.spoken.trim(),
+    takes: card.takes.map((take) => take.trim()).filter(Boolean),
+    cta: card.cta.trim(),
+    caption: card.caption.trim(),
+    status,
+    boardOrder: card.order,
+    notes: card.notes.trim(),
+    driveUrl: card.driveUrl?.trim() || '',
+    category: card.category.trim(),
+    dueDate: card.dueDate.trim(),
+    labels: card.labels,
+    fields: card.fields
+  };
+}
+
 function SortableRecordingCard({
   card,
   onView,
@@ -133,6 +210,16 @@ function SortableRecordingCard({
       <div className="rounded-[22px] border border-border bg-white p-4 shadow-soft">
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0">
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="rounded-full border border-border bg-muted/40 px-2.5 py-1 text-[10px] font-medium uppercase tracking-[0.16em] text-muted-foreground">
+                {cardCategory(card)}
+              </span>
+              {card.dueDate ? (
+                <span className="rounded-full border border-border bg-white px-2.5 py-1 text-[10px] font-medium uppercase tracking-[0.16em] text-muted-foreground">
+                  {card.dueDate}
+                </span>
+              ) : null}
+            </div>
             <p className="truncate text-sm font-semibold text-foreground">{card.title}</p>
             <p className="mt-2 line-clamp-2 text-[13px] leading-6 text-muted-foreground">{card.hook}</p>
           </div>
@@ -160,6 +247,14 @@ function SortableRecordingCard({
           {card.notes || 'Sem observacoes por enquanto. Use o modo de edicao para adicionar indicacoes de gravacao.'}
         </div>
 
+        <div className="mt-3 flex flex-wrap gap-2">
+          {card.labels.map((label) => (
+            <span key={`${card.id}-${label}`} className="rounded-full border border-border bg-white px-2.5 py-1 text-[10px] font-medium uppercase tracking-[0.16em] text-muted-foreground">
+              {label}
+            </span>
+          ))}
+        </div>
+
         <div className="mt-4 flex items-center justify-between">
           <button
             type="button"
@@ -183,12 +278,14 @@ function RecordingColumn({
   cards,
   onView,
   onEdit,
+  onAdd,
   loadingId
 }: {
   column: { key: RecordingColumnKey; label: string };
   cards: RecordingCard[];
   onView: (card: RecordingCard) => void;
   onEdit: (card: RecordingCard) => void;
+  onAdd: (column: RecordingColumnKey) => void;
   loadingId: string | null;
 }) {
   const { setNodeRef } = useDroppable({
@@ -202,6 +299,14 @@ function RecordingColumn({
           <p className="text-sm font-semibold text-foreground">{column.label}</p>
           <p className="text-[12px] text-muted-foreground">{cards.length} itens</p>
         </div>
+        <button
+          type="button"
+          onClick={() => onAdd(column.key)}
+          className="inline-flex h-8 w-8 items-center justify-center rounded-xl border border-border bg-white transition hover:bg-muted"
+          aria-label={`Adicionar bloco em ${column.label}`}
+        >
+          <Plus className="h-4 w-4" />
+        </button>
       </div>
 
       <SortableContext items={cards.map((item) => item.id)} strategy={verticalListSortingStrategy}>
@@ -235,6 +340,21 @@ function RecordingViewModal({ card, onClose }: { card: RecordingCard; onClose: (
           <div>
             <p className="text-[11px] font-semibold uppercase tracking-[0.24em] text-muted-foreground">Modo leitura</p>
             <h3 className="mt-1 text-xl font-semibold text-foreground">{card.title}</h3>
+            <div className="mt-3 flex flex-wrap gap-2">
+              <span className="rounded-full border border-border bg-muted/40 px-2.5 py-1 text-[10px] font-medium uppercase tracking-[0.16em] text-muted-foreground">
+                {cardCategory(card)}
+              </span>
+              {card.dueDate ? (
+                <span className="rounded-full border border-border bg-white px-2.5 py-1 text-[10px] font-medium uppercase tracking-[0.16em] text-muted-foreground">
+                  {card.dueDate}
+                </span>
+              ) : null}
+              {card.labels.map((label) => (
+                <span key={`${card.id}-view-${label}`} className="rounded-full border border-border bg-white px-2.5 py-1 text-[10px] font-medium uppercase tracking-[0.16em] text-muted-foreground">
+                  {label}
+                </span>
+              ))}
+            </div>
           </div>
           <button
             type="button"
@@ -264,6 +384,21 @@ function RecordingViewModal({ card, onClose }: { card: RecordingCard; onClose: (
                 {card.notes || 'Nenhuma observacao adicionada ainda para esta gravacao.'}
               </p>
             </div>
+
+            <div>
+              <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-muted-foreground">Campos</p>
+              <div className="mt-3 space-y-2">
+                {card.fields.length ? (
+                  card.fields.map((field) => (
+                    <div key={`${card.id}-field-${field.key}`} className="rounded-[18px] border border-border bg-white px-3 py-2 text-[13px] leading-6 text-foreground">
+                      <span className="font-medium">{field.key || 'Campo'}:</span> {field.value || 'vazio'}
+                    </div>
+                  ))
+                ) : (
+                  <p className="text-[13px] leading-6 text-muted-foreground">Sem campos extras.</p>
+                )}
+              </div>
+            </div>
           </div>
 
           <div className="space-y-6">
@@ -290,12 +425,14 @@ function RecordingViewModal({ card, onClose }: { card: RecordingCard; onClose: (
 }
 
 function RecordingEditModal({
+  title,
   card,
   saving,
   onChange,
   onSave,
   onClose
 }: {
+  title: string;
   card: RecordingEditorState;
   saving: boolean;
   onChange: (nextValue: RecordingEditorState) => void;
@@ -307,8 +444,8 @@ function RecordingEditModal({
       <div className="max-h-[92vh] w-full max-w-5xl overflow-y-auto rounded-[30px] border border-border bg-white shadow-[0_30px_90px_rgba(15,23,42,0.18)]">
         <div className="sticky top-0 z-10 flex items-center justify-between border-b border-border bg-white/95 px-5 py-4 backdrop-blur-sm lg:px-6">
           <div>
-            <p className="text-[11px] font-semibold uppercase tracking-[0.24em] text-muted-foreground">Editar gravacao</p>
-            <h3 className="mt-1 text-lg font-semibold text-foreground">{card.title}</h3>
+            <p className="text-[11px] font-semibold uppercase tracking-[0.24em] text-muted-foreground">Bloco</p>
+            <h3 className="mt-1 text-lg font-semibold text-foreground">{title}</h3>
           </div>
           <button
             type="button"
@@ -326,6 +463,24 @@ function RecordingEditModal({
               <label className="text-sm font-medium">Titulo</label>
               <Input value={card.title} onChange={(event) => onChange({ ...card, title: event.target.value })} />
             </div>
+            <div className="grid gap-3 sm:grid-cols-[0.72fr_0.28fr]">
+              <div className="space-y-2">
+                <label className="text-sm font-medium">Categoria</label>
+                <Input
+                  value={card.category}
+                  onChange={(event) => onChange({ ...card, category: event.target.value })}
+                  placeholder="Ex.: Conteudo, Venda, Bastidor"
+                />
+              </div>
+              <div className="space-y-2">
+                <label className="text-sm font-medium">Data</label>
+                <Input
+                  type="date"
+                  value={card.dueDate}
+                  onChange={(event) => onChange({ ...card, dueDate: event.target.value })}
+                />
+              </div>
+            </div>
             <div className="space-y-2">
               <label className="text-sm font-medium">Gancho</label>
               <Textarea value={card.hook} onChange={(event) => onChange({ ...card, hook: event.target.value })} className="min-h-[110px]" />
@@ -335,12 +490,72 @@ function RecordingEditModal({
               <Textarea value={card.notes} onChange={(event) => onChange({ ...card, notes: event.target.value })} className="min-h-[160px]" />
             </div>
             <div className="space-y-2">
+              <label className="text-sm font-medium">Etiquetas</label>
+              <Input
+                value={card.labels.join(', ')}
+                onChange={(event) => onChange({ ...card, labels: parseCommaList(event.target.value) })}
+                placeholder="Ex.: campanha, venda, urgente"
+              />
+            </div>
+            <div className="space-y-2">
               <label className="text-sm font-medium">Link do Drive</label>
               <Input
                 value={card.driveUrl ?? ''}
                 onChange={(event) => onChange({ ...card, driveUrl: event.target.value })}
                 placeholder="https://drive.google.com/..."
               />
+            </div>
+            <div className="space-y-3">
+              <div className="flex items-center justify-between">
+                <label className="text-sm font-medium">Campos livres</label>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={() => onChange({ ...card, fields: [...card.fields, { key: '', value: '' }] })}
+                >
+                  <Plus className="h-4 w-4" />
+                  Campo
+                </Button>
+              </div>
+              <div className="space-y-2">
+                {card.fields.length ? (
+                  card.fields.map((field, index) => (
+                    <div key={`${card.id}-field-${index}`} className="grid gap-2 sm:grid-cols-[0.46fr_0.46fr_0.08fr]">
+                      <Input
+                        value={field.key}
+                        onChange={(event) => {
+                          const nextFields = [...card.fields];
+                          nextFields[index] = { ...field, key: event.target.value };
+                          onChange({ ...card, fields: nextFields });
+                        }}
+                        placeholder="Nome"
+                      />
+                      <Input
+                        value={field.value}
+                        onChange={(event) => {
+                          const nextFields = [...card.fields];
+                          nextFields[index] = { ...field, value: event.target.value };
+                          onChange({ ...card, fields: nextFields });
+                        }}
+                        placeholder="Valor"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => onChange({ ...card, fields: card.fields.filter((_, fieldIndex) => fieldIndex !== index) })}
+                        className="inline-flex h-10 items-center justify-center rounded-xl border border-border bg-white text-muted-foreground transition hover:bg-muted"
+                        aria-label="Remover campo"
+                      >
+                        <X className="h-4 w-4" />
+                      </button>
+                    </div>
+                  ))
+                ) : (
+                  <div className="rounded-[18px] border border-dashed border-border bg-white px-4 py-3 text-[13px] leading-6 text-muted-foreground">
+                    Adicione campos para categorias, fontes, prazos ou qualquer filtro extra.
+                  </div>
+                )}
+              </div>
             </div>
           </div>
 
@@ -382,7 +597,7 @@ function RecordingEditModal({
           </Button>
           <Button onClick={onSave} disabled={saving}>
             {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
-            Salvar ajustes
+            Salvar bloco
           </Button>
         </div>
       </div>
@@ -398,17 +613,35 @@ export function RecordingsWorkspace({
   initialCards: RecordingCard[];
 }) {
   const [cards, setCards] = useState(sortColumnCards(initialCards));
+  const [viewMode, setViewMode] = useState<RecordingViewMode>('flow');
+  const [activeCategory, setActiveCategory] = useState('all');
   const [viewingCard, setViewingCard] = useState<RecordingCard | null>(null);
   const [editingCard, setEditingCard] = useState<RecordingEditorState | null>(null);
+  const [editingMode, setEditingMode] = useState<'create' | 'edit' | null>(null);
   const [loadingId, setLoadingId] = useState<string | null>(null);
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 8 } }));
+
+  const categoryOptions = useMemo(() => {
+    const categories = cards.map((card) => cardCategory(card));
+    return ['all', ...Array.from(new Set(categories))];
+  }, [cards]);
+
+  const filteredCards = useMemo(() => {
+    if (activeCategory === 'all') {
+      return cards;
+    }
+
+    return cards.filter((card) => cardCategory(card) === activeCategory);
+  }, [cards, activeCategory]);
 
   const groupedCards = useMemo(() => {
     return recordingColumns.map((column) => ({
       ...column,
-      cards: sortColumnCards(cards.filter((card) => card.column === column.key))
+      cards: sortColumnCards(filteredCards.filter((card) => card.column === column.key))
     }));
-  }, [cards]);
+  }, [filteredCards]);
+
+  const listCards = useMemo(() => sortColumnCards(filteredCards), [filteredCards]);
 
   async function persistCards(nextCards: RecordingCard[], affectedColumns: RecordingColumnKey[]) {
     const affectedItems = nextCards
@@ -434,14 +667,18 @@ export function RecordingsWorkspace({
             status: item.column,
             boardOrder: item.order,
             notes: item.notes,
-            driveUrl: item.driveUrl
+            driveUrl: item.driveUrl,
+            category: item.category,
+            dueDate: item.dueDate,
+            labels: item.labels,
+            fields: item.fields
           })
         })
       )
     );
 
     if (responses.some((response) => !response.ok)) {
-      throw new Error('Falha ao persistir a nova ordem do Kanban.');
+      throw new Error('Falha ao persistir a nova ordem do fluxo.');
     }
   }
 
@@ -485,51 +722,78 @@ export function RecordingsWorkspace({
     }
   }
 
-  async function saveEditedCard() {
-    if (!editingCard) {
+  function openCreateCard(column: RecordingColumnKey) {
+    setEditingCard(createEmptyRecordingCard(column));
+    setEditingMode('create');
+  }
+
+  async function saveCard() {
+    if (!editingCard || !editingMode) {
       return;
     }
 
     setLoadingId(editingCard.id);
 
     try {
-      const response = await fetch(`/api/workspaces/${workspace}/scripts/${editingCard.scriptId}`, {
-        method: 'PATCH',
-        headers: {
-          'content-type': 'application/json'
-        },
-        body: JSON.stringify({
-          title: editingCard.title,
-          hook: editingCard.hook,
-          spoken: editingCard.spoken,
-          takes: editingCard.takes,
-          cta: editingCard.cta,
-          caption: editingCard.caption,
-          status: editingCard.column,
-          boardOrder: editingCard.order,
-          notes: editingCard.notes,
-          driveUrl: editingCard.driveUrl
-        })
-      });
+      if (editingMode === 'create') {
+        const response = await fetch(`/api/workspaces/${workspace}/scripts`, {
+          method: 'POST',
+          headers: {
+            'content-type': 'application/json'
+          },
+          body: JSON.stringify({
+            ...buildRecordingPayload(editingCard, editingCard.column),
+            status: editingCard.column
+          })
+        });
 
-      const payload = (await response.json().catch(() => null)) as { script?: { updatedAt?: string }; error?: string } | null;
+        const payload = (await response.json().catch(() => null)) as { scripts?: Array<{ id?: string; updatedAt?: string }>; error?: string } | null;
 
-      if (!response.ok) {
-        throw new Error(payload?.error ?? 'Nao foi possivel salvar os ajustes.');
+        if (!response.ok || !payload?.scripts?.length) {
+          throw new Error(payload?.error ?? 'Nao foi possivel criar o bloco.');
+        }
+
+        const created = payload.scripts[0];
+        setCards((current) => [
+          {
+            ...editingCard,
+            id: created?.id ?? editingCard.id,
+            scriptId: created?.id ?? editingCard.scriptId,
+            updatedAt: created?.updatedAt ?? new Date().toISOString()
+          },
+          ...current
+        ]);
+        toast.success('Bloco criado.');
+      } else {
+        const response = await fetch(`/api/workspaces/${workspace}/scripts/${editingCard.scriptId}`, {
+          method: 'PATCH',
+          headers: {
+            'content-type': 'application/json'
+          },
+          body: JSON.stringify(buildRecordingPayload(editingCard, editingCard.column))
+        });
+
+        const payload = (await response.json().catch(() => null)) as { script?: { updatedAt?: string }; error?: string } | null;
+
+        if (!response.ok) {
+          throw new Error(payload?.error ?? 'Nao foi possivel salvar os ajustes.');
+        }
+
+        setCards((current) =>
+          current.map((item) =>
+            item.id === editingCard.id
+              ? {
+                  ...editingCard,
+                  updatedAt: payload?.script?.updatedAt ?? new Date().toISOString()
+                }
+              : item
+          )
+        );
+        toast.success('Bloco atualizado.');
       }
 
-      setCards((current) =>
-        current.map((item) =>
-          item.id === editingCard.id
-            ? {
-                ...editingCard,
-                updatedAt: payload?.script?.updatedAt ?? new Date().toISOString()
-              }
-            : item
-        )
-      );
       setEditingCard(null);
-      toast.success('Ajustes de gravacao atualizados.');
+      setEditingMode(null);
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Nao foi possivel salvar os ajustes.';
       toast.error(message);
@@ -542,51 +806,204 @@ export function RecordingsWorkspace({
     <div className="space-y-4">
       <PageIntro
         eyebrow="Gravacoes"
-        title="Kanban limpo para producao"
-        description="Acompanhe o que ja foi aprovado, o que esta em gravacao, o que subiu para o Drive e o que ja foi editado, sempre na mesma linha e sem excesso visual."
+        title="Gravacoes"
       />
 
-      <Card className="rounded-[28px] border-border/90 bg-white/95">
-        <CardContent className="space-y-5 p-5 lg:p-6">
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="text-sm font-semibold text-foreground">Fluxo horizontal</p>
-              <p className="mt-1 text-[13px] leading-6 text-muted-foreground">
-                Arraste os roteiros entre as etapas. O olho abre uma tela de leitura para gravar e o lapis abre a edicao completa.
-              </p>
+      <Card className="rounded-[24px] border-border/90 bg-white/95">
+        <CardContent className="space-y-4 p-4 lg:p-5">
+          <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+            <div className="flex flex-wrap items-center gap-2">
+              {categoryOptions.map((option) => (
+                <button
+                  key={option}
+                  type="button"
+                  onClick={() => setActiveCategory(option)}
+                  className={cn(
+                    'inline-flex h-8 items-center rounded-full border px-3 text-[12px] font-medium transition',
+                    activeCategory === option
+                      ? 'border-[#17171b] bg-[#17171b] text-white'
+                      : 'border-border bg-white text-muted-foreground hover:bg-muted'
+                  )}
+                >
+                  {option === 'all' ? 'Todas' : option}
+                </button>
+              ))}
             </div>
-            <span className="rounded-full border border-border bg-muted px-3 py-1 text-[11px] font-medium text-muted-foreground">
-              {cards.length} roteiros em producao
-            </span>
+
+            <div className="flex items-center justify-between gap-2">
+              <div className="inline-flex rounded-full border border-border bg-muted/30 p-1">
+                {recordingViewModes.map((mode) => {
+                  const Icon = mode.icon;
+                  const active = viewMode === mode.key;
+
+                  return (
+                    <button
+                      key={mode.key}
+                      type="button"
+                      onClick={() => setViewMode(mode.key)}
+                      className={cn(
+                        'inline-flex h-8 items-center gap-2 rounded-full px-3 text-[12px] font-medium transition',
+                        active ? 'bg-white text-foreground shadow-sm' : 'text-muted-foreground'
+                      )}
+                    >
+                      <Icon className="h-4 w-4" />
+                      {mode.label}
+                    </button>
+                  );
+                })}
+              </div>
+
+              <span className="rounded-full border border-border bg-muted px-3 py-1 text-[11px] font-medium text-muted-foreground">
+                {filteredCards.length} blocos
+              </span>
+            </div>
           </div>
 
-          <div className="overflow-x-auto pb-2">
-            <DndContext sensors={sensors} collisionDetection={closestCorners} onDragEnd={handleDragEnd}>
-              <div className="flex min-w-max gap-4">
-                {groupedCards.map((column) => (
-                  <RecordingColumn
-                    key={column.key}
-                    column={column}
-                    cards={column.cards}
-                    onView={setViewingCard}
-                    onEdit={setEditingCard}
-                    loadingId={loadingId}
-                  />
-                ))}
-              </div>
-            </DndContext>
-          </div>
+          {viewMode === 'flow' ? (
+            <div className="overflow-x-auto pb-2">
+              <DndContext sensors={sensors} collisionDetection={closestCorners} onDragEnd={handleDragEnd}>
+                <div className="flex min-w-max gap-4">
+                  {groupedCards.map((column) => (
+                    <RecordingColumn
+                      key={column.key}
+                      column={column}
+                      cards={column.cards}
+                      onView={setViewingCard}
+                      onEdit={(card) => {
+                        setEditingCard(buildRecordingFormFromCard(card));
+                        setEditingMode('edit');
+                      }}
+                      onAdd={openCreateCard}
+                      loadingId={loadingId}
+                    />
+                  ))}
+                </div>
+              </DndContext>
+            </div>
+          ) : viewMode === 'list' ? (
+            <div className="space-y-2">
+              {listCards.length ? (
+                listCards.map((card) => (
+                  <div key={card.id} className="rounded-[20px] border border-border bg-white p-3.5">
+                    <div className="flex items-center justify-between gap-3">
+                      <div className="min-w-0">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span className="rounded-full border border-border bg-muted/40 px-2.5 py-1 text-[10px] font-medium uppercase tracking-[0.16em] text-muted-foreground">
+                            {cardCategory(card)}
+                          </span>
+                          {card.dueDate ? (
+                            <span className="rounded-full border border-border bg-white px-2.5 py-1 text-[10px] font-medium uppercase tracking-[0.16em] text-muted-foreground">
+                              {card.dueDate}
+                            </span>
+                          ) : null}
+                        </div>
+                        <p className="mt-2 truncate text-sm font-semibold text-foreground">{card.title}</p>
+                        <p className="mt-1 line-clamp-1 text-[13px] text-muted-foreground">{card.hook}</p>
+                      </div>
+                      <div className="flex items-center gap-1">
+                        <button
+                          type="button"
+                          onClick={() => setViewingCard(card)}
+                          className="inline-flex h-8 w-8 items-center justify-center rounded-xl border border-border bg-white transition hover:bg-muted"
+                          aria-label="Ver bloco"
+                        >
+                          <Eye className="h-4 w-4" />
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setEditingCard(buildRecordingFormFromCard(card));
+                            setEditingMode('edit');
+                          }}
+                          className="inline-flex h-8 w-8 items-center justify-center rounded-xl border border-border bg-white transition hover:bg-muted"
+                          aria-label="Editar bloco"
+                        >
+                          <PencilLine className="h-4 w-4" />
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                ))
+              ) : (
+                <div className="rounded-[20px] border border-dashed border-border bg-muted/20 p-4 text-[13px] leading-6 text-muted-foreground">
+                  Nenhum bloco nesta visualizacao.
+                </div>
+              )}
+            </div>
+          ) : (
+            <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+              {listCards.length ? (
+                listCards.map((card) => (
+                  <div key={card.id} className="rounded-[22px] border border-border bg-white p-4 shadow-soft">
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <p className="truncate text-sm font-semibold text-foreground">{card.title}</p>
+                        <p className="mt-2 line-clamp-2 text-[13px] leading-6 text-muted-foreground">{card.hook}</p>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => openCreateCard(card.column)}
+                        className="inline-flex h-8 w-8 items-center justify-center rounded-xl border border-border bg-white transition hover:bg-muted"
+                        aria-label="Adicionar bloco"
+                      >
+                        <Plus className="h-4 w-4" />
+                      </button>
+                    </div>
+                    <div className="mt-3 flex flex-wrap gap-2">
+                      <span className="rounded-full border border-border bg-muted/40 px-2.5 py-1 text-[10px] font-medium uppercase tracking-[0.16em] text-muted-foreground">
+                        {cardCategory(card)}
+                      </span>
+                      {card.labels.map((label) => (
+                        <span key={`${card.id}-${label}`} className="rounded-full border border-border bg-white px-2.5 py-1 text-[10px] font-medium uppercase tracking-[0.16em] text-muted-foreground">
+                          {label}
+                        </span>
+                      ))}
+                    </div>
+                    <div className="mt-4 flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setViewingCard(card)}
+                        className="inline-flex h-8 items-center gap-2 rounded-full border border-border bg-white px-3 text-[12px] font-medium text-foreground transition hover:bg-muted"
+                      >
+                        <Eye className="h-4 w-4" />
+                        Ver
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setEditingCard(buildRecordingFormFromCard(card));
+                          setEditingMode('edit');
+                        }}
+                        className="inline-flex h-8 items-center gap-2 rounded-full border border-border bg-white px-3 text-[12px] font-medium text-foreground transition hover:bg-muted"
+                      >
+                        <PencilLine className="h-4 w-4" />
+                        Editar
+                      </button>
+                    </div>
+                  </div>
+                ))
+              ) : (
+                <div className="rounded-[20px] border border-dashed border-border bg-muted/20 p-4 text-[13px] leading-6 text-muted-foreground md:col-span-2 xl:col-span-3">
+                  Nenhum bloco nesta visualizacao.
+                </div>
+              )}
+            </div>
+          )}
         </CardContent>
       </Card>
 
       {viewingCard ? <RecordingViewModal card={viewingCard} onClose={() => setViewingCard(null)} /> : null}
       {editingCard ? (
         <RecordingEditModal
+          title={editingMode === 'create' ? 'Novo bloco' : 'Editar bloco'}
           card={editingCard}
           saving={loadingId === editingCard.id}
           onChange={setEditingCard}
-          onSave={saveEditedCard}
-          onClose={() => setEditingCard(null)}
+          onSave={saveCard}
+          onClose={() => {
+            setEditingCard(null);
+            setEditingMode(null);
+          }}
         />
       ) : null}
     </div>

@@ -5,11 +5,10 @@ export default function CompetitorsPage() {
     <SimpleModuleShell
       eyebrow="Concorrentes"
       title="Mapa de referencias"
-      description="Aqui a ideia e enxergar concorrentes como repertorio estrategico da operacao, nao como uma pagina lotada de widgets sem utilidade."
       highlights={[
-        'Anotacoes e repertorio visual de quem esta performando melhor.',
-        'Espaco para insights curtos, sem ruido visual.',
-        'Preparado para crescer com IA e pesquisa manual depois.'
+        'Anotacoes e repertorio visual do que performa melhor.',
+        'Espaco para insights curtos e sem ruido.',
+        'Preparado para crescer com IA depois.'
       ]}
     />
   );

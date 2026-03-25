@@ -115,7 +115,6 @@ export function ProductsWorkspace({
       <PageIntro
         eyebrow="Produtos"
         title="Base que alimenta roteiro e operacao"
-        description="Cadastre cada produto com beneficios, publico e restricoes para que a IA e o time partam sempre do mesmo contexto."
       />
 
       <div className="grid gap-4 xl:grid-cols-[0.95fr_1.05fr]">

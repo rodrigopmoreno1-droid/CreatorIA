@@ -2,7 +2,7 @@
 
 import { useMemo, useState } from 'react';
 import Link from 'next/link';
-import { Loader2, PencilLine, Plus, Sparkles, Trash2 } from 'lucide-react';
+import { Bot, Loader2, PencilLine, Plus, Sparkles, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 
 import { Badge } from '@/components/ui/badge';
@@ -272,7 +272,6 @@ export function ScriptsWorkspace({
       <PageIntro
         eyebrow="Roteiros"
         title="Geracao, edicao e aprovacao"
-        description="Escreva o objetivo, escolha um produto, traga contexto de referencia e deixe a IA montar tres roteiros prontos para refinamento e aprovacao."
         actions={
           <Button variant="outline" onClick={() => setPrompt('')}>
             Limpar briefing
@@ -281,18 +280,16 @@ export function ScriptsWorkspace({
       />
 
       <div className="grid gap-4 xl:grid-cols-[0.98fr_1.02fr]">
-        <Card className="rounded-[28px] border-border/90 bg-white/95">
-          <CardContent className="space-y-5 p-5 lg:p-6">
+        <Card className="rounded-[24px] border-border/90 bg-white/95">
+          <CardContent className="space-y-4 p-4 lg:p-5">
             <div className="flex items-center justify-between">
               <div>
-                <p className="text-sm font-semibold text-foreground">Briefing de roteiro</p>
-                <p className="mt-1 text-[13px] leading-6 text-muted-foreground">
-                  A IA usa o pedido, o produto selecionado e o contexto de referencia para sugerir tres caminhos diferentes.
-                </p>
+                <p className="text-sm font-semibold text-foreground">Briefing</p>
+                <p className="mt-1 text-[13px] leading-6 text-muted-foreground">IA, produto e contexto viram tres propostas.</p>
               </div>
-              <Badge variant="outline" className="rounded-full">
-                IA aplicada
-              </Badge>
+              <div className="flex h-9 w-9 items-center justify-center rounded-full border border-border bg-muted/30 text-foreground" aria-label="IA aplicada">
+                <Bot className="h-4 w-4" />
+              </div>
             </div>
 
             <div className="space-y-2">
@@ -300,8 +297,8 @@ export function ScriptsWorkspace({
               <Textarea
                 value={prompt}
                 onChange={(event) => setPrompt(event.target.value)}
-                placeholder="Ex.: quero um roteiro para vender consultoria contábil usando um gancho atual sobre risco fiscal e uma linguagem humana."
-                className="min-h-[170px]"
+                placeholder="Ex.: quero um roteiro para vender consultoria contabil usando um gancho atual sobre risco fiscal e uma linguagem humana."
+                className="min-h-[138px]"
               />
             </div>
 
@@ -328,8 +325,8 @@ export function ScriptsWorkspace({
                 <Textarea
                   value={referenceContext}
                   onChange={(event) => setReferenceContext(event.target.value)}
-                  placeholder="Ex.: buscar noticias recentes sobre tributacao, fraude fiscal, polêmicas de mercado ou tendencias que conversem com o produto."
-                  className="min-h-[120px]"
+                  placeholder="Ex.: buscar noticias recentes sobre tributacao, fraude fiscal, polemicas de mercado ou tendencias que conversem com o produto."
+                  className="min-h-[104px]"
                 />
               </div>
             </div>
@@ -350,36 +347,36 @@ export function ScriptsWorkspace({
           </CardContent>
         </Card>
 
-        <Card className="rounded-[28px] border-border/90 bg-[#17171b] text-white">
-          <CardContent className="space-y-4 p-5 lg:p-6">
+        <Card className="rounded-[24px] border-border/90 bg-[#17171b] text-white">
+          <CardContent className="space-y-3.5 p-4 lg:p-5">
             <div className="flex items-center justify-between">
               <div>
-                <p className="text-[11px] font-semibold uppercase tracking-[0.24em] text-white/45">Contexto escolhido</p>
-                <h2 className="mt-3 text-[24px] font-semibold tracking-tight">O que a IA vai usar</h2>
+                <p className="text-[10px] font-semibold uppercase tracking-[0.24em] text-white/45">Contexto</p>
+                <h2 className="mt-2 text-[22px] font-semibold tracking-tight">O que a IA vai usar</h2>
               </div>
               <Sparkles className="h-4 w-4 text-white/58" />
             </div>
 
-            <div className="space-y-3">
-              <div className="rounded-[22px] border border-white/10 bg-white/6 p-4">
-                <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-white/42">Produto</p>
-                <p className="mt-2 text-sm text-white">{selectedProduct?.name ?? 'Sem produto vinculado'}</p>
-                <p className="mt-2 text-[13px] leading-6 text-white/62">
+            <div className="space-y-2.5">
+              <div className="rounded-[18px] border border-white/10 bg-white/6 p-3.5">
+                <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-white/42">Produto</p>
+                <p className="mt-1.5 text-sm text-white">{selectedProduct?.name ?? 'Sem produto vinculado'}</p>
+                <p className="mt-1.5 text-[13px] leading-5 text-white/62">
                   {selectedProduct
                     ? [selectedProduct.benefits, selectedProduct.audience].filter(Boolean).join(' · ') || 'Use o produto para direcionar beneficio e publico.'
-                    : 'Voce pode deixar livre ou amarrar o roteiro a um produto cadastrado.'}
+                    : 'Pode ficar livre ou amarrado a um produto cadastrado.'}
                 </p>
               </div>
-              <div className="rounded-[22px] border border-white/10 bg-white/6 p-4">
-                <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-white/42">Briefing</p>
-                <p className="mt-2 text-[13px] leading-6 text-white/78">
+              <div className="rounded-[18px] border border-white/10 bg-white/6 p-3.5">
+                <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-white/42">Briefing</p>
+                <p className="mt-1.5 text-[13px] leading-5 text-white/78">
                   {prompt.trim() || 'Escreva o objetivo do conteudo para a IA sugerir angulos melhores.'}
                 </p>
               </div>
-              <div className="rounded-[22px] border border-white/10 bg-white/6 p-4">
-                <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-white/42">Referencias</p>
-                <p className="mt-2 text-[13px] leading-6 text-white/78">
-                  {referenceContext.trim() || 'Adicione noticias, tendencias e ganchos para dar repertorio real aos roteiros.'}
+              <div className="rounded-[18px] border border-white/10 bg-white/6 p-3.5">
+                <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-white/42">Referencias</p>
+                <p className="mt-1.5 text-[13px] leading-5 text-white/78">
+                  {referenceContext.trim() || 'Adicione noticias, tendencias e ganchos para dar repertorio real.'}
                 </p>
               </div>
             </div>
@@ -388,45 +385,45 @@ export function ScriptsWorkspace({
       </div>
 
       <div className="grid gap-4 xl:grid-cols-[1.02fr_0.98fr]">
-        <Card className="rounded-[28px] border-border/90 bg-white/95">
-          <CardContent className="space-y-4 p-5 lg:p-6">
+        <Card className="rounded-[24px] border-border/90 bg-white/95">
+          <CardContent className="space-y-4 p-4 lg:p-5">
             <div className="flex items-center justify-between">
               <div>
-                <p className="text-sm font-semibold text-foreground">Roteiros gerados agora</p>
-                <p className="mt-1 text-[13px] text-muted-foreground">Revise, ajuste e salve apenas o que estiver realmente bom.</p>
+                <p className="text-sm font-semibold text-foreground">Gerados agora</p>
+                <p className="mt-1 text-[13px] text-muted-foreground">Revise e salve o que realmente valer seguir.</p>
               </div>
               <Badge variant="secondary" className="rounded-full">
                 {generatedScripts.length} variacoes
               </Badge>
             </div>
 
-            <div className="space-y-3">
+            <div className="space-y-2.5">
               {generatedScripts.length ? (
                 generatedScripts.map((script) => (
-                  <div key={script.id} className="rounded-[24px] border border-border bg-muted/20 p-4">
+                  <div key={script.id} className="rounded-[20px] border border-border bg-muted/20 p-3.5">
                     <div className="flex items-start justify-between gap-3">
                       <div className="min-w-0">
                         <p className="truncate text-sm font-semibold text-foreground">{script.title}</p>
-                        <p className="mt-2 line-clamp-2 text-[13px] leading-6 text-muted-foreground">{script.hook}</p>
+                        <p className="mt-1.5 line-clamp-2 text-[13px] leading-5 text-muted-foreground">{script.hook}</p>
                       </div>
-                      <Badge variant="outline" className="rounded-full">
-                        IA
-                      </Badge>
+                      <div className="flex h-8 w-8 items-center justify-center rounded-full border border-border bg-white text-foreground">
+                        <Bot className="h-4 w-4" />
+                      </div>
                     </div>
-                    <div className="mt-4 flex flex-wrap gap-2">
+                    <div className="mt-3 flex flex-wrap gap-2">
                       <Button variant="outline" size="sm" onClick={() => setEditingDraft(script)}>
                         <PencilLine className="h-4 w-4" />
                         Editar
                       </Button>
                       <Button size="sm" onClick={() => saveGeneratedScript(script)} disabled={savingDraftId === script.id}>
                         {savingDraftId === script.id ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
-                        Salvar roteiro
+                        Salvar
                       </Button>
                     </div>
                   </div>
                 ))
               ) : (
-                <div className="rounded-[24px] border border-dashed border-border bg-muted/20 p-5 text-[13px] leading-6 text-muted-foreground">
+                <div className="rounded-[20px] border border-dashed border-border bg-muted/20 p-4 text-[13px] leading-6 text-muted-foreground">
                   Assim que voce gerar, os tres roteiros aparecem aqui para revisao rapida e edicao completa.
                 </div>
               )}
@@ -434,14 +431,12 @@ export function ScriptsWorkspace({
           </CardContent>
         </Card>
 
-        <Card className="rounded-[28px] border-border/90 bg-white/95">
-          <CardContent className="space-y-5 p-5 lg:p-6">
+        <Card className="rounded-[24px] border-border/90 bg-white/95">
+          <CardContent className="space-y-4 p-4 lg:p-5">
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-sm font-semibold text-foreground">Base de roteiros</p>
-                <p className="mt-1 text-[13px] text-muted-foreground">
-                  O que ainda esta em rascunho e o que ja esta aprovado para seguir para a gravacao.
-                </p>
+                <p className="mt-1 text-[13px] text-muted-foreground">Rascunhos e aprovados em uma leitura rapida.</p>
               </div>
               <Badge variant="outline" className="rounded-full">
                 {scripts.length} no total
@@ -449,19 +444,19 @@ export function ScriptsWorkspace({
             </div>
 
             <div className="space-y-4">
-              <div className="space-y-3">
+              <div className="space-y-2.5">
                 <div className="flex items-center justify-between">
-                  <p className="text-[12px] font-semibold uppercase tracking-[0.2em] text-muted-foreground">Rascunhos</p>
+                  <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">Rascunhos</p>
                   <span className="text-[12px] text-muted-foreground">{draftScripts.length}</span>
                 </div>
                 {draftScripts.length ? (
                   draftScripts.map((script) => (
-                    <div key={script.id} className="rounded-[24px] border border-border bg-muted/20 p-4">
+                    <div key={script.id} className="rounded-[20px] border border-border bg-muted/20 p-3.5">
                       <div className="flex items-start justify-between gap-3">
                         <div className="min-w-0">
                           <p className="truncate text-sm font-semibold text-foreground">{script.title}</p>
-                          <p className="mt-2 line-clamp-2 text-[13px] leading-6 text-muted-foreground">{script.hook}</p>
-                          <p className="mt-3 text-[12px] text-muted-foreground">
+                          <p className="mt-1.5 line-clamp-2 text-[13px] leading-5 text-muted-foreground">{script.hook}</p>
+                          <p className="mt-2.5 text-[12px] text-muted-foreground">
                             {script.productName || 'Sem produto'} · atualizado em {formatDateLabel(script.updatedAt)}
                           </p>
                         </div>
@@ -491,34 +486,34 @@ export function ScriptsWorkspace({
                           disabled={busyScriptId === script.id}
                         >
                           {busyScriptId === script.id ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
-                          Aprovar para gravacao
+                          Aprovar
                         </Button>
                       </div>
                     </div>
                   ))
                 ) : (
-                  <div className="rounded-[20px] border border-dashed border-border bg-muted/20 p-4 text-[13px] leading-6 text-muted-foreground">
+                  <div className="rounded-[18px] border border-dashed border-border bg-muted/20 p-3.5 text-[13px] leading-6 text-muted-foreground">
                     Nenhum rascunho salvo ainda.
                   </div>
                 )}
               </div>
 
-              <div className="space-y-3">
+              <div className="space-y-2.5">
                 <div className="flex items-center justify-between">
-                  <p className="text-[12px] font-semibold uppercase tracking-[0.2em] text-muted-foreground">Aprovados</p>
+                  <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">Aprovados</p>
                   <span className="text-[12px] text-muted-foreground">{approvedScripts.length}</span>
                 </div>
                 {approvedScripts.length ? (
                   approvedScripts.map((script) => (
-                    <div key={script.id} className="rounded-[24px] border border-border bg-white p-4">
+                    <div key={script.id} className="rounded-[20px] border border-border bg-white p-3.5">
                       <p className="text-sm font-semibold text-foreground">{script.title}</p>
-                      <p className="mt-2 text-[13px] leading-6 text-muted-foreground">
+                      <p className="mt-1.5 text-[13px] leading-5 text-muted-foreground">
                         {script.productName || 'Sem produto'} · pronto para aparecer em Gravações
                       </p>
                     </div>
                   ))
                 ) : (
-                  <div className="rounded-[20px] border border-dashed border-border bg-muted/20 p-4 text-[13px] leading-6 text-muted-foreground">
+                  <div className="rounded-[18px] border border-dashed border-border bg-muted/20 p-3.5 text-[13px] leading-6 text-muted-foreground">
                     Os roteiros aprovados aparecem aqui e seguem para a pagina de gravacoes.
                   </div>
                 )}

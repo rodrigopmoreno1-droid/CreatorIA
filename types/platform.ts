@@ -19,7 +19,12 @@ export type ProductItem = {
   createdAt: string;
 };
 
-export type ScriptStatus = 'draft' | 'approved';
+export type ScriptStatus = 'draft' | 'approved' | 'recording' | 'drive' | 'edited';
+
+export type RecordingField = {
+  key: string;
+  value: string;
+};
 
 export type ScriptItem = {
   id: string;
@@ -44,6 +49,10 @@ export type RecordingCard = {
   id: string;
   scriptId: string;
   title: string;
+  category: string;
+  dueDate: string;
+  labels: string[];
+  fields: RecordingField[];
   hook: string;
   spoken: string;
   takes: string[];

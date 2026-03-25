@@ -78,7 +78,6 @@ export function AiChatWorkspace({
       <PageIntro
         eyebrow="Chat IA"
         title="Assistente da operacao"
-        description="Use a IA para destravar roteiro, revisar argumento, pensar calendario ou resumir um contexto rapido da equipe."
       />
 
       <div className="grid gap-4 xl:grid-cols-[0.72fr_1.28fr]">

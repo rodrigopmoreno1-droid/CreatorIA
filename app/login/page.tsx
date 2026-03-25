@@ -80,7 +80,7 @@ export default async function LoginPage() {
                 {[
                   'Dashboard mais enxuto e direto',
                   'Roteiros com IA e edicao real',
-                  'Gravacoes em Kanban arrastavel',
+                  'Gravacoes arrastaveis',
                   'Produtos como base da operacao'
                 ].map((item) => (
                   <div key={item} className="rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm text-white/85">

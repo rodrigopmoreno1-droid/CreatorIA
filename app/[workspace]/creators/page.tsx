@@ -5,11 +5,10 @@ export default function CreatorsPage() {
     <SimpleModuleShell
       eyebrow="Blogueiras"
       title="Base de criadoras"
-      description="Esse modulo vai concentrar perfis, nichos, historico e observacoes para o time tomar decisoes de conteudo e parceria sem perder contexto."
       highlights={[
-        'Perfis organizados com status e anotacoes da operacao.',
-        'Visao simples para briefing e alinhamento de gravacao.',
-        'Espaco preparado para metricas e historico depois.'
+        'Perfis organizados com status e notas curtas.',
+        'Visao simples para briefing e alinhamento.',
+        'Espaco preparado para metricas e historico.'
       ]}
     />
   );
