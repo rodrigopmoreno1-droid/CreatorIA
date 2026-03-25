@@ -42,7 +42,7 @@ export function AppShell({
       <div className="mx-auto flex min-h-screen max-w-[1640px] gap-4 p-3 lg:p-4">
         <aside
           className={cn(
-            'sticky top-3 hidden h-[calc(100vh-1.5rem)] shrink-0 flex-col rounded-[2rem] border border-white/70 bg-white/80 px-4 py-5 shadow-soft backdrop-blur-xl lg:flex',
+            'dark-rail sticky top-3 hidden h-[calc(100vh-1.5rem)] shrink-0 flex-col rounded-[2rem] px-4 py-5 text-white lg:flex',
             sidebarOpen ? 'w-[304px]' : 'w-[92px]'
           )}
         >
@@ -53,7 +53,7 @@ export function AppShell({
             {sidebarOpen ? (
               <div>
                 <p className="font-display text-lg font-semibold tracking-tight">ContentOS</p>
-                <p className="text-xs text-muted-foreground">Operação de conteúdo com IA</p>
+                <p className="text-xs text-white/55">Operação de conteúdo com IA</p>
               </div>
             ) : null}
           </div>
@@ -76,8 +76,8 @@ export function AppShell({
                   className={cn(
                     'group flex items-center gap-3 rounded-2xl px-3 py-3 text-sm font-medium transition',
                     active
-                      ? 'bg-[#2e2b54] text-white shadow-soft'
-                      : 'text-foreground/75 hover:bg-white hover:text-foreground'
+                      ? 'bg-white text-[#17171b] shadow-soft'
+                      : 'text-white/68 hover:bg-white/8 hover:text-white'
                   )}
                 >
                   <Icon className="h-4 w-4 shrink-0" />
@@ -97,13 +97,13 @@ export function AppShell({
               <Plus className="h-4 w-4" />
               {sidebarOpen ? 'Criar' : null}
             </Button>
-            <Button variant="glass" className="w-full justify-start bg-white/90" size="sm">
+            <Button variant="glass" className="w-full justify-start border-white/10 bg-white/10 text-white hover:bg-white/16 hover:text-white" size="sm">
               <Bot className="h-4 w-4" />
               {sidebarOpen ? 'Abrir IA' : null}
             </Button>
           </div>
 
-          <div className="mt-5 rounded-3xl border border-white/80 bg-[linear-gradient(145deg,#2e2b54,#5b66d6)] p-4 text-white shadow-soft">
+          <div className="mt-5 rounded-3xl border border-white/10 bg-white/6 p-4 text-white shadow-soft backdrop-blur-xl">
             {sidebarOpen ? (
               <>
                 <p className="text-xs uppercase tracking-[0.2em] text-white/60">Workspace ativo</p>
@@ -121,14 +121,14 @@ export function AppShell({
             <button
               type="button"
               onClick={() => setSidebarOpen(!sidebarOpen)}
-              className="inline-flex flex-1 items-center justify-center rounded-2xl border border-border bg-white p-3 text-foreground shadow-sm transition hover:bg-accent hover:text-accent-foreground"
+              className="inline-flex flex-1 items-center justify-center rounded-2xl border border-white/10 bg-white/6 p-3 text-white shadow-sm transition hover:bg-white/12"
             >
               {sidebarOpen ? <ChevronLeft className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
             </button>
             {sidebarOpen ? (
               <Link
                 href="/login"
-                className="inline-flex items-center gap-2 rounded-2xl border border-border bg-white px-4 py-3 text-sm font-medium text-foreground transition hover:bg-accent hover:text-accent-foreground"
+                className="inline-flex items-center gap-2 rounded-2xl border border-white/10 bg-white/6 px-4 py-3 text-sm font-medium text-white transition hover:bg-white/12"
               >
                 <LogOut className="h-4 w-4" />
                 Trocar conta
@@ -137,8 +137,8 @@ export function AppShell({
           </div>
         </aside>
 
-        <div className="flex min-h-screen flex-1 flex-col overflow-hidden rounded-[2rem] border border-white/70 bg-[#fcfaf7]/88 shadow-soft backdrop-blur-xl">
-          <header className="sticky top-0 z-20 border-b border-border/70 bg-[#fcfaf7]/90 backdrop-blur-xl">
+        <div className="surface-shell flex min-h-screen flex-1 flex-col overflow-hidden rounded-[2rem]">
+          <header className="sticky top-0 z-20 border-b border-white/75 bg-[rgba(252,250,247,0.92)] backdrop-blur-xl">
             <div className="flex flex-col gap-4 px-4 py-4 lg:px-6">
               <div className="flex items-center gap-3">
                 <div className="flex h-11 flex-1 items-center gap-3 rounded-full border border-white/80 bg-white/90 px-4 shadow-sm">
@@ -155,10 +155,10 @@ export function AppShell({
                 </div>
 
                 <div className="hidden items-center gap-2 md:flex">
-                  <Button variant="outline" size="icon" className="rounded-2xl">
+                  <Button variant="outline" size="icon" className="rounded-2xl bg-white/90">
                     <Mail className="h-4 w-4" />
                   </Button>
-                  <Button variant="outline" size="icon" className="rounded-2xl">
+                  <Button variant="outline" size="icon" className="rounded-2xl bg-white/90">
                     <BellDot className="h-4 w-4" />
                   </Button>
                   <Button variant="outline" size="sm" className="rounded-2xl bg-white">
@@ -179,7 +179,7 @@ export function AppShell({
                   <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-[linear-gradient(145deg,#ffd9ad,#f9f4d7)] text-sm font-semibold text-[#2e2b54] shadow-sm">
                     {(currentWorkspace?.name ?? 'CO').slice(0, 2).toUpperCase()}
                   </div>
-                  <Button className="bg-[#2e2b54] text-white hover:opacity-95" size="sm">
+                  <Button size="sm">
                     <Plus className="h-4 w-4" />
                     Criar
                   </Button>
@@ -214,7 +214,7 @@ export function AppShell({
                       className={cn(
                         'inline-flex items-center gap-2 rounded-full border px-3 py-2 text-sm font-medium whitespace-nowrap transition',
                         active
-                          ? 'border-[#2e2b54] bg-[#2e2b54] text-white'
+                          ? 'gradient-sunset border-transparent text-white'
                           : 'border-white/80 bg-white/85 text-foreground'
                       )}
                     >

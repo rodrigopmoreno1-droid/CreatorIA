@@ -199,7 +199,7 @@ function SectionHeader({
   return (
     <div className="flex flex-col gap-4 border-b border-border/80 pb-5 md:flex-row md:items-end md:justify-between">
       <div>
-        <div className="mb-3 inline-flex items-center gap-2 rounded-full border border-border bg-white px-3 py-1 text-xs font-semibold uppercase tracking-[0.22em] text-muted-foreground shadow-sm">
+        <div className="mb-3 inline-flex items-center gap-2 rounded-full border border-white/80 bg-white px-3 py-1 text-xs font-semibold uppercase tracking-[0.22em] text-muted-foreground shadow-sm">
           ContentOS
         </div>
         <h1 className="font-display text-3xl font-semibold tracking-tight text-balance md:text-4xl">{title}</h1>
@@ -226,7 +226,7 @@ function StatCard({ label, value, trend }: { label: string; value: string; trend
 
 function Pill({ children }: { children: React.ReactNode }) {
   return (
-    <span className="inline-flex items-center rounded-full border border-border bg-white px-3 py-1 text-xs font-medium text-muted-foreground shadow-sm">
+    <span className="surface-muted inline-flex items-center rounded-full px-3 py-1 text-xs font-medium text-muted-foreground">
       {children}
     </span>
   );
@@ -246,7 +246,7 @@ function ModuleCard({
   className?: string;
 }) {
   return (
-    <Card className={cn('glass', className)}>
+    <Card className={cn('surface-card inner-stroke', className)}>
       <CardHeader className="space-y-2">
         <div className="flex items-center justify-between gap-3">
           <CardTitle className="text-lg">{title}</CardTitle>
@@ -849,28 +849,62 @@ function ScriptsModule({ workspace }: { workspace: WorkspaceSnapshot }) {
 
 function StoriesModule({ workspace }: { workspace: WorkspaceSnapshot }) {
   return (
-    <div className="grid gap-6 xl:grid-cols-[1fr_0.9fr]">
-      <ModuleCard title="Sequência de stories" subtitle="Preview estilo Instagram">
-        <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
-          {workspace.stories.map((story, index) => (
-            <div key={story.id} className="rounded-[1.75rem] border border-border bg-gradient-to-br from-slate-900 to-slate-800 p-4 text-white">
-              <div className="flex items-center justify-between text-xs text-white/50">
-                <span>Story {index + 1}</span>
-                <span>{story.status}</span>
+    <div className="grid gap-6 xl:grid-cols-[1.1fr_0.9fr]">
+      <ModuleCard title="Sequência de stories" subtitle="Preview estilo Instagram" className="overflow-hidden">
+        <div className="space-y-6">
+          <div className="flex gap-4 overflow-x-auto pb-2">
+            {workspace.stories.map((story) => (
+              <div key={story.id} className="min-w-[92px] text-center">
+                <div className="story-ring mx-auto rounded-full p-[2px]">
+                  <div className="flex h-20 w-20 items-center justify-center rounded-full bg-white text-lg font-semibold text-[#17171b]">
+                    {story.title.charAt(0)}
+                  </div>
+                </div>
+                <p className="mt-3 text-sm font-medium text-foreground">{story.title.split(' ').slice(0, 2).join(' ')}</p>
+                <p className="text-xs text-muted-foreground">{story.time}</p>
               </div>
-              <p className="mt-4 font-display text-lg font-semibold">{story.title}</p>
-              <p className="mt-3 text-sm text-white/70">{story.hook}</p>
-              <div className="mt-5 rounded-2xl border border-white/10 bg-white/5 p-3">
-                <p className="text-xs uppercase tracking-[0.2em] text-white/50">Horário</p>
-                <p className="mt-1 font-medium">{story.time}</p>
+            ))}
+          </div>
+
+          <div className="grid gap-4 sm:grid-cols-2">
+            {workspace.stories.map((story, index) => (
+              <div key={story.id} className="overflow-hidden rounded-[1.75rem] border border-white/80 bg-[linear-gradient(180deg,#272344_0%,#171523_100%)] p-4 text-white shadow-soft">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-3">
+                    <div className="story-ring rounded-full p-[2px]">
+                      <div className="flex h-10 w-10 items-center justify-center rounded-full bg-white text-sm font-semibold text-[#17171b]">
+                        {index + 1}
+                      </div>
+                    </div>
+                    <div>
+                      <p className="text-sm font-semibold">{story.title}</p>
+                      <p className="text-xs text-white/55">{story.status}</p>
+                    </div>
+                  </div>
+                  <Badge className="border-white/10 bg-white/10 text-white">{story.time}</Badge>
+                </div>
+
+                <div className="mt-5 rounded-[1.5rem] border border-white/10 bg-white/6 p-4">
+                  <p className="text-xs uppercase tracking-[0.2em] text-white/50">Mensagem principal</p>
+                  <p className="mt-3 text-sm leading-6 text-white/75">{story.hook}</p>
+                </div>
+
+                <div className="mt-4 flex items-center justify-between text-white/70">
+                  <div className="flex items-center gap-3">
+                    <Heart className="h-4 w-4" />
+                    <MessageCircle className="h-4 w-4" />
+                    <Send className="h-4 w-4" />
+                  </div>
+                  <CheckCircle2 className="h-4 w-4" />
+                </div>
               </div>
-            </div>
-          ))}
+            ))}
+          </div>
         </div>
       </ModuleCard>
 
-      <ModuleCard title="Sugestão IA" subtitle="Roteiro de 5 telas para aumentar resposta">
-        <div className="space-y-3">
+      <ModuleCard title="Sugestão IA" subtitle="Roteiro de 5 telas para aumentar resposta" className="surface-muted">
+        <div className="space-y-4">
           {[
             'Tela 1: gancho rápido com dor principal',
             'Tela 2: prova visual com bastidor',
@@ -878,11 +912,18 @@ function StoriesModule({ workspace }: { workspace: WorkspaceSnapshot }) {
             'Tela 4: resultado ou transformação',
             'Tela 5: CTA para link ou DM'
           ].map((item, index) => (
-            <div key={item} className="flex items-start gap-3 rounded-2xl border border-border bg-background p-4">
-              <Badge variant="outline">{index + 1}</Badge>
+            <div key={item} className="flex items-start gap-3 rounded-[1.5rem] border border-white/70 bg-white/88 p-4">
+              <div className="gradient-sunset flex h-8 w-8 items-center justify-center rounded-full text-xs font-semibold text-white">
+                {index + 1}
+              </div>
               <p className="text-sm leading-6 text-muted-foreground">{item}</p>
             </div>
           ))}
+          <div className="dark-rail rounded-[1.5rem] p-5 text-white">
+            <p className="text-xs uppercase tracking-[0.2em] text-white/55">CTA sugerido</p>
+            <p className="mt-3 font-display text-2xl font-semibold">Leve para DM ou link com contexto.</p>
+            <p className="mt-2 text-sm text-white/65">A narrativa deve aquecer antes de pedir ação para manter retenção alta.</p>
+          </div>
         </div>
       </ModuleCard>
     </div>
@@ -910,6 +951,7 @@ function PipelineModule({ workspace }: { workspace: WorkspaceSnapshot }) {
   const columns = ['Ideia', 'Roteiro', 'Aprovado', 'Gravar', 'Gravado', 'Editar', 'Pronto', 'Postar', 'Postado'];
   const [cards, setCards] = useState(workspace.pipelineCards);
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 8 } }));
+  const columnAccents = ['bg-amber-400', 'bg-sky-400', 'bg-violet-400', 'bg-emerald-400', 'bg-rose-400', 'bg-cyan-400', 'bg-lime-400', 'bg-fuchsia-400', 'bg-slate-400'];
 
   const byColumn = useMemo(() => {
     return columns.reduce<Record<string, typeof cards>>((acc, column) => {
@@ -948,23 +990,25 @@ function PipelineModule({ workspace }: { workspace: WorkspaceSnapshot }) {
 
       <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={onDragEnd}>
         <div className="grid gap-4 xl:grid-cols-3 2xl:grid-cols-4">
-          {columns.map((column) => (
-            <Card key={column} className="glass p-4">
+          {columns.map((column, index) => (
+            <Card key={column} className="surface-card inner-stroke p-4">
               <div className="mb-4 flex items-center justify-between">
-                <div>
-                  <p className="font-medium">{column}</p>
-                  <p className="text-xs text-muted-foreground">{byColumn[column]?.length ?? 0} cards</p>
+                <div className="flex items-center gap-3">
+                  <span className={cn('h-3 w-3 rounded-full', columnAccents[index % columnAccents.length])} />
+                  <div>
+                    <p className="font-medium">{column}</p>
+                    <p className="text-xs text-muted-foreground">{byColumn[column]?.length ?? 0} cards</p>
+                  </div>
                 </div>
-                <Badge variant="outline">
-                  <Plus className="mr-1 h-3 w-3" />
-                  Novo
-                </Badge>
+                <Button variant="outline" size="sm" className="h-8 rounded-2xl px-3">
+                  <Plus className="h-3.5 w-3.5" />
+                </Button>
               </div>
               <SortableContext items={(byColumn[column] ?? []).map((card) => card.id)} strategy={rectSortingStrategy}>
                 <div className="space-y-3">
                   {(byColumn[column] ?? []).map((card) => (
                     <SortableCard key={card.id} id={card.id}>
-                      <div className="rounded-3xl border border-border bg-white p-4 shadow-sm">
+                      <div className="surface-muted rounded-[1.5rem] p-4">
                         <div className="flex items-start justify-between gap-3">
                           <div className="flex items-start gap-3">
                             <GripVertical className="mt-1 h-4 w-4 text-muted-foreground" />
@@ -977,10 +1021,35 @@ function PipelineModule({ workspace }: { workspace: WorkspaceSnapshot }) {
                             {card.priority}
                           </Badge>
                         </div>
+                        <div className="mt-4 rounded-[1.2rem] bg-white/70 p-3">
+                          <div className="flex items-center justify-between text-xs text-muted-foreground">
+                            <span>Progresso</span>
+                            <span>{card.column}</span>
+                          </div>
+                          <div className="mt-2 h-2 rounded-full bg-foreground/8">
+                            <div
+                              className="gradient-sunset h-2 rounded-full"
+                              style={{ width: `${card.priority === 'high' ? 78 : card.priority === 'medium' ? 58 : 34}%` }}
+                            />
+                          </div>
+                        </div>
                         <div className="mt-3 flex flex-wrap gap-2">
                           {card.tags.map((tag) => (
                             <Pill key={tag}>{tag}</Pill>
                           ))}
+                        </div>
+                        <div className="mt-4 flex items-center justify-between">
+                          <div className="flex -space-x-2">
+                            {[card.assignee.slice(0, 2).toUpperCase(), workspace.name.slice(0, 2).toUpperCase()].map((avatar) => (
+                              <span
+                                key={avatar}
+                                className="flex h-8 w-8 items-center justify-center rounded-full border border-white bg-white text-[10px] font-semibold text-[#17171b]"
+                              >
+                                {avatar}
+                              </span>
+                            ))}
+                          </div>
+                          <span className="text-xs text-muted-foreground">{card.tags.length} tags</span>
                         </div>
                       </div>
                     </SortableCard>
@@ -1015,14 +1084,35 @@ function LibraryModule({ workspace }: { workspace: WorkspaceSnapshot }) {
         </div>
       </div>
       <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-        {workspace.assets.map((asset) => (
+        {workspace.assets.map((asset, index) => (
           <ModuleCard key={asset.id} title={asset.title} subtitle={`${asset.type} · ${asset.source}`} badge={asset.size}>
             <div className="space-y-3">
-              <div className="rounded-3xl border border-border bg-gradient-to-br from-slate-900 to-slate-700 p-6 text-white">
-                <p className="text-xs uppercase tracking-[0.22em] text-white/50">Preview</p>
-                <div className="mt-10 h-20 rounded-2xl border border-white/10 bg-white/5" />
+              <div
+                className={cn(
+                  'rounded-[1.75rem] p-5 text-white',
+                  index % 3 === 0
+                    ? 'bg-[linear-gradient(135deg,#1f2548,#4c5bd6)]'
+                    : index % 3 === 1
+                      ? 'bg-[linear-gradient(135deg,#ffb46c,#ff7f66)]'
+                      : 'bg-[linear-gradient(135deg,#2c2c31,#121217)]'
+                )}
+              >
+                <div className="flex items-center justify-between">
+                  <p className="text-xs uppercase tracking-[0.22em] text-white/55">Preview</p>
+                  <FolderOpen className="h-4 w-4 text-white/65" />
+                </div>
+                <div className="mt-8 rounded-[1.4rem] border border-white/10 bg-white/10 p-4">
+                  <div className="h-16 rounded-[1rem] bg-white/18" />
+                  <div className="mt-4 flex items-center justify-between text-xs text-white/65">
+                    <span>{asset.source}</span>
+                    <span>{asset.type}</span>
+                  </div>
+                </div>
               </div>
-              <Badge variant="outline">{asset.tag}</Badge>
+              <div className="flex items-center justify-between">
+                <Badge variant="outline">{asset.tag}</Badge>
+                <span className="text-xs text-muted-foreground">{asset.size}</span>
+              </div>
             </div>
           </ModuleCard>
         ))}
@@ -1058,26 +1148,78 @@ function FeedModule({ workspace }: { workspace: WorkspaceSnapshot }) {
         </Badge>
       </div>
 
+      <div className="surface-card inner-stroke flex gap-4 overflow-x-auto rounded-[1.75rem] p-4">
+        {posts.map((post, index) => (
+          <div key={`${post.id}-story`} className="min-w-[88px] text-center">
+            <div className="story-ring mx-auto rounded-full p-[2px]">
+              <div className="flex h-16 w-16 items-center justify-center rounded-full bg-white text-sm font-semibold text-[#17171b]">
+                {index + 1}
+              </div>
+            </div>
+            <p className="mt-2 truncate text-sm font-medium text-foreground">{post.channel}</p>
+          </div>
+        ))}
+      </div>
+
       <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={onDragEnd}>
         <SortableContext items={posts.map((post) => post.id)} strategy={rectSortingStrategy}>
           <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
             {posts.map((post, index) => (
               <SortableCard key={post.id} id={post.id}>
-                <Card className="glass overflow-hidden">
-                  <div className="aspect-square bg-[linear-gradient(135deg,rgba(15,23,42,0.98),rgba(15,118,110,0.85))] p-4 text-white">
+                <Card className="surface-card inner-stroke overflow-hidden">
+                  <div className="p-4">
                     <div className="flex items-center justify-between">
-                      <span className="text-xs uppercase tracking-[0.22em] text-white/50">#{index + 1}</span>
-                      <GripVertical className="h-4 w-4 text-white/50" />
+                      <div className="flex items-center gap-3">
+                        <div className="story-ring rounded-full p-[2px]">
+                          <div className="flex h-11 w-11 items-center justify-center rounded-full bg-white text-sm font-semibold text-[#17171b]">
+                            {index + 1}
+                          </div>
+                        </div>
+                        <div>
+                          <p className="font-semibold text-foreground">{workspace.name}</p>
+                          <p className="text-xs text-muted-foreground">{post.channel}</p>
+                        </div>
+                      </div>
+                      <GripVertical className="h-4 w-4 text-muted-foreground" />
                     </div>
-                    <div className="mt-10 space-y-3">
-                      <p className="font-display text-2xl font-semibold tracking-tight">{post.title}</p>
-                      <p className="text-sm text-white/70">{post.channel}</p>
-                    </div>
-                    <div className="mt-10 flex flex-wrap gap-2">
-                      {post.tags.map((tag) => (
-                        <span key={tag} className="rounded-full bg-white/10 px-3 py-1 text-xs font-medium">
-                          {tag}
+
+                    <div
+                      className={cn(
+                        'mt-4 aspect-[4/5] rounded-[1.5rem] p-4 text-white',
+                        index % 3 === 0
+                          ? 'bg-[linear-gradient(135deg,#8fd3ff,#4f6bdc)]'
+                          : index % 3 === 1
+                            ? 'bg-[linear-gradient(135deg,#ffb56d,#ff6f7f)]'
+                            : 'bg-[linear-gradient(135deg,#2d2a54,#121217)]'
+                      )}
+                    >
+                      <div className="flex items-center justify-between">
+                        <span className="rounded-full bg-white/14 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em]">
+                          #{index + 1}
                         </span>
+                        <Pin className="h-4 w-4 text-white/70" />
+                      </div>
+                      <div className="mt-10 space-y-3">
+                        <p className="font-display text-2xl font-semibold tracking-tight">{post.title}</p>
+                        <p className="text-sm text-white/75">{post.scheduledAt}</p>
+                      </div>
+                    </div>
+
+                    <div className="mt-4 flex items-center justify-between">
+                      <div className="flex items-center gap-3 text-foreground">
+                        <Heart className="h-4 w-4" />
+                        <MessageCircle className="h-4 w-4" />
+                        <Send className="h-4 w-4" />
+                      </div>
+                      <Badge variant="outline">{post.status}</Badge>
+                    </div>
+
+                    <p className="mt-3 text-sm leading-6 text-muted-foreground">
+                      <span className="font-semibold text-foreground">@{workspace.slug}</span> {post.title}
+                    </p>
+                    <div className="mt-4 flex flex-wrap gap-2">
+                      {post.tags.map((tag) => (
+                        <Pill key={tag}>{tag}</Pill>
                       ))}
                     </div>
                   </div>
@@ -1094,40 +1236,48 @@ function FeedModule({ workspace }: { workspace: WorkspaceSnapshot }) {
 function PostsModule({ workspace }: { workspace: WorkspaceSnapshot }) {
   return (
     <ModuleCard title="Posts agendados" subtitle="Status, legenda e desempenho por canal">
-      <div className="overflow-hidden rounded-3xl border border-border bg-background">
-        <table className="w-full text-left text-sm">
-          <thead className="bg-muted/50 text-muted-foreground">
-            <tr>
-              <th className="px-4 py-3">Conteúdo</th>
-              <th className="px-4 py-3">Canal</th>
-              <th className="px-4 py-3">Status</th>
-              <th className="px-4 py-3">Agenda</th>
-              <th className="px-4 py-3">Engajamento</th>
-            </tr>
-          </thead>
-          <tbody>
-            {workspace.posts.map((post) => (
-              <tr key={post.id} className="border-t border-border">
-                <td className="px-4 py-4">
-                  <p className="font-medium">{post.title}</p>
-                  <div className="mt-2 flex flex-wrap gap-2">
-                    {post.tags.map((tag) => (
-                      <Pill key={tag}>{tag}</Pill>
-                    ))}
-                  </div>
-                </td>
-                <td className="px-4 py-4">{post.channel}</td>
-                <td className="px-4 py-4">
-                  <Badge variant={post.status === 'Publicado' ? 'success' : post.status === 'Agendado' ? 'warning' : 'outline'}>
-                    {post.status}
-                  </Badge>
-                </td>
-                <td className="px-4 py-4">{post.scheduledAt}</td>
-                <td className="px-4 py-4">{post.engagement}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+      <div className="grid gap-4 lg:grid-cols-2 xl:grid-cols-3">
+        {workspace.posts.map((post, index) => (
+          <div key={post.id} className="surface-muted rounded-[1.5rem] p-4">
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <p className="font-medium text-foreground">{post.title}</p>
+                <p className="mt-1 text-sm text-muted-foreground">{post.channel}</p>
+              </div>
+              <Badge variant={post.status === 'Publicado' ? 'success' : post.status === 'Agendado' ? 'warning' : 'outline'}>
+                {post.status}
+              </Badge>
+            </div>
+            <div
+              className={cn(
+                'mt-4 rounded-[1.35rem] p-4 text-white',
+                index % 2 === 0
+                  ? 'bg-[linear-gradient(135deg,#2d2a54,#4f68da)]'
+                  : 'bg-[linear-gradient(135deg,#ffb36b,#ff6178)]'
+              )}
+            >
+              <p className="text-xs uppercase tracking-[0.2em] text-white/55">Legenda base</p>
+              <p className="mt-3 text-sm leading-6 text-white/80">
+                {post.title} com foco em clareza, impacto visual e CTA direto.
+              </p>
+            </div>
+            <div className="mt-4 flex items-center justify-between text-sm">
+              <div>
+                <p className="text-muted-foreground">Agendamento</p>
+                <p className="font-medium text-foreground">{post.scheduledAt}</p>
+              </div>
+              <div className="text-right">
+                <p className="text-muted-foreground">Engajamento</p>
+                <p className="font-medium text-foreground">{post.engagement}</p>
+              </div>
+            </div>
+            <div className="mt-4 flex flex-wrap gap-2">
+              {post.tags.map((tag) => (
+                <Pill key={tag}>{tag}</Pill>
+              ))}
+            </div>
+          </div>
+        ))}
       </div>
     </ModuleCard>
   );
@@ -1362,37 +1512,50 @@ function AiChatModule({ workspace }: { workspace: WorkspaceSnapshot }) {
   }
 
   return (
-    <div className="grid gap-6 xl:grid-cols-[1fr_0.7fr]">
+    <div className="grid gap-6 xl:grid-cols-[1.05fr_0.75fr]">
       <ModuleCard title="Chat IA" subtitle="Interface no estilo ChatGPT para a operação" badge="online">
         <div className="space-y-4">
-          <div className="max-h-[480px] space-y-3 overflow-y-auto rounded-3xl border border-border bg-background p-4">
+          <div className="surface-muted max-h-[480px] space-y-3 overflow-y-auto rounded-[1.75rem] p-4">
             {messages.map((message, index) => (
               <div
                 key={`${message.role}-${index}`}
                 className={cn(
-                  'max-w-[85%] rounded-3xl px-4 py-3 text-sm leading-6',
+                  'max-w-[85%] rounded-[1.5rem] px-4 py-3 text-sm leading-6 shadow-sm',
                   message.role === 'assistant'
-                    ? 'bg-muted text-foreground'
-                    : 'ml-auto bg-foreground text-background'
+                    ? 'bg-white text-foreground'
+                    : 'gradient-sunset ml-auto text-white'
                 )}
               >
                 {message.content}
               </div>
             ))}
             {loading ? (
-              <div className="inline-flex items-center gap-2 rounded-3xl bg-muted px-4 py-3 text-sm text-muted-foreground">
+              <div className="inline-flex items-center gap-2 rounded-[1.5rem] bg-white px-4 py-3 text-sm text-muted-foreground">
                 <Loader2 className="h-4 w-4 animate-spin" />
                 Processando...
               </div>
             ) : null}
           </div>
-          <div className="flex gap-3">
-            <Textarea
-              value={prompt}
-              onChange={(event) => setPrompt(event.target.value)}
-              placeholder="Peça uma ideia, roteiro, story sequence ou análise..."
-              className="min-h-[110px] flex-1"
-            />
+          <div className="surface-muted rounded-[1.75rem] p-4">
+            <div className="flex gap-3">
+              <Textarea
+                value={prompt}
+                onChange={(event) => setPrompt(event.target.value)}
+                placeholder="Peça uma ideia, roteiro, story sequence ou análise..."
+                className="min-h-[110px] flex-1 border-white/70 bg-white"
+              />
+            </div>
+            <div className="mt-4 flex items-center justify-between gap-3">
+              <div className="flex flex-wrap gap-2">
+                {['Ideias', 'Roteiros', 'Stories'].map((tag) => (
+                  <Pill key={tag}>{tag}</Pill>
+                ))}
+              </div>
+              <Button onClick={sendPrompt} disabled={loading || !prompt.trim()}>
+                <Send className="h-4 w-4" />
+                Enviar
+              </Button>
+            </div>
           </div>
           <div className="flex flex-wrap gap-2">
             {[
@@ -1409,26 +1572,36 @@ function AiChatModule({ workspace }: { workspace: WorkspaceSnapshot }) {
         </div>
       </ModuleCard>
 
-      <ModuleCard title="Ferramentas IA" subtitle="Ações rápidas que o chat oferece">
-        <div className="space-y-3">
-          {[
-            ['generateIdeas', 'Ideias de conteúdo'],
-            ['generateScript', 'Roteiros completos'],
-            ['generateStories', 'Sequências de stories'],
-            ['analyzeMetrics', 'Leitura de métricas'],
-            ['analyzeCompetitors', 'Benchmark de concorrência'],
-            ['suggestCalendar', 'Calendário sugerido']
-          ].map(([key, label]) => (
-            <div key={key} className="flex items-center justify-between rounded-2xl border border-border bg-background p-4">
-              <div>
-                <p className="font-medium">{label}</p>
-                <p className="text-sm text-muted-foreground">{key}</p>
-              </div>
-              <Badge variant="success">pronto</Badge>
-            </div>
-          ))}
+      <div className="space-y-6">
+        <div className="dark-rail rounded-[1.75rem] p-5 text-white">
+          <p className="text-xs uppercase tracking-[0.2em] text-white/55">Persona ativa</p>
+          <p className="mt-3 font-display text-3xl font-semibold">{workspace.name}</p>
+          <p className="mt-2 text-sm leading-6 text-white/65">
+            A IA assume o contexto do workspace para gerar respostas acionáveis, curtas e prontas para operar.
+          </p>
         </div>
-      </ModuleCard>
+
+        <ModuleCard title="Ferramentas IA" subtitle="Ações rápidas que o chat oferece" className="surface-muted">
+          <div className="space-y-3">
+            {[
+              ['generateIdeas', 'Ideias de conteúdo'],
+              ['generateScript', 'Roteiros completos'],
+              ['generateStories', 'Sequências de stories'],
+              ['analyzeMetrics', 'Leitura de métricas'],
+              ['analyzeCompetitors', 'Benchmark de concorrência'],
+              ['suggestCalendar', 'Calendário sugerido']
+            ].map(([key, label]) => (
+              <div key={key} className="flex items-center justify-between rounded-[1.35rem] border border-white/70 bg-white/88 p-4">
+                <div>
+                  <p className="font-medium">{label}</p>
+                  <p className="text-sm text-muted-foreground">{key}</p>
+                </div>
+                <Badge variant="success">pronto</Badge>
+              </div>
+            ))}
+          </div>
+        </ModuleCard>
+      </div>
     </div>
   );
 }
