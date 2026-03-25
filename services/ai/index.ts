@@ -37,91 +37,134 @@ type ChatInput = {
   context?: string;
 };
 
-function getProvider() {
+type Provider = 'anthropic' | 'gemini';
+
+function getProviderCandidates(): Provider[] {
+  const providers: Provider[] = [];
+
   if (process.env.ANTHROPIC_API_KEY) {
-    return 'anthropic' as const;
+    providers.push('anthropic');
   }
 
   if (process.env.GEMINI_API_KEY) {
-    return 'gemini' as const;
+    providers.push('gemini');
   }
 
-  return 'mock' as const;
+  return providers;
+}
+
+async function callAnthropic(prompt: string) {
+  const response = await fetch('https://api.anthropic.com/v1/messages', {
+    method: 'POST',
+    headers: {
+      'content-type': 'application/json',
+      'x-api-key': process.env.ANTHROPIC_API_KEY ?? '',
+      'anthropic-version': '2023-06-01'
+    },
+    body: JSON.stringify({
+      model: 'claude-3-5-sonnet-latest',
+      max_tokens: 1400,
+      temperature: 0.5,
+      messages: [
+        {
+          role: 'user',
+          content: prompt
+        }
+      ]
+    })
+  });
+
+  if (!response.ok) {
+    throw new Error(`Anthropic error ${response.status}`);
+  }
+
+  const payload = await response.json();
+  return payload?.content?.[0]?.text ?? null;
+}
+
+async function callGemini(prompt: string) {
+  const response = await fetch(
+    `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${process.env.GEMINI_API_KEY}`,
+    {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        contents: [
+          {
+            parts: [
+              {
+                text: prompt
+              }
+            ]
+          }
+        ],
+        generationConfig: {
+          temperature: 0.5,
+          maxOutputTokens: 1400
+        }
+      })
+    }
+  );
+
+  if (!response.ok) {
+    throw new Error(`Gemini error ${response.status}`);
+  }
+
+  const payload = await response.json();
+  return payload?.candidates?.[0]?.content?.parts?.[0]?.text ?? null;
 }
 
 async function callProvider(prompt: string) {
-  const provider = getProvider();
+  const providers = getProviderCandidates();
 
-  if (provider === 'mock') {
+  for (const provider of providers) {
+    try {
+      const response = provider === 'anthropic' ? await callAnthropic(prompt) : await callGemini(prompt);
+      if (response) {
+        return response;
+      }
+    } catch {
+      continue;
+    }
+  }
+
+  return null;
+}
+
+function extractJsonFragment(input: string) {
+  const fencedMatch = input.match(/```json\s*([\s\S]*?)```/i) ?? input.match(/```\s*([\s\S]*?)```/i);
+  if (fencedMatch?.[1]) {
+    return fencedMatch[1].trim();
+  }
+
+  const arrayStart = input.indexOf('[');
+  const objectStart = input.indexOf('{');
+  const start = [arrayStart, objectStart].filter((value) => value >= 0).sort((a, b) => a - b)[0];
+
+  if (typeof start !== 'number') {
     return null;
+  }
+
+  const candidate = input.slice(start).trim();
+  return candidate;
+}
+
+function parseStructuredResponse<T>(response: string | null, fallback: T): T {
+  if (!response) {
+    return fallback;
+  }
+
+  const fragment = extractJsonFragment(response);
+  if (!fragment) {
+    return fallback;
   }
 
   try {
-    if (provider === 'anthropic') {
-      const response = await fetch('https://api.anthropic.com/v1/messages', {
-        method: 'POST',
-        headers: {
-          'content-type': 'application/json',
-          'x-api-key': process.env.ANTHROPIC_API_KEY ?? '',
-          'anthropic-version': '2023-06-01'
-        },
-        body: JSON.stringify({
-          model: 'claude-3-5-sonnet-latest',
-          max_tokens: 1200,
-          temperature: 0.7,
-          messages: [
-            {
-              role: 'user',
-              content: prompt
-            }
-          ]
-        })
-      });
-
-      if (!response.ok) {
-        throw new Error(`Anthropic error ${response.status}`);
-      }
-
-      const payload = await response.json();
-      return payload?.content?.[0]?.text ?? null;
-    }
-
-    const response = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${process.env.GEMINI_API_KEY}`,
-      {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({
-          contents: [
-            {
-              parts: [
-                {
-                  text: prompt
-                }
-              ]
-            }
-          ],
-          generationConfig: {
-            temperature: 0.7,
-            maxOutputTokens: 1200
-          }
-        })
-      }
-    );
-
-    if (!response.ok) {
-      throw new Error(`Gemini error ${response.status}`);
-    }
-
-    const payload = await response.json();
-    return payload?.candidates?.[0]?.content?.parts?.[0]?.text ?? null;
+    const parsed = JSON.parse(fragment);
+    return parsed as T;
   } catch {
-    return null;
+    return fallback;
   }
-}
-
-function fallbackList(prefix: string, count: number) {
-  return Array.from({ length: count }, (_, index) => `${prefix} ${index + 1}`);
 }
 
 function fallbackIdea(topic: string, index: number) {
@@ -129,153 +172,189 @@ function fallbackIdea(topic: string, index: number) {
     title: `${topic} - ideia ${index + 1}`,
     hook: `Mostre como ${topic.toLowerCase()} resolve um problema real sem parecer vendedor.`,
     format: index % 2 === 0 ? 'Reels' : 'Carrossel',
-    angle: index % 2 === 0 ? 'educação' : 'prova social'
+    angle: index % 2 === 0 ? 'educacao' : 'prova_social'
   };
 }
 
 export async function generateIdeas(input: IdeaInput) {
+  const fallback = Array.from({ length: input.count ?? 5 }, (_, index) => fallbackIdea(input.topic, index));
   const prompt = [
-    'Gere ideias de conteúdo em português do Brasil.',
+    'Voce e um estrategista de conteudo.',
+    'Responda somente JSON valido.',
+    `Retorne um array com ${fallback.length} objetos no formato [{"title":"", "hook":"", "format":"", "angle":""}].`,
     `Tema: ${input.topic}`,
     input.product ? `Produto: ${input.product}` : null,
-    input.audience ? `Público: ${input.audience}` : null,
-    `Retorne uma lista curta com título, hook, formato e ângulo.`
+    input.audience ? `Publico: ${input.audience}` : null
   ]
     .filter(Boolean)
     .join('\n');
 
-  const response = await callProvider(prompt);
-  if (!response) {
-    const count = input.count ?? 5;
-    return Array.from({ length: count }, (_, index) => fallbackIdea(input.topic, index));
-  }
-
-  return response;
+  return parseStructuredResponse(await callProvider(prompt), fallback);
 }
 
 export async function generateHooks(input: { topic: string; count?: number }) {
-  const count = input.count ?? 7;
-  const prompt = `Crie ${count} ganchos curtos e fortes em português sobre: ${input.topic}.`;
-  const response = await callProvider(prompt);
+  const fallback = Array.from({ length: input.count ?? 7 }, (_, index) => `Gancho ${index + 1} sobre ${input.topic}`);
+  const prompt = [
+    'Voce e um copywriter de videos curtos.',
+    'Responda somente JSON valido.',
+    `Retorne um array com ${fallback.length} strings curtas e fortes.`,
+    `Tema: ${input.topic}`
+  ].join('\n');
 
-  if (!response) {
-    return fallbackList(`Gancho sobre ${input.topic}`, count);
-  }
-
-  return response;
+  return parseStructuredResponse(await callProvider(prompt), fallback);
 }
 
 export async function generateScript(input: ScriptInput) {
+  const fallback = {
+    title: `Roteiro sobre ${input.topic}`,
+    hook: `Se voce quer ${input.topic.toLowerCase()}, faca isso sem complicar.`,
+    spoken: `Hoje eu vou te mostrar como ${input.topic.toLowerCase()} de forma simples.`,
+    takes: ['abertura com dor', 'prova visual', 'passo a passo', 'resultado', 'CTA'],
+    cta: 'Comente "quero" para receber o material.',
+    caption: `Legenda pronta sobre ${input.topic}`
+  };
   const prompt = [
-    'Crie um roteiro de vídeo curto em português do Brasil.',
+    'Voce cria roteiros de conteudo em portugues do Brasil.',
+    'Responda somente JSON valido.',
+    'Formato esperado: {"title":"","hook":"","spoken":"","takes":["","",""],"cta":"","caption":""}.',
     `Tema: ${input.topic}`,
     input.goal ? `Objetivo: ${input.goal}` : null,
-    input.tone ? `Tom: ${input.tone}` : null,
-    'Inclua: gancho, takes, CTA e legenda curta.'
+    input.tone ? `Tom: ${input.tone}` : null
   ]
     .filter(Boolean)
     .join('\n');
 
-  const response = await callProvider(prompt);
-
-  return (
-    response ?? {
-      hook: `Se você quer ${input.topic.toLowerCase()}, faça isso sem complicar.`,
-      spoken: `Hoje eu vou te mostrar como ${input.topic.toLowerCase()} de forma simples.`,
-      takes: ['abertura com dor', 'prova visual', 'passo a passo', 'resultado', 'CTA'],
-      cta: 'Comente “quero” para receber o material.',
-      caption: `Roteiro sobre ${input.topic}`
-    }
-  );
+  return parseStructuredResponse(await callProvider(prompt), fallback);
 }
 
 export async function generateStoryboard(input: ScriptInput) {
-  const prompt = `Crie um storyboard simples para o tema: ${input.topic}. Retorne 4 frames em português.`;
-  const response = await callProvider(prompt);
+  const fallback = {
+    frames: [
+      `Abertura forte sobre ${input.topic}`,
+      'Cena de prova visual',
+      'Explicacao do processo',
+      'Fechamento com CTA'
+    ]
+  };
+  const prompt = [
+    'Voce cria storyboards simples para videos curtos.',
+    'Responda somente JSON valido.',
+    'Formato esperado: {"frames":["","","",""]}.',
+    `Tema: ${input.topic}`
+  ].join('\n');
 
-  return response ?? { frames: ['Frame 1', 'Frame 2', 'Frame 3', 'Frame 4'] };
+  return parseStructuredResponse(await callProvider(prompt), fallback);
 }
 
 export async function generateStories(input: StoryInput) {
-  const count = input.count ?? 5;
-  const prompt = `Crie uma sequência de ${count} stories sobre ${input.theme}, com CTA e lógica de retenção.`;
-  const response = await callProvider(prompt);
+  const fallback = {
+    sequence: Array.from({ length: input.count ?? 5 }, (_, index) => ({
+      title: `Story ${index + 1}`,
+      hook: `${input.theme} com foco em retencao e CTA.`,
+      cta: index === (input.count ?? 5) - 1 ? 'Responder DM' : 'Continuar vendo',
+      time: `${String(8 + index).padStart(2, '0')}:00`
+    }))
+  };
+  const prompt = [
+    'Voce cria sequencias de stories para Instagram.',
+    'Responda somente JSON valido.',
+    'Formato esperado: {"sequence":[{"title":"","hook":"","cta":"","time":""}]}.',
+    `Tema: ${input.theme}`,
+    `Quantidade: ${input.count ?? 5}`
+  ].join('\n');
 
-  return (
-    response ?? {
-      sequence: Array.from({ length: count }, (_, index) => `Story ${index + 1} sobre ${input.theme}`)
-    }
-  );
+  return parseStructuredResponse(await callProvider(prompt), fallback);
 }
 
 export async function generateCaption(input: { topic: string; tone?: string }) {
-  const prompt = `Escreva uma legenda curta e humana sobre ${input.topic}. Tom: ${input.tone ?? 'natural'}.`;
-  const response = await callProvider(prompt);
+  const fallback = { caption: `Legenda humana sobre ${input.topic}.` };
+  const prompt = [
+    'Voce escreve legendas em portugues do Brasil.',
+    'Responda somente JSON valido.',
+    'Formato esperado: {"caption":""}.',
+    `Tema: ${input.topic}`,
+    `Tom: ${input.tone ?? 'natural'}`
+  ].join('\n');
 
-  return response ?? `Legenda humana sobre ${input.topic}.`;
+  const parsed = parseStructuredResponse(await callProvider(prompt), fallback);
+  return parsed.caption;
 }
 
 export async function rewriteHumanTone(input: { text: string }) {
-  const prompt = `Reescreva este texto com tom humano, direto e natural:\n\n${input.text}`;
-  const response = await callProvider(prompt);
+  const fallback = { text: input.text };
+  const prompt = [
+    'Reescreva o texto com tom humano, claro e natural.',
+    'Responda somente JSON valido.',
+    'Formato esperado: {"text":""}.',
+    input.text
+  ].join('\n\n');
 
-  return response ?? input.text;
+  const parsed = parseStructuredResponse(await callProvider(prompt), fallback);
+  return parsed.text;
 }
 
 export async function analyzeMetrics(input: MetricsInput) {
+  const fallback = {
+    summary: 'Alcance e engajamento estao crescendo com posts de bastidor e prova social.',
+    insights: ['Aumentar reels', 'Postar mais stories interativos', 'Refinar CTA'],
+    risks: ['Muito conteudo generico', 'Pouca repeticao de formatos vencedores']
+  };
   const prompt = [
-    'Analise métricas de conteúdo e devolva pontos acionáveis.',
-    input.summary,
-    input.series ? `Séries: ${JSON.stringify(input.series)}` : null
+    'Voce analisa metricas de conteudo.',
+    'Responda somente JSON valido.',
+    'Formato esperado: {"summary":"","insights":[""],"risks":[""]}.',
+    `Resumo: ${input.summary}`,
+    input.series ? `Series: ${JSON.stringify(input.series)}` : null
   ]
     .filter(Boolean)
     .join('\n');
-  const response = await callProvider(prompt);
 
-  return (
-    response ?? {
-      summary: 'Alcance e engajamento estão crescendo com posts de bastidor e prova social.',
-      insights: ['Aumentar reels', 'Postar mais stories interativos', 'Refinar CTA'],
-      risks: ['Muito conteúdo genérico', 'Pouca repetição de formatos vencedores']
-    }
-  );
+  return parseStructuredResponse(await callProvider(prompt), fallback);
 }
 
 export async function analyzeCompetitors(input: CompetitorInput) {
-  const prompt = `Analise estes concorrentes (${input.competitors.join(', ')}) no nicho ${input.niche ?? 'geral'} e devolva insights`;
-  const response = await callProvider(prompt);
+  const fallback = {
+    summary: 'Concorrentes fortes usam bastidores, prova social e CTAs de DM.',
+    opportunities: ['Reels de bastidor', 'Stories com enquete', 'Carrosseis educacionais'],
+    watchouts: ['Postar muito institucional', 'Ignorar comentarios e respostas']
+  };
+  const prompt = [
+    'Voce analisa concorrentes digitais.',
+    'Responda somente JSON valido.',
+    'Formato esperado: {"summary":"","opportunities":[""],"watchouts":[""]}.',
+    `Concorrentes: ${input.competitors.join(', ')}`,
+    `Nicho: ${input.niche ?? 'geral'}`
+  ].join('\n');
 
-  return (
-    response ?? {
-      summary: 'Concorrentes fortes usam bastidores, prova social e CTAs de DM.',
-      opportunities: ['Reels de bastidor', 'Stories com enquete', 'Carrosséis educacionais'],
-      watchouts: ['Postar muito institucional', 'Ignorar comentários e respostas']
-    }
-  );
+  return parseStructuredResponse(await callProvider(prompt), fallback);
 }
 
 export async function suggestCalendar(input: CalendarInput) {
-  const prompt = `Sugira um calendário de conteúdo para ${input.month} com foco em ${input.product ?? 'crescimento de marca'}.`;
-  const response = await callProvider(prompt);
+  const fallback = {
+    month: input.month,
+    items: [
+      { date: `${input.month}-03`, title: 'Reels de bastidor', channel: 'Reels' },
+      { date: `${input.month}-07`, title: 'Stories de enquete', channel: 'Stories' },
+      { date: `${input.month}-11`, title: 'Carrossel educativo', channel: 'Feed' }
+    ]
+  };
+  const prompt = [
+    'Voce planeja calendarios editoriais.',
+    'Responda somente JSON valido.',
+    'Formato esperado: {"month":"","items":[{"date":"","title":"","channel":""}]}.',
+    `Mes: ${input.month}`,
+    `Produto: ${input.product ?? 'crescimento de marca'}`
+  ].join('\n');
 
-  return (
-    response ?? {
-      month: input.month,
-      items: [
-        { date: `${input.month}-03`, title: 'Reels de bastidor', channel: 'Reels' },
-        { date: `${input.month}-07`, title: 'Stories de enquete', channel: 'Stories' },
-        { date: `${input.month}-11`, title: 'Carrossel educativo', channel: 'Feed' }
-      ]
-    }
-  );
+  return parseStructuredResponse(await callProvider(prompt), fallback);
 }
 
 export async function chatWithAi(input: ChatInput) {
   const prompt = [
-    `Você é a IA do workspace ${input.workspace ?? 'ContentOS'}.`,
-    'Responda em português brasileiro, com clareza e foco prático.',
+    `Voce e a IA do workspace ${input.workspace ?? 'ContentOS'}.`,
+    'Responda em portugues brasileiro, de forma pratica, curta e clara.',
     input.context ? `Contexto: ${input.context}` : null,
-    `Pedido do usuário: ${input.prompt}`
+    `Pedido do usuario: ${input.prompt}`
   ]
     .filter(Boolean)
     .join('\n\n');
@@ -284,6 +363,6 @@ export async function chatWithAi(input: ChatInput) {
 
   return (
     response ??
-    `Posso ajudar com ideias, roteiros, stories, métricas, concorrentes e calendário. Para: ${input.prompt}`
+    `Posso ajudar com ideias, roteiros, stories, metricas, concorrentes e calendario. Para: ${input.prompt}`
   );
 }

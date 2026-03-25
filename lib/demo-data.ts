@@ -14,6 +14,14 @@ export type WorkspaceSnapshot = {
   plan: string;
   theme: string;
   members: number;
+  teamMembers: Array<{
+    id: string;
+    name: string;
+    role: string;
+    focus: 'general' | 'production' | 'social';
+    online: boolean;
+    color: string;
+  }>;
   quickStats: CountBadge[];
   agenda: Array<{
     id: string;
@@ -441,7 +449,13 @@ function createWorkspace(overrides: Partial<WorkspaceSnapshot>): WorkspaceSnapsh
     industry: 'Conteúdo e educação',
     plan: 'Agência',
     theme: 'glass-teal',
-    members: 5,
+    members: 4,
+    teamMembers: [
+      { id: 'member-1', name: 'Rodrigo Moreno', role: 'Coordenador', focus: 'general', online: true, color: '#2e2b54' },
+      { id: 'member-2', name: 'Lia Brandao', role: 'Social Media', focus: 'social', online: true, color: '#ff5d83' },
+      { id: 'member-3', name: 'Camila Alves', role: 'Filmmaker', focus: 'production', online: true, color: '#5b66d6' },
+      { id: 'member-4', name: 'Joao Prado', role: 'Roteirista', focus: 'production', online: false, color: '#ff9f5a' }
+    ],
     quickStats: [
       { label: 'Ideias na fila', value: '18', trend: '+6 hoje' },
       { label: 'Posts prontos', value: '12', trend: '+3 hoje' },

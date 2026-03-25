@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from 'react';
+import { useDeferredValue, useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { DayPicker } from 'react-day-picker';
 import { motion } from 'framer-motion';
@@ -46,13 +46,15 @@ import {
   PencilLine,
   NotebookText,
   SquareKanban,
-  ChartSpline
+  ChartSpline,
+  Trash2
 } from 'lucide-react';
 import {
   closestCenter,
   DndContext,
   DragEndEvent,
   PointerSensor,
+  useDroppable,
   useSensor,
   useSensors
 } from '@dnd-kit/core';
@@ -80,6 +82,12 @@ import { Separator } from '@/components/ui/separator';
 import { Textarea } from '@/components/ui/textarea';
 import { saasPlans, navigationItems } from '@/lib/constants';
 import { WorkspaceSnapshot } from '@/lib/demo-data';
+import {
+  type ApprovalStatus,
+  type WorkspaceMember,
+  type WorkspaceViewMode,
+  useWorkspaceStore
+} from '@/store/use-workspace-store';
 import { cn } from '@/lib/utils';
 import type { ModuleKey } from '@/types';
 import { toast } from 'sonner';
@@ -89,6 +97,22 @@ type WidgetKey = 'stats' | 'agenda' | 'stories' | 'pipeline' | 'ideas';
 type WorkspaceModuleProps = {
   workspace: WorkspaceSnapshot;
   module: ModuleKey;
+};
+
+type IdeaItem = WorkspaceSnapshot['ideas'][number];
+type ScriptItem = WorkspaceSnapshot['scripts'][number] & {
+  spoken?: string;
+  caption?: string;
+  storyboard?: string[];
+};
+type StoryItem = WorkspaceSnapshot['stories'][number] & {
+  cta?: string;
+};
+type CalendarItem = WorkspaceSnapshot['calendarEvents'][number];
+type PostItem = WorkspaceSnapshot['posts'][number] & {
+  caption?: string;
+  location?: string;
+  mediaUrl?: string;
 };
 
 const moduleMeta: Record<ModuleKey, { title: string; description: string; cta?: string }> = {
@@ -159,6 +183,125 @@ const moduleMeta: Record<ModuleKey, { title: string; description: string; cta?: 
     description: 'Feature flags, SaaS settings, tenants e permissões globais.'
   }
 };
+
+const PRODUCTION_COLUMNS = new Set(['roteiro', 'aprovado', 'gravar', 'gravado', 'editar', 'pronto']);
+const SOCIAL_COLUMNS = new Set(['aprovado', 'pronto', 'postar', 'postado']);
+const PRODUCTION_EVENT_TYPES = new Set(['gravacao', 'gravação', 'producao', 'produção', 'campanha']);
+const SOCIAL_EVENT_TYPES = new Set(['feed', 'stories', 'reels', 'postagem', 'publicacao', 'publicação']);
+const SOCIAL_CHANNELS = new Set(['feed', 'reels', 'stories']);
+
+function normalizeText(value: string) {
+  return value
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase();
+}
+
+function getInitials(name: string) {
+  return name
+    .split(' ')
+    .map((chunk) => chunk[0] ?? '')
+    .join('')
+    .slice(0, 2)
+    .toUpperCase();
+}
+
+function getMemberShortName(member?: WorkspaceMember) {
+  return normalizeText(member?.name.split(' ')[0] ?? '');
+}
+
+function memberShouldScope(member?: WorkspaceMember) {
+  if (!member) return false;
+  return !normalizeText(member.role).includes('coordenador');
+}
+
+function matchesMember(candidate: string | undefined, member?: WorkspaceMember) {
+  if (!candidate || !member) return true;
+  return normalizeText(candidate).includes(getMemberShortName(member));
+}
+
+function requestAiAction<T>(action: string, payload: Record<string, unknown>) {
+  return fetch('/api/ai', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ action, payload })
+  }).then(async (response) => {
+    const data = (await response.json().catch(() => null)) as { content?: T; error?: string } | null;
+
+    if (!response.ok || !data) {
+      throw new Error(data?.error ?? 'Falha ao executar a IA.');
+    }
+
+    return data.content as T;
+  });
+}
+
+function filterWorkspaceByContext(
+  workspace: WorkspaceSnapshot,
+  viewMode: WorkspaceViewMode,
+  activeMember?: WorkspaceMember
+) {
+  const scopeToMember = memberShouldScope(activeMember);
+  const onlyMember = <T,>(items: T[], accessor: (item: T) => string | undefined) =>
+    scopeToMember ? items.filter((item) => matchesMember(accessor(item), activeMember)) : items;
+
+  const agenda = onlyMember(workspace.agenda, (item) => item.owner).filter((item) => {
+    if (viewMode === 'general') return true;
+    return viewMode === 'production'
+      ? PRODUCTION_EVENT_TYPES.has(normalizeText(item.type))
+      : SOCIAL_EVENT_TYPES.has(normalizeText(item.type));
+  });
+
+  const posts = workspace.posts.filter((post) => {
+    if (viewMode === 'general') return true;
+    if (viewMode === 'production') return normalizeText(post.channel) === 'reels';
+    return SOCIAL_CHANNELS.has(normalizeText(post.channel)) && normalizeText(post.status) !== 'publicado';
+  });
+
+  const pipelineCards = onlyMember(workspace.pipelineCards, (item) => item.assignee).filter((card) => {
+    const column = normalizeText(card.column);
+    if (viewMode === 'general') return true;
+    return viewMode === 'production' ? PRODUCTION_COLUMNS.has(column) : SOCIAL_COLUMNS.has(column);
+  });
+
+  const calendarEvents = onlyMember(workspace.calendarEvents, (item) => item.owner).filter((item) => {
+    if (viewMode === 'general') return true;
+    return viewMode === 'production'
+      ? PRODUCTION_EVENT_TYPES.has(normalizeText(item.type))
+      : SOCIAL_EVENT_TYPES.has(normalizeText(item.type));
+  });
+
+  const ideas = workspace.ideas.filter((idea) => {
+    if (viewMode === 'general') return true;
+    const tags = idea.tags.map(normalizeText);
+    return viewMode === 'production'
+      ? tags.some((tag) => ['reels', 'bastidores', 'checklist', 'producao', 'produção'].includes(tag))
+      : tags.some((tag) => ['stories', 'story', 'copy', 'educacao', 'educação', 'reels'].includes(tag));
+  });
+
+  return {
+    ...workspace,
+    agenda,
+    posts,
+    pipelineCards,
+    calendarEvents,
+    ideas,
+    scripts: viewMode === 'social' ? workspace.scripts.slice(0, 1) : workspace.scripts,
+    stories: viewMode === 'production' ? workspace.stories.slice(0, 1) : workspace.stories
+  };
+}
+
+function approvalLabel(status: ApprovalStatus | undefined) {
+  if (status === 'approved') return 'Aprovado';
+  if (status === 'changes_requested') return 'Ajustes';
+  return 'Pendente';
+}
+
+function approvalVariant(status: ApprovalStatus | undefined) {
+  if (status === 'approved') return 'success' as const;
+  if (status === 'changes_requested') return 'danger' as const;
+  return 'warning' as const;
+}
 
 function SortableCard({
   id,
@@ -256,6 +399,103 @@ function ModuleCard({
       </CardHeader>
       <CardContent className="pt-0">{children}</CardContent>
     </Card>
+  );
+}
+
+function ViewScopeBanner({
+  workspace,
+  viewMode,
+  activeMember
+}: {
+  workspace: WorkspaceSnapshot;
+  viewMode: WorkspaceViewMode;
+  activeMember?: WorkspaceMember;
+}) {
+  const scopedCount = workspace.pipelineCards.length + workspace.posts.length + workspace.agenda.length;
+
+  return (
+    <div className="flex flex-col gap-3 rounded-[1.75rem] border border-white/80 bg-white/78 p-4 shadow-soft lg:flex-row lg:items-center lg:justify-between">
+      <div>
+        <p className="text-xs font-semibold uppercase tracking-[0.2em] text-muted-foreground">Visao ativa</p>
+        <div className="mt-2 flex flex-wrap items-center gap-2">
+          <Badge variant="outline">{viewMode === 'general' ? 'Geral' : viewMode === 'production' ? 'Gravacao' : 'Social Media'}</Badge>
+          {activeMember ? <Badge variant="success">Operando como {activeMember.name}</Badge> : null}
+        </div>
+      </div>
+      <div className="flex flex-wrap gap-2">
+        <Pill>{workspace.posts.length} posts visiveis</Pill>
+        <Pill>{workspace.pipelineCards.length} cards no fluxo</Pill>
+        <Pill>{scopedCount} blocos no contexto atual</Pill>
+      </div>
+    </div>
+  );
+}
+
+function ApprovalControls({
+  status,
+  onChange
+}: {
+  status?: ApprovalStatus;
+  onChange: (status: ApprovalStatus) => void;
+}) {
+  return (
+    <div className="flex flex-wrap items-center gap-2">
+      <Badge variant={approvalVariant(status)}>{approvalLabel(status)}</Badge>
+      <Button variant="outline" size="sm" className="h-8 rounded-2xl px-3" onClick={() => onChange('approved')}>
+        <CheckCircle2 className="h-3.5 w-3.5" />
+        Aprovar
+      </Button>
+      <Button variant="outline" size="sm" className="h-8 rounded-2xl px-3" onClick={() => onChange('changes_requested')}>
+        <AlertCircle className="h-3.5 w-3.5" />
+        Ajustes
+      </Button>
+    </div>
+  );
+}
+
+function SideBlockActions({
+  onEdit,
+  onDelete,
+  label = 'item'
+}: {
+  onEdit: () => void;
+  onDelete: () => void;
+  label?: string;
+}) {
+  return (
+    <div className="pointer-events-none absolute -left-3 top-5 z-10 flex -translate-x-2 flex-col gap-2 opacity-0 transition duration-200 group-hover:pointer-events-auto group-hover:translate-x-0 group-hover:opacity-100">
+      <button
+        type="button"
+        aria-label={`Editar ${label}`}
+        onClick={onEdit}
+        className="inline-flex h-9 w-9 items-center justify-center rounded-2xl border border-white/80 bg-white text-foreground shadow-soft transition hover:bg-accent"
+      >
+        <PencilLine className="h-4 w-4" />
+      </button>
+      <button
+        type="button"
+        aria-label={`Excluir ${label}`}
+        onClick={onDelete}
+        className="inline-flex h-9 w-9 items-center justify-center rounded-2xl border border-white/80 bg-white text-foreground shadow-soft transition hover:bg-accent"
+      >
+        <Trash2 className="h-4 w-4" />
+      </button>
+    </div>
+  );
+}
+
+function EmptyState({
+  title,
+  description
+}: {
+  title: string;
+  description: string;
+}) {
+  return (
+    <div className="rounded-[1.75rem] border border-dashed border-border/80 bg-white/65 p-6 text-center">
+      <p className="font-medium text-foreground">{title}</p>
+      <p className="mt-2 text-sm leading-6 text-muted-foreground">{description}</p>
+    </div>
   );
 }
 
