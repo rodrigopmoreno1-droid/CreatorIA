@@ -10,3 +10,5 @@ coverage
 .env.*.local
 vercel.json
 public/sw.js
+.vercel
+tsconfig.tsbuildinfo

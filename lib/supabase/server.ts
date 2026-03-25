@@ -12,14 +12,14 @@ function getSupabaseConfig() {
   return { url, anonKey };
 }
 
-export function createSupabaseServerClient() {
+export async function createSupabaseServerClient() {
   const config = getSupabaseConfig();
 
   if (!config) {
     return null;
   }
 
-  const cookieStore = cookies();
+  const cookieStore = await cookies();
 
   return createServerClient(config.url, config.anonKey, {
     cookies: {

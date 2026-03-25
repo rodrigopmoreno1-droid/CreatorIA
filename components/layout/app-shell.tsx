@@ -67,7 +67,7 @@ export function AppShell({
               return (
                 <Link
                   key={item.key}
-                  href={item.href(workspace)}
+                  href={item.href(workspace) as any}
                   className={cn(
                     'group flex items-center gap-3 rounded-2xl px-3 py-3 text-sm font-medium transition',
                     active

@@ -10,8 +10,10 @@ import '@fontsource/space-grotesk/700.css';
 import { Providers } from '@/components/providers';
 import { PwaRegister } from '@/components/pwa-register';
 
+const siteUrl = process.env.NEXT_PUBLIC_SITE_URL ?? 'http://localhost:3000';
+
 export const metadata: Metadata = {
-  metadataBase: new URL('http://localhost:3000'),
+  metadataBase: new URL(siteUrl),
   title: {
     default: 'ContentOS',
     template: '%s | ContentOS'

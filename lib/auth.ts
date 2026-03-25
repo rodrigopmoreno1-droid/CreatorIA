@@ -2,8 +2,9 @@ import { cookies } from 'next/headers';
 import { createSupabaseServerClient } from '@/lib/supabase/server';
 
 export async function getCurrentUser() {
-  const demoCookie = cookies().get('contentos-demo')?.value;
-  const supabase = createSupabaseServerClient();
+  const cookieStore = await cookies();
+  const demoCookie = cookieStore.get('contentos-demo')?.value;
+  const supabase = await createSupabaseServerClient();
 
   if (!supabase) {
     return {
@@ -20,6 +21,7 @@ export async function getCurrentUser() {
   };
 }
 
-export function hasDemoAccess() {
-  return cookies().get('contentos-demo')?.value === '1';
+export async function hasDemoAccess() {
+  const cookieStore = await cookies();
+  return cookieStore.get('contentos-demo')?.value === '1';
 }
