@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { DayPicker } from 'react-day-picker';
 import { motion } from 'framer-motion';
@@ -257,6 +257,20 @@ function ModuleCard({
       <CardContent className="pt-0">{children}</CardContent>
     </Card>
   );
+}
+
+function HydratedChart({ children }: { children: React.ReactNode }) {
+  const [ready, setReady] = useState(false);
+
+  useEffect(() => {
+    setReady(true);
+  }, []);
+
+  if (!ready) {
+    return <div className="h-full w-full animate-pulse rounded-2xl bg-muted/50" />;
+  }
+
+  return <>{children}</>;
 }
 
 function formatDateLabel(date: string) {
@@ -558,18 +572,20 @@ function DashboardModule({ workspace }: { workspace: WorkspaceSnapshot }) {
               <div className="rounded-[1.5rem] border border-border/80 bg-[#fbf8f4] p-4">
                 <p className="text-sm text-muted-foreground">Alcance nesta semana</p>
                 <div className="mt-4 h-[96px]">
-                  <ResponsiveContainer width="100%" height="100%">
-                    <AreaChart data={mainSeries}>
-                      <defs>
-                        <linearGradient id="dashboardAreaFill" x1="0" y1="0" x2="0" y2="1">
-                          <stop offset="0%" stopColor="#b39dff" stopOpacity={0.55} />
-                          <stop offset="100%" stopColor="#b39dff" stopOpacity={0.02} />
-                        </linearGradient>
-                      </defs>
-                      <Tooltip cursor={false} />
-                      <Area type="monotone" dataKey="value" stroke="#7b63ff" strokeWidth={3} fill="url(#dashboardAreaFill)" />
-                    </AreaChart>
-                  </ResponsiveContainer>
+                  <HydratedChart>
+                    <ResponsiveContainer width="100%" height="100%">
+                      <AreaChart data={mainSeries}>
+                        <defs>
+                          <linearGradient id="dashboardAreaFill" x1="0" y1="0" x2="0" y2="1">
+                            <stop offset="0%" stopColor="#b39dff" stopOpacity={0.55} />
+                            <stop offset="100%" stopColor="#b39dff" stopOpacity={0.02} />
+                          </linearGradient>
+                        </defs>
+                        <Tooltip cursor={false} />
+                        <Area type="monotone" dataKey="value" stroke="#7b63ff" strokeWidth={3} fill="url(#dashboardAreaFill)" />
+                      </AreaChart>
+                    </ResponsiveContainer>
+                  </HydratedChart>
                 </div>
               </div>
             </div>
@@ -1148,46 +1164,52 @@ function MetricsModule({ workspace }: { workspace: WorkspaceSnapshot }) {
             ))}
           </div>
           <div className="h-[340px] rounded-3xl border border-border bg-background p-4">
-            <ResponsiveContainer width="100%" height="100%">
-              <LineChart data={chartData}>
-                <CartesianGrid strokeDasharray="3 3" stroke="rgba(148,163,184,0.25)" />
-                <XAxis dataKey="label" stroke="rgba(100,116,139,0.8)" />
-                <YAxis stroke="rgba(100,116,139,0.8)" />
-                <Tooltip />
-                <Line type="monotone" dataKey="value" stroke="#0f766e" strokeWidth={3} dot={false} />
-              </LineChart>
-            </ResponsiveContainer>
+            <HydratedChart>
+              <ResponsiveContainer width="100%" height="100%">
+                <LineChart data={chartData}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="rgba(148,163,184,0.25)" />
+                  <XAxis dataKey="label" stroke="rgba(100,116,139,0.8)" />
+                  <YAxis stroke="rgba(100,116,139,0.8)" />
+                  <Tooltip />
+                  <Line type="monotone" dataKey="value" stroke="#0f766e" strokeWidth={3} dot={false} />
+                </LineChart>
+              </ResponsiveContainer>
+            </HydratedChart>
           </div>
         </ModuleCard>
 
         <ModuleCard title="Crescimento" subtitle="Comparativo de alcance e engajamento">
           <div className="space-y-4">
             <div className="h-[180px] rounded-3xl border border-border bg-background p-3">
-              <ResponsiveContainer width="100%" height="100%">
-                <AreaChart data={chartData}>
-                  <defs>
-                    <linearGradient id="areaContentos" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="5%" stopColor="#0f766e" stopOpacity={0.3} />
-                      <stop offset="95%" stopColor="#0f766e" stopOpacity={0.02} />
-                    </linearGradient>
-                  </defs>
-                  <XAxis dataKey="label" stroke="rgba(100,116,139,0.8)" />
-                  <YAxis stroke="rgba(100,116,139,0.8)" />
-                  <Tooltip />
-                  <Area type="monotone" dataKey="value" stroke="#0f766e" fill="url(#areaContentos)" />
-                </AreaChart>
-              </ResponsiveContainer>
+              <HydratedChart>
+                <ResponsiveContainer width="100%" height="100%">
+                  <AreaChart data={chartData}>
+                    <defs>
+                      <linearGradient id="areaContentos" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="5%" stopColor="#0f766e" stopOpacity={0.3} />
+                        <stop offset="95%" stopColor="#0f766e" stopOpacity={0.02} />
+                      </linearGradient>
+                    </defs>
+                    <XAxis dataKey="label" stroke="rgba(100,116,139,0.8)" />
+                    <YAxis stroke="rgba(100,116,139,0.8)" />
+                    <Tooltip />
+                    <Area type="monotone" dataKey="value" stroke="#0f766e" fill="url(#areaContentos)" />
+                  </AreaChart>
+                </ResponsiveContainer>
+              </HydratedChart>
             </div>
             <div className="h-[180px] rounded-3xl border border-border bg-background p-3">
-              <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={chartData}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="rgba(148,163,184,0.25)" />
-                  <XAxis dataKey="label" stroke="rgba(100,116,139,0.8)" />
-                  <YAxis stroke="rgba(100,116,139,0.8)" />
-                  <Tooltip />
-                  <Bar dataKey="value" fill="#14b8a6" radius={[12, 12, 0, 0]} />
-                </BarChart>
-              </ResponsiveContainer>
+              <HydratedChart>
+                <ResponsiveContainer width="100%" height="100%">
+                  <BarChart data={chartData}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="rgba(148,163,184,0.25)" />
+                    <XAxis dataKey="label" stroke="rgba(100,116,139,0.8)" />
+                    <YAxis stroke="rgba(100,116,139,0.8)" />
+                    <Tooltip />
+                    <Bar dataKey="value" fill="#14b8a6" radius={[12, 12, 0, 0]} />
+                  </BarChart>
+                </ResponsiveContainer>
+              </HydratedChart>
             </div>
           </div>
         </ModuleCard>
