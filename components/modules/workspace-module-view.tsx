@@ -1850,7 +1850,7 @@ function PostsModule({ workspace }: { workspace: WorkspaceSnapshot }) {
     setPublishingId(post.id);
 
     try {
-      const response = await fetch('/api/integrations/meta', {
+      const response = await fetch(`/api/integrations/meta?workspace=${workspace.slug}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

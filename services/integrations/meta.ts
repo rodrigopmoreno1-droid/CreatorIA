@@ -1,4 +1,5 @@
 import type { InstagramConnectionSnapshot, InstagramMediaItem, InstagramStoryItem } from '@/types';
+import type { MetaStoredConnection } from '@/services/integrations/meta-storage';
 
 type MetaPublishInput = {
   caption?: string;
@@ -6,6 +7,19 @@ type MetaPublishInput = {
   mediaType?: 'IMAGE' | 'REELS';
   scheduledAt?: string;
   shareToFeed?: boolean;
+};
+
+export type MetaOAuthStatePayload = {
+  workspace: string;
+  module: string;
+  nonce: string;
+  pageId?: string;
+};
+
+export type MetaAuthTokenResult = {
+  accessToken: string;
+  tokenType?: string;
+  expiresIn?: number;
 };
 
 type MetaAuthTokenPayload = {
@@ -24,26 +38,51 @@ type MetaGraphError = {
   };
 };
 
+type MetaPageNode = {
+  id?: string;
+  name?: string;
+  access_token?: string;
+  tasks?: string[];
+  instagram_business_account?: {
+    id?: string;
+    username?: string;
+  };
+};
+
+type MetaInsightMetric = {
+  name?: string;
+  values?: Array<{
+    value?: unknown;
+  }>;
+};
+
+type MetaResolvedConnection = {
+  connection: MetaStoredConnection;
+  snapshot: InstagramConnectionSnapshot;
+  userAccessToken: string;
+  pagesCount: number;
+  eligiblePagesCount: number;
+  pageSelection: 'requested' | 'first_eligible';
+};
+
 const META_GRAPH_VERSION = 'v23.0';
-const META_TOKEN_COOKIE = 'contentos-meta-token';
+const DEFAULT_META_REDIRECT_URI = 'https://creator-ia.vercel.app/api/integrations/meta/callback';
+const META_STATE_COOKIE = 'contentos-meta-oauth-state';
+
 const META_SCOPES = [
   'pages_show_list',
   'instagram_basic',
   'pages_read_engagement',
   'instagram_manage_insights',
   'instagram_content_publish'
-].join(',');
+] as const;
 
-function getSiteUrl() {
-  return process.env.NEXT_PUBLIC_SITE_URL ?? 'http://localhost:3000';
+function getMetaRedirectUri() {
+  return process.env.META_REDIRECT_URI ?? DEFAULT_META_REDIRECT_URI;
 }
 
 function getConfiguredMetaAccessToken() {
   return process.env.META_ACCESS_TOKEN ?? '';
-}
-
-function getActiveMetaAccessToken(accessToken?: string) {
-  return accessToken ?? getConfiguredMetaAccessToken();
 }
 
 function getConfiguredInstagramAccountId() {
@@ -55,6 +94,21 @@ function getConfiguredInstagramAccountId() {
   );
 }
 
+export function getMetaRequestedScopes() {
+  return [...META_SCOPES];
+}
+
+export function getMetaStateCookieName() {
+  return META_STATE_COOKIE;
+}
+
+function sanitizeMetaMessage(message: string) {
+  const configuredAccessToken = getConfiguredMetaAccessToken();
+  const redactedConfigured = configuredAccessToken ? message.replaceAll(configuredAccessToken, '[REDACTED_ACCESS_TOKEN]') : message;
+
+  return redactedConfigured.replace(/EA[A-Za-z0-9]+/g, '[REDACTED_ACCESS_TOKEN]');
+}
+
 function normalizeMediaType(value?: string) {
   if (value === 'IMAGE' || value === 'VIDEO' || value === 'CAROUSEL_ALBUM' || value === 'STORY' || value === 'REELS') {
     return value;
@@ -63,101 +117,19 @@ function normalizeMediaType(value?: string) {
   return 'UNKNOWN' as const;
 }
 
-function sanitizeMetaMessage(message: string, accessToken?: string) {
-  const configuredAccessToken = getConfiguredMetaAccessToken();
-  const currentToken = getActiveMetaAccessToken(accessToken);
-  const tokens = [configuredAccessToken, currentToken].filter(Boolean);
+function parseMetricValue(value: unknown) {
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    return value;
+  }
 
-  const redacted = tokens.reduce((acc, token) => acc.replaceAll(token, '[REDACTED_ACCESS_TOKEN]'), message);
-  return redacted.replace(/EA[A-Za-z0-9]+/g, '[REDACTED_ACCESS_TOKEN]');
+  if (typeof value === 'string' && value.trim() && Number.isFinite(Number(value))) {
+    return Number(value);
+  }
+
+  return undefined;
 }
 
-async function readGraph<T>(path: string, params: Record<string, string>, accessToken?: string) {
-  const token = getActiveMetaAccessToken(accessToken);
-  const url = new URL(`https://graph.facebook.com/${META_GRAPH_VERSION}/${path}`);
-
-  for (const [key, value] of Object.entries(params)) {
-    if (value) {
-      url.searchParams.set(key, value);
-    }
-  }
-
-  url.searchParams.set('access_token', token);
-
-  const response = await fetch(url.toString(), {
-    method: 'GET',
-    cache: 'no-store'
-  });
-
-  const payload = (await response.json().catch(() => null)) as T & MetaGraphError;
-
-  if (!response.ok) {
-    throw new Error(sanitizeMetaMessage(payload?.error?.message ?? payload?.message ?? `Meta Graph error ${response.status}`, token));
-  }
-
-  return payload;
-}
-
-async function postGraph<T>(path: string, body: Record<string, string | boolean>, accessToken?: string) {
-  const token = getActiveMetaAccessToken(accessToken);
-  const payload = new URLSearchParams();
-
-  for (const [key, value] of Object.entries(body)) {
-    if (value !== undefined && value !== null && value !== '') {
-      payload.set(key, String(value));
-    }
-  }
-
-  payload.set('access_token', token);
-
-  const response = await fetch(`https://graph.facebook.com/${META_GRAPH_VERSION}/${path}`, {
-    method: 'POST',
-    headers: { 'content-type': 'application/x-www-form-urlencoded' },
-    body: payload.toString(),
-    cache: 'no-store'
-  });
-
-  const parsed = (await response.json().catch(() => null)) as T & MetaGraphError;
-
-  if (!response.ok) {
-    throw new Error(sanitizeMetaMessage(parsed?.error?.message ?? parsed?.message ?? `Meta Graph error ${response.status}`, token));
-  }
-
-  return parsed;
-}
-
-async function discoverInstagramAccount(accessToken?: string) {
-  const configured = getConfiguredInstagramAccountId();
-  if (configured) {
-    return {
-      instagramAccountId: configured,
-      pageName: undefined as string | undefined,
-      username: undefined as string | undefined
-    };
-  }
-
-  const payload = await readGraph<{
-    data?: Array<{
-      name?: string;
-      instagram_business_account?: {
-        id?: string;
-        username?: string;
-      };
-    }>;
-  }>('me/accounts', {
-    fields: 'name,instagram_business_account{id,username}'
-  }, accessToken);
-
-  const page = payload.data?.find((item) => item.instagram_business_account?.id);
-
-  return {
-    instagramAccountId: page?.instagram_business_account?.id ?? '',
-    pageName: page?.name,
-    username: page?.instagram_business_account?.username
-  };
-}
-
-function buildInsights(media: InstagramMediaItem[]) {
+function buildMediaInsights(media: InstagramMediaItem[]) {
   const likes = media.reduce((sum, item) => sum + (item.likeCount ?? 0), 0);
   const comments = media.reduce((sum, item) => sum + (item.commentsCount ?? 0), 0);
   const reels = media.filter((item) => item.mediaType === 'VIDEO' || item.mediaType === 'REELS').length;
@@ -170,7 +142,166 @@ function buildInsights(media: InstagramMediaItem[]) {
   ];
 }
 
-async function fetchInstagramProfile(instagramAccountId: string, accessToken?: string) {
+function mergeInsights(media: InstagramMediaItem[], directInsights: Array<{ metric: string; value: number }>) {
+  const merged = new Map<string, { metric: string; value: number }>();
+
+  for (const item of buildMediaInsights(media)) {
+    merged.set(item.metric, item);
+  }
+
+  for (const item of directInsights) {
+    merged.set(item.metric, item);
+  }
+
+  return Array.from(merged.values());
+}
+
+function buildDisconnectedSnapshot(message: string, options?: { connectState?: string; usingWorkspaceToken?: boolean }) {
+  return {
+    ok: true,
+    connected: false,
+    usingWorkspaceToken: options?.usingWorkspaceToken ?? false,
+    provider: 'meta-graph' as const,
+    message,
+    connectUrl: buildMetaConnectUrl(options?.connectState ?? 'demo:posts'),
+    insights: [],
+    media: [],
+    stories: []
+  };
+}
+
+async function readGraph<T>(path: string, params: Record<string, string>, accessToken: string) {
+  if (!accessToken) {
+    throw new Error('Meta access token is missing.');
+  }
+
+  const url = new URL(`https://graph.facebook.com/${META_GRAPH_VERSION}/${path}`);
+
+  for (const [key, value] of Object.entries(params)) {
+    if (value) {
+      url.searchParams.set(key, value);
+    }
+  }
+
+  url.searchParams.set('access_token', accessToken);
+
+  const response = await fetch(url.toString(), {
+    method: 'GET',
+    cache: 'no-store'
+  });
+
+  const payload = (await response.json().catch(() => null)) as T & MetaGraphError;
+
+  if (!response.ok) {
+    throw new Error(sanitizeMetaMessage(payload?.error?.message ?? payload?.message ?? `Meta Graph error ${response.status}`));
+  }
+
+  return payload;
+}
+
+async function postGraph<T>(path: string, body: Record<string, string | boolean>, accessToken: string) {
+  if (!accessToken) {
+    throw new Error('Meta access token is missing.');
+  }
+
+  const payload = new URLSearchParams();
+
+  for (const [key, value] of Object.entries(body)) {
+    if (value !== undefined && value !== null && value !== '') {
+      payload.set(key, String(value));
+    }
+  }
+
+  payload.set('access_token', accessToken);
+
+  const response = await fetch(`https://graph.facebook.com/${META_GRAPH_VERSION}/${path}`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/x-www-form-urlencoded' },
+    body: payload.toString(),
+    cache: 'no-store'
+  });
+
+  const parsed = (await response.json().catch(() => null)) as T & MetaGraphError;
+
+  if (!response.ok) {
+    throw new Error(sanitizeMetaMessage(parsed?.error?.message ?? parsed?.message ?? `Meta Graph error ${response.status}`));
+  }
+
+  return parsed;
+}
+
+async function fetchMetaPages(userAccessToken: string) {
+  const payload = await readGraph<{ data?: MetaPageNode[] }>('me/accounts', {
+    fields: 'id,name,access_token,tasks,instagram_business_account{id,username}',
+    limit: '50'
+  }, userAccessToken);
+
+  return (payload.data ?? []).filter((page) => page.id && page.name);
+}
+
+function selectMetaPage(pages: MetaPageNode[], requestedPageId?: string) {
+  const eligiblePages = pages.filter(
+    (page) => page.id && page.access_token && page.instagram_business_account?.id
+  );
+
+  if (!eligiblePages.length) {
+    return {
+      page: null,
+      eligibleCount: 0,
+      selection: 'first_eligible' as const
+    };
+  }
+
+  if (requestedPageId) {
+    const requested = eligiblePages.find((page) => page.id === requestedPageId);
+
+    if (requested) {
+      return {
+        page: requested,
+        eligibleCount: eligiblePages.length,
+        selection: 'requested' as const
+      };
+    }
+
+    console.warn('[meta.oauth] requested page was not available for the current token, falling back to first eligible page', {
+      requestedPageId,
+      eligiblePages: eligiblePages.length
+    });
+  }
+
+  return {
+    page: eligiblePages[0] ?? null,
+    eligibleCount: eligiblePages.length,
+    selection: 'first_eligible' as const
+  };
+}
+
+async function discoverInstagramAccount(accessToken: string) {
+  const configured = getConfiguredInstagramAccountId();
+
+  if (configured) {
+    return {
+      instagramAccountId: configured,
+      pageId: undefined as string | undefined,
+      pageName: undefined as string | undefined,
+      username: undefined as string | undefined,
+      pageAccessToken: accessToken
+    };
+  }
+
+  const pages = await fetchMetaPages(accessToken);
+  const selected = selectMetaPage(pages);
+
+  return {
+    instagramAccountId: selected.page?.instagram_business_account?.id ?? '',
+    pageId: selected.page?.id ?? undefined,
+    pageName: selected.page?.name ?? undefined,
+    username: selected.page?.instagram_business_account?.username ?? undefined,
+    pageAccessToken: selected.page?.access_token ?? accessToken
+  };
+}
+
+async function fetchInstagramProfile(instagramAccountId: string, accessToken: string) {
   try {
     const profile = await readGraph<{
       id?: string;
@@ -183,14 +314,19 @@ async function fetchInstagramProfile(instagramAccountId: string, accessToken?: s
     }, accessToken);
 
     return profile;
-  } catch {
+  } catch (error) {
+    console.warn('[meta.profile] unable to load full Instagram profile', {
+      instagramAccountId,
+      reason: error instanceof Error ? sanitizeMetaMessage(error.message) : 'unknown error'
+    });
+
     return {
       id: instagramAccountId
     };
   }
 }
 
-async function fetchInstagramMediaFeed(instagramAccountId: string, accessToken?: string) {
+async function fetchInstagramMediaFeed(instagramAccountId: string, accessToken: string) {
   const payload = await readGraph<{
     data?: Array<{
       id?: string;
@@ -221,7 +357,7 @@ async function fetchInstagramMediaFeed(instagramAccountId: string, accessToken?:
   }));
 }
 
-async function fetchInstagramStoriesFeed(instagramAccountId: string, accessToken?: string) {
+async function fetchInstagramStoriesFeed(instagramAccountId: string, accessToken: string) {
   try {
     const payload = await readGraph<{
       data?: Array<{
@@ -245,34 +381,136 @@ async function fetchInstagramStoriesFeed(instagramAccountId: string, accessToken
       permalink: item.permalink ?? undefined,
       timestamp: item.timestamp ?? undefined
     }));
-  } catch {
+  } catch (error) {
+    console.warn('[meta.stories] unable to load stories feed', {
+      instagramAccountId,
+      reason: error instanceof Error ? sanitizeMetaMessage(error.message) : 'unknown error'
+    });
+
     return [];
   }
 }
 
-export function getMetaTokenCookieName() {
-  return META_TOKEN_COOKIE;
+async function fetchInstagramAccountInsights(instagramAccountId: string, accessToken: string) {
+  const metrics = [
+    { metric: 'reach', period: 'day' },
+    { metric: 'accounts_engaged', period: 'day' },
+    { metric: 'total_interactions', period: 'day' }
+  ];
+
+  const collected: Array<{ metric: string; value: number }> = [];
+
+  for (const { metric, period } of metrics) {
+    try {
+      const payload = await readGraph<{ data?: MetaInsightMetric[] }>(`${instagramAccountId}/insights`, {
+        metric,
+        period
+      }, accessToken);
+
+      const numericValue = parseMetricValue(payload.data?.[0]?.values?.[0]?.value);
+
+      if (typeof numericValue === 'number') {
+        collected.push({ metric, value: numericValue });
+      }
+    } catch (error) {
+      console.warn('[meta.insights] metric unavailable for Instagram account', {
+        instagramAccountId,
+        metric,
+        reason: error instanceof Error ? sanitizeMetaMessage(error.message) : 'unknown error'
+      });
+    }
+  }
+
+  return collected;
 }
 
-export function getMetaAuthRedirectUri(siteOrigin?: string) {
-  return `${siteOrigin ?? getSiteUrl()}/api/integrations/meta/callback`;
+function buildConnectedSnapshot(
+  connection: MetaStoredConnection,
+  profile: Awaited<ReturnType<typeof fetchInstagramProfile>>,
+  media: InstagramMediaItem[],
+  stories: InstagramStoryItem[],
+  directInsights: Array<{ metric: string; value: number }>,
+  options?: { connectState?: string; usingWorkspaceToken?: boolean }
+): InstagramConnectionSnapshot {
+  const username = profile.username ?? connection.instagramUsername ?? 'instagram';
+
+  return {
+    ok: true,
+    connected: true,
+    usingWorkspaceToken: options?.usingWorkspaceToken ?? false,
+    provider: 'meta-graph',
+    message: `Instagram conectado como @${username}.`,
+    connectUrl: buildMetaConnectUrl(options?.connectState ?? 'demo:posts'),
+    account: {
+      id: connection.instagramAccountId,
+      username,
+      pageName: connection.pageName,
+      profilePictureUrl: profile.profile_picture_url ?? undefined,
+      followersCount: profile.followers_count ?? undefined,
+      mediaCount: profile.media_count ?? media.length
+    },
+    insights: mergeInsights(media, directInsights),
+    media,
+    stories
+  };
 }
 
-export function buildMetaConnectUrl(state: string, siteOrigin?: string) {
-  if (!process.env.META_APP_ID || !process.env.META_APP_SECRET) {
+async function resolveStoredConnectionSnapshot(
+  connection: MetaStoredConnection,
+  options?: { connectState?: string; usingWorkspaceToken?: boolean }
+) {
+  const [profile, media, stories, directInsights] = await Promise.all([
+    fetchInstagramProfile(connection.instagramAccountId, connection.pageAccessToken),
+    fetchInstagramMediaFeed(connection.instagramAccountId, connection.pageAccessToken),
+    fetchInstagramStoriesFeed(connection.instagramAccountId, connection.pageAccessToken),
+    fetchInstagramAccountInsights(connection.instagramAccountId, connection.pageAccessToken)
+  ]);
+
+  return buildConnectedSnapshot(connection, profile, media, stories, directInsights, options);
+}
+
+export function buildMetaConnectUrl(state: string) {
+  if (!process.env.META_APP_ID) {
     return '';
   }
 
   const url = new URL(`https://www.facebook.com/${META_GRAPH_VERSION}/dialog/oauth`);
   url.searchParams.set('client_id', process.env.META_APP_ID);
-  url.searchParams.set('redirect_uri', getMetaAuthRedirectUri(siteOrigin));
-  url.searchParams.set('scope', META_SCOPES);
+  url.searchParams.set('redirect_uri', getMetaRedirectUri());
+  url.searchParams.set('scope', META_SCOPES.join(','));
   url.searchParams.set('response_type', 'code');
   url.searchParams.set('state', state);
   return url.toString();
 }
 
-export async function exchangeCodeForMetaToken(code: string, siteOrigin?: string) {
+export function serializeMetaOAuthState(state: MetaOAuthStatePayload) {
+  return Buffer.from(JSON.stringify(state), 'utf8').toString('base64url');
+}
+
+export function parseMetaOAuthState(rawState?: string | null): MetaOAuthStatePayload | null {
+  if (!rawState) {
+    return null;
+  }
+
+  try {
+    const parsed = JSON.parse(Buffer.from(rawState, 'base64url').toString('utf8')) as Partial<MetaOAuthStatePayload>;
+
+    if (!parsed.workspace || !parsed.module || !parsed.nonce) {
+      return null;
+    }
+
+    return {
+      workspace: parsed.workspace,
+      module: parsed.module,
+      nonce: parsed.nonce,
+      pageId: parsed.pageId
+    };
+  } catch {
+    return null;
+  }
+}
+
+export async function exchangeCodeForMetaToken(code: string) {
   if (!process.env.META_APP_ID || !process.env.META_APP_SECRET) {
     throw new Error('Meta credentials are missing.');
   }
@@ -280,7 +518,7 @@ export async function exchangeCodeForMetaToken(code: string, siteOrigin?: string
   const url = new URL(`https://graph.facebook.com/${META_GRAPH_VERSION}/oauth/access_token`);
   url.searchParams.set('client_id', process.env.META_APP_ID);
   url.searchParams.set('client_secret', process.env.META_APP_SECRET);
-  url.searchParams.set('redirect_uri', getMetaAuthRedirectUri(siteOrigin));
+  url.searchParams.set('redirect_uri', getMetaRedirectUri());
   url.searchParams.set('code', code);
 
   const response = await fetch(url.toString(), {
@@ -294,12 +532,18 @@ export async function exchangeCodeForMetaToken(code: string, siteOrigin?: string
     throw new Error(sanitizeMetaMessage(payload?.error?.message ?? payload?.message ?? 'Falha ao trocar o code da Meta.'));
   }
 
-  return payload.access_token;
+  return {
+    accessToken: payload.access_token,
+    tokenType: payload.token_type,
+    expiresIn: payload.expires_in
+  } satisfies MetaAuthTokenResult;
 }
 
 export async function exchangeForLongLivedMetaToken(shortLivedToken: string) {
   if (!process.env.META_APP_ID || !process.env.META_APP_SECRET) {
-    return shortLivedToken;
+    return {
+      accessToken: shortLivedToken
+    } satisfies MetaAuthTokenResult;
   }
 
   const url = new URL(`https://graph.facebook.com/${META_GRAPH_VERSION}/oauth/access_token`);
@@ -316,39 +560,126 @@ export async function exchangeForLongLivedMetaToken(shortLivedToken: string) {
   const payload = (await response.json().catch(() => null)) as MetaAuthTokenPayload & MetaGraphError;
 
   if (!response.ok || !payload?.access_token) {
-    return shortLivedToken;
+    return {
+      accessToken: shortLivedToken
+    } satisfies MetaAuthTokenResult;
   }
 
-  return payload.access_token;
+  return {
+    accessToken: payload.access_token,
+    tokenType: payload.token_type,
+    expiresIn: payload.expires_in
+  } satisfies MetaAuthTokenResult;
 }
 
-export async function getInstagramConnectionSnapshot(accessToken?: string): Promise<InstagramConnectionSnapshot> {
-  const token = getActiveMetaAccessToken(accessToken);
-  const connectUrl = buildMetaConnectUrl('demo:posts');
-  const usingWorkspaceToken = Boolean(accessToken);
+export async function resolveMetaConnectionFromUserToken(
+  userAccessToken: string,
+  options?: { pageId?: string; connectState?: string; usingWorkspaceToken?: boolean }
+): Promise<MetaResolvedConnection> {
+  const pages = await fetchMetaPages(userAccessToken);
+
+  if (!pages.length) {
+    throw new Error('Nenhuma pagina do Facebook foi encontrada para este login.');
+  }
+
+  const selected = selectMetaPage(pages, options?.pageId);
+
+  if (!selected.page) {
+    throw new Error('Nenhuma pagina com conta Instagram Business conectada foi encontrada.');
+  }
+
+  const pageId = selected.page.id ?? '';
+  const instagramAccountId = selected.page.instagram_business_account?.id ?? '';
+  const pageAccessToken = selected.page.access_token ?? '';
+
+  if (!pageId || !instagramAccountId || !pageAccessToken) {
+    throw new Error('A pagina selecionada nao possui uma conta Instagram Business pronta para uso.');
+  }
+
+  const connection: MetaStoredConnection = {
+    provider: 'meta-graph',
+    pageAccessToken,
+    pageId,
+    pageName: selected.page.name ?? undefined,
+    instagramAccountId,
+    instagramUsername: selected.page.instagram_business_account?.username ?? undefined,
+    scopes: getMetaRequestedScopes(),
+    tokenType: 'page'
+  };
+
+  const snapshot = await resolveStoredConnectionSnapshot(connection, {
+    connectState: options?.connectState,
+    usingWorkspaceToken: options?.usingWorkspaceToken
+  });
+
+  return {
+    connection,
+    snapshot,
+    userAccessToken,
+    pagesCount: pages.length,
+    eligiblePagesCount: selected.eligibleCount,
+    pageSelection: selected.selection
+  };
+}
+
+async function resolveFallbackConnectionSnapshot(accessToken: string, options?: { connectState?: string; usingWorkspaceToken?: boolean }) {
+  const configuredInstagramAccountId = getConfiguredInstagramAccountId();
+
+  if (configuredInstagramAccountId) {
+    const fallbackConnection: MetaStoredConnection = {
+      provider: 'meta-graph',
+      pageAccessToken: accessToken,
+      pageId: 'configured-page',
+      pageName: undefined,
+      instagramAccountId: configuredInstagramAccountId,
+      instagramUsername: undefined,
+      scopes: getMetaRequestedScopes()
+    };
+
+    return resolveStoredConnectionSnapshot(fallbackConnection, options);
+  }
+
+  const discovered = await discoverInstagramAccount(accessToken);
+
+  if (!discovered.instagramAccountId) {
+    return buildDisconnectedSnapshot(
+      'Conexao autenticada, mas sem conta do Instagram Business vinculada. Confirme a pagina conectada e as permissoes da Meta.',
+      {
+        connectState: options?.connectState,
+        usingWorkspaceToken: options?.usingWorkspaceToken
+      }
+    );
+  }
+
+  const fallbackConnection: MetaStoredConnection = {
+    provider: 'meta-graph',
+    pageAccessToken: discovered.pageAccessToken,
+    pageId: discovered.pageId ?? 'selected-page',
+    pageName: discovered.pageName,
+    instagramAccountId: discovered.instagramAccountId,
+    instagramUsername: discovered.username,
+    scopes: getMetaRequestedScopes()
+  };
+
+  return resolveStoredConnectionSnapshot(fallbackConnection, options);
+}
+
+export async function fetchInstagramConnectionSnapshot(params?: {
+  browserConnection?: MetaStoredConnection | null;
+  persistedConnection?: (MetaStoredConnection & { metadata?: Record<string, unknown> }) | null;
+  fallbackAccessToken?: string | null;
+  connectState?: string;
+}): Promise<InstagramConnectionSnapshot> {
+  const connectState = params?.connectState ?? 'demo:posts';
 
   if (!process.env.META_APP_ID || !process.env.META_APP_SECRET) {
     return {
       ok: false,
       connected: false,
-      usingWorkspaceToken,
+      usingWorkspaceToken: false,
       provider: 'meta-graph',
-      message: 'As credenciais base da Meta ainda não estão configuradas.',
-      connectUrl,
-      insights: [],
-      media: [],
-      stories: []
-    };
-  }
-
-  if (!token) {
-    return {
-      ok: true,
-      connected: false,
-      usingWorkspaceToken,
-      provider: 'meta-graph',
-      message: 'Conecte uma conta do Instagram Business para puxar feed, stories e métricas reais.',
-      connectUrl,
+      message: 'As credenciais base da Meta ainda nao estao configuradas.',
+      connectUrl: buildMetaConnectUrl(connectState),
       insights: [],
       media: [],
       stories: []
@@ -356,65 +687,46 @@ export async function getInstagramConnectionSnapshot(accessToken?: string): Prom
   }
 
   try {
-    const discovered = await discoverInstagramAccount(token);
-
-    if (!discovered.instagramAccountId) {
-      return {
-        ok: true,
-        connected: false,
-        usingWorkspaceToken,
-        provider: 'meta-graph',
-        message:
-          'Conexão autenticada, mas sem conta do Instagram Business vinculada. Confirme a página conectada e as permissões da Meta.',
-        connectUrl,
-        insights: [],
-        media: [],
-        stories: []
-      };
+    if (params?.browserConnection) {
+      return await resolveStoredConnectionSnapshot(params.browserConnection, {
+        connectState,
+        usingWorkspaceToken: true
+      });
     }
 
-    const [profile, media, stories] = await Promise.all([
-      fetchInstagramProfile(discovered.instagramAccountId, token),
-      fetchInstagramMediaFeed(discovered.instagramAccountId, token),
-      fetchInstagramStoriesFeed(discovered.instagramAccountId, token)
-    ]);
+    if (params?.persistedConnection) {
+      return await resolveStoredConnectionSnapshot(params.persistedConnection, {
+        connectState,
+        usingWorkspaceToken: false
+      });
+    }
 
-    const username = profile.username ?? discovered.username ?? 'instagram';
+    const fallbackAccessToken = params?.fallbackAccessToken ?? getConfiguredMetaAccessToken();
 
-    return {
-      ok: true,
-      connected: true,
-      usingWorkspaceToken,
-      provider: 'meta-graph',
-      message: `Instagram conectado como @${username}.`,
-      connectUrl,
-      account: {
-        id: discovered.instagramAccountId,
-        username,
-        pageName: discovered.pageName,
-        profilePictureUrl: profile.profile_picture_url ?? undefined,
-        followersCount: profile.followers_count ?? undefined,
-        mediaCount: profile.media_count ?? media.length
-      },
-      insights: buildInsights(media),
-      media,
-      stories
-    };
+    if (!fallbackAccessToken) {
+      return buildDisconnectedSnapshot('Conecte uma conta do Instagram Business para puxar feed, stories e metricas reais.', {
+        connectState,
+        usingWorkspaceToken: false
+      });
+    }
+
+    return await resolveFallbackConnectionSnapshot(fallbackAccessToken, {
+      connectState,
+      usingWorkspaceToken: false
+    });
   } catch (error) {
-    const message = error instanceof Error ? error.message : 'Falha ao consultar a Meta Graph API.';
-    const shouldSoftFail =
-      !usingWorkspaceToken &&
-      /malformed access token|invalid oauth|session has expired|invalid access token/i.test(message);
+    const message = error instanceof Error ? sanitizeMetaMessage(error.message) : 'Falha ao consultar a Meta Graph API.';
+    const shouldSoftFail = /malformed access token|invalid oauth|session has expired|invalid access token/i.test(message);
 
     return {
-      ok: shouldSoftFail ? true : false,
+      ok: shouldSoftFail,
       connected: false,
-      usingWorkspaceToken,
+      usingWorkspaceToken: Boolean(params?.browserConnection),
       provider: 'meta-graph',
       message: shouldSoftFail
-        ? 'O token padrão do workspace expirou. Conecte sua própria conta do Instagram para puxar feed, stories e métricas reais.'
+        ? 'A conexao salva expirou. Conecte novamente sua conta do Instagram para puxar feed, stories e metricas reais.'
         : message,
-      connectUrl,
+      connectUrl: buildMetaConnectUrl(connectState),
       insights: [],
       media: [],
       stories: []
@@ -422,26 +734,14 @@ export async function getInstagramConnectionSnapshot(accessToken?: string): Prom
   }
 }
 
-export async function fetchInstagramInsights(accessToken?: string) {
-  const snapshot = await getInstagramConnectionSnapshot(accessToken);
-
-  return {
-    ok: snapshot.ok,
-    connected: snapshot.connected,
-    provider: snapshot.provider,
-    message: snapshot.message,
-    instagramAccountId: snapshot.account?.id ?? '',
-    account: snapshot.account,
-    insights: snapshot.insights,
-    media: snapshot.media,
-    stories: snapshot.stories
-  };
-}
-
-export async function publishInstagramPost(input: MetaPublishInput, accessToken?: string) {
-  const token = getActiveMetaAccessToken(accessToken);
-
-  if (!process.env.META_APP_ID || !process.env.META_APP_SECRET || !token) {
+export async function publishInstagramPost(
+  input: MetaPublishInput,
+  params?: {
+    connection?: MetaStoredConnection | null;
+    fallbackAccessToken?: string | null;
+  }
+) {
+  if (!process.env.META_APP_ID || !process.env.META_APP_SECRET) {
     return {
       ok: false,
       message: 'Meta credentials are missing.',
@@ -458,25 +758,30 @@ export async function publishInstagramPost(input: MetaPublishInput, accessToken?
   }
 
   try {
-    const discovered = await discoverInstagramAccount(token);
+    const connection =
+      params?.connection ??
+      (
+        await resolveMetaConnectionFromUserToken(
+          params?.fallbackAccessToken ?? getConfiguredMetaAccessToken()
+        )
+      ).connection;
 
-    if (!discovered.instagramAccountId) {
+    if (!connection?.instagramAccountId || !connection.pageAccessToken) {
       return {
         ok: false,
-        message:
-          'Nao encontrei a conta do Instagram Business associada a esse token. Confirme a vinculacao da pagina e as permissoes instagram_content_publish e pages_show_list.',
+        message: 'Nao encontrei uma conexao valida do Instagram Business para publicar.',
         input
       };
     }
 
     const mediaType = input.mediaType === 'REELS' ? 'REELS' : 'IMAGE';
-    const creation = await postGraph<{ id?: string }>(`${discovered.instagramAccountId}/media`, {
+    const creation = await postGraph<{ id?: string }>(`${connection.instagramAccountId}/media`, {
       caption: input.caption ?? '',
       image_url: mediaType === 'IMAGE' ? input.mediaUrl : '',
       media_type: mediaType,
       share_to_feed: mediaType === 'REELS' ? input.shareToFeed ?? true : false,
       video_url: mediaType === 'REELS' ? input.mediaUrl : ''
-    }, token);
+    }, connection.pageAccessToken);
 
     if (!creation.id) {
       return {
@@ -492,25 +797,25 @@ export async function publishInstagramPost(input: MetaPublishInput, accessToken?
         message:
           'Container criado na Meta. O agendamento interno ficou salvo, mas a publicacao futura ainda depende de um job para disparar no horario.',
         creationId: creation.id,
-        instagramAccountId: discovered.instagramAccountId
+        instagramAccountId: connection.instagramAccountId
       };
     }
 
-    const published = await postGraph<{ id?: string }>(`${discovered.instagramAccountId}/media_publish`, {
+    const published = await postGraph<{ id?: string }>(`${connection.instagramAccountId}/media_publish`, {
       creation_id: creation.id
-    }, token);
+    }, connection.pageAccessToken);
 
     return {
       ok: true,
       message: 'Conteudo enviado para o Instagram com sucesso.',
       creationId: creation.id,
       publishId: published.id ?? '',
-      instagramAccountId: discovered.instagramAccountId
+      instagramAccountId: connection.instagramAccountId
     };
   } catch (error) {
     return {
       ok: false,
-      message: error instanceof Error ? error.message : 'Falha ao publicar no Instagram.',
+      message: error instanceof Error ? sanitizeMetaMessage(error.message) : 'Falha ao publicar no Instagram.',
       input
     };
   }

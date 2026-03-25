@@ -37,7 +37,10 @@ export function useInstagramConnection(workspaceSlug: string, module: ModuleKey)
     setSyncing(true);
 
     try {
-      const response = await fetch('/api/integrations/meta', {
+      const params = new URLSearchParams({
+        workspace: workspaceSlug
+      });
+      const response = await fetch(`/api/integrations/meta?${params.toString()}`, {
         method: 'GET',
         cache: 'no-store'
       });
@@ -61,7 +64,7 @@ export function useInstagramConnection(workspaceSlug: string, module: ModuleKey)
       setSyncing(false);
       setLoading(false);
     }
-  }, [connectUrl]);
+  }, [connectUrl, workspaceSlug]);
 
   useEffect(() => {
     void refresh();
@@ -87,6 +90,11 @@ export function useInstagramConnection(workspaceSlug: string, module: ModuleKey)
       return;
     }
 
+    if (status === 'invalid-state') {
+      toast.error('Nao foi possivel validar a sessao de conexao do Instagram. Tente novamente.');
+      return;
+    }
+
     if (status === 'error' || status === 'missing-code') {
       toast.error('Nao foi possivel concluir a conexao com o Instagram.');
     }
@@ -96,7 +104,10 @@ export function useInstagramConnection(workspaceSlug: string, module: ModuleKey)
     setDisconnecting(true);
 
     try {
-      const response = await fetch('/api/integrations/meta', {
+      const params = new URLSearchParams({
+        workspace: workspaceSlug
+      });
+      const response = await fetch(`/api/integrations/meta?${params.toString()}`, {
         method: 'DELETE'
       });
       const payload = (await response.json().catch(() => null)) as { ok?: boolean; message?: string } | null;
@@ -114,7 +125,7 @@ export function useInstagramConnection(workspaceSlug: string, module: ModuleKey)
     } finally {
       setDisconnecting(false);
     }
-  }, [connectUrl]);
+  }, [connectUrl, workspaceSlug]);
 
   return {
     data: {

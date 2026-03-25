@@ -1,43 +1,119 @@
 import { NextResponse } from 'next/server';
+import { cookies } from 'next/headers';
 
 import {
   exchangeCodeForMetaToken,
   exchangeForLongLivedMetaToken,
-  getMetaTokenCookieName
+  getMetaStateCookieName,
+  parseMetaOAuthState,
+  resolveMetaConnectionFromUserToken
 } from '@/services/integrations/meta';
+import {
+  getMetaTokenCookieName,
+  persistMetaConnection,
+  serializeMetaCookieConnection
+} from '@/services/integrations/meta-storage';
+
+export const runtime = 'nodejs';
+
+function clearStateCookie(response: NextResponse) {
+  response.cookies.set(getMetaStateCookieName(), '', {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === 'production',
+    sameSite: 'lax',
+    path: '/',
+    maxAge: 0
+  });
+
+  return response;
+}
+
+function buildWorkspaceRedirect(workspace: string, module: string, status: string, extras?: Record<string, string>) {
+  const redirectUrl = new URL(`/${workspace}/${module}`, 'https://creator-ia.vercel.app');
+  redirectUrl.searchParams.set('instagram', status);
+
+  for (const [key, value] of Object.entries(extras ?? {})) {
+    if (value) {
+      redirectUrl.searchParams.set(key, value);
+    }
+  }
+
+  return redirectUrl;
+}
 
 export async function GET(request: Request) {
   const url = new URL(request.url);
+  const cookieStore = await cookies();
+  const metaState = parseMetaOAuthState(url.searchParams.get('state'));
+  const workspace = metaState?.workspace ?? 'demo';
+  const module = metaState?.module ?? 'posts';
   const code = url.searchParams.get('code');
   const error = url.searchParams.get('error');
   const errorReason = url.searchParams.get('error_reason');
   const errorDescription = url.searchParams.get('error_description');
-  const [workspace = 'demo', module = 'posts'] = (url.searchParams.get('state') ?? 'demo:posts').split(':');
-  const redirectUrl = new URL(`/${workspace}/${module}`, url.origin);
+  const storedNonce = cookieStore.get(getMetaStateCookieName())?.value;
 
   if (error) {
-    redirectUrl.searchParams.set('instagram', 'cancelled');
-    if (errorReason) {
-      redirectUrl.searchParams.set('reason', errorReason);
-    }
-    if (errorDescription) {
-      redirectUrl.searchParams.set('description', errorDescription);
-    }
+    console.warn('[meta.callback] user cancelled or Meta rejected the OAuth flow', {
+      workspace,
+      module,
+      reason: errorReason ?? error
+    });
 
-    return NextResponse.redirect(redirectUrl);
+    return clearStateCookie(
+      NextResponse.redirect(
+        buildWorkspaceRedirect(workspace, module, 'cancelled', {
+          reason: errorReason ?? error,
+          description: errorDescription ?? ''
+        })
+      )
+    );
+  }
+
+  if (!metaState || !storedNonce || storedNonce !== metaState.nonce) {
+    console.warn('[meta.callback] invalid or missing OAuth state', {
+      workspace,
+      module
+    });
+
+    return clearStateCookie(
+      NextResponse.redirect(buildWorkspaceRedirect(workspace, module, 'invalid-state'))
+    );
   }
 
   if (!code) {
-    redirectUrl.searchParams.set('instagram', 'missing-code');
-    return NextResponse.redirect(redirectUrl);
+    return clearStateCookie(
+      NextResponse.redirect(buildWorkspaceRedirect(workspace, module, 'missing-code'))
+    );
   }
 
   try {
-    const shortLivedToken = await exchangeCodeForMetaToken(code, url.origin);
-    const accessToken = await exchangeForLongLivedMetaToken(shortLivedToken);
-    const response = NextResponse.redirect(new URL(`/${workspace}/${module}?instagram=connected`, url.origin));
+    const shortLivedToken = await exchangeCodeForMetaToken(code);
+    const longLivedToken = await exchangeForLongLivedMetaToken(shortLivedToken.accessToken);
+    const resolved = await resolveMetaConnectionFromUserToken(longLivedToken.accessToken, {
+      pageId: metaState.pageId,
+      connectState: `${workspace}:${module}`,
+      usingWorkspaceToken: true
+    });
 
-    response.cookies.set(getMetaTokenCookieName(), accessToken, {
+    const persisted = await persistMetaConnection({
+      workspaceSlug: workspace,
+      ...resolved.connection,
+      metadata: {
+        pagesCount: resolved.pagesCount,
+        eligiblePagesCount: resolved.eligiblePagesCount,
+        pageSelection: resolved.pageSelection,
+        connectedAt: new Date().toISOString()
+      }
+    });
+
+    const response = NextResponse.redirect(
+      buildWorkspaceRedirect(workspace, module, 'connected', {
+        persisted: persisted.persisted ? 'true' : 'false'
+      })
+    );
+
+    response.cookies.set(getMetaTokenCookieName(), serializeMetaCookieConnection(resolved.connection), {
       httpOnly: true,
       secure: process.env.NODE_ENV === 'production',
       sameSite: 'lax',
@@ -45,9 +121,24 @@ export async function GET(request: Request) {
       maxAge: 60 * 60 * 24 * 45
     });
 
-    return response;
-  } catch {
-    redirectUrl.searchParams.set('instagram', 'error');
-    return NextResponse.redirect(redirectUrl);
+    if (!persisted.persisted) {
+      console.warn('[meta.callback] Meta connection was established but database persistence was skipped', {
+        workspace,
+        module,
+        reason: persisted.reason ?? 'unknown'
+      });
+    }
+
+    return clearStateCookie(response);
+  } catch (error) {
+    console.error('[meta.callback] failed to finalize Meta connection', {
+      workspace,
+      module,
+      reason: error instanceof Error ? error.message.slice(0, 240) : 'unknown error'
+    });
+
+    return clearStateCookie(
+      NextResponse.redirect(buildWorkspaceRedirect(workspace, module, 'error'))
+    );
   }
 }
