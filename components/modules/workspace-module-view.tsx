@@ -265,7 +265,71 @@ function formatDateLabel(date: string) {
 
 function DashboardModule({ workspace }: { workspace: WorkspaceSnapshot }) {
   const [widgets, setWidgets] = useState<WidgetKey[]>(['stats', 'agenda', 'stories', 'pipeline', 'ideas']);
+  const [selectedDate, setSelectedDate] = useState<Date | undefined>(
+    workspace.calendarEvents[0] ? new Date(`${workspace.calendarEvents[0].date}T12:00:00`) : new Date()
+  );
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 8 } }));
+  const selectedDateLabel = selectedDate?.toISOString().slice(0, 10);
+  const selectedEvents = workspace.calendarEvents.filter((event) => event.date === selectedDateLabel);
+  const mainSeries = workspace.metrics.series[0]?.points ?? [];
+  const weeklyLoad = workspace.posts.length + workspace.stories.length + workspace.agenda.length;
+  const spotlightCards = [
+    {
+      eyebrow: 'Roteiro premium',
+      title: workspace.scripts[0]?.title ?? 'Roteiro em construção',
+      detail: `${workspace.scripts[0]?.beats.length ?? 0} takes prontos`,
+      accent: 'from-[#b8a6ff] to-[#d4c5ff]',
+      icon: PlayCircle
+    },
+    {
+      eyebrow: 'Oferta da semana',
+      title: workspace.products[0]?.name ?? 'Produto em destaque',
+      detail: workspace.products[0]?.price ?? 'Valor definido no produto',
+      accent: 'from-[#ffd7ab] to-[#ffe9c7]',
+      icon: Target
+    },
+    {
+      eyebrow: 'Creator em alta',
+      title: workspace.creators[0]?.name ?? 'Nova collab',
+      detail: workspace.creators[0]?.metrics ?? 'Métricas da creator',
+      accent: 'from-[#ebff55] to-[#f7ff9b]',
+      icon: Users
+    }
+  ];
+  const assignments = [
+    ...workspace.agenda.map((item) => ({
+      id: item.id,
+      title: item.title,
+      meta: `${item.type} · ${item.owner}`,
+      when: item.time,
+      icon: CalendarDays,
+      accent: 'bg-[#f2ecff] text-[#5d43d7]'
+    })),
+    ...workspace.posts.slice(0, 2).map((post) => ({
+      id: post.id,
+      title: post.title,
+      meta: `${post.channel} · ${post.status}`,
+      when: post.scheduledAt.slice(11, 16),
+      icon: NotebookText,
+      accent: 'bg-[#fff0dd] text-[#9d6127]'
+    }))
+  ].slice(0, 4);
+  const topMovements = [
+    ...workspace.pipelineCards.slice(0, 2).map((card) => ({
+      id: card.id,
+      title: card.title,
+      meta: `${card.column} · ${card.assignee}`,
+      icon: SquareKanban,
+      accent: 'bg-[#eff2ff] text-[#4453c8]'
+    })),
+    ...workspace.calendarEvents.slice(0, 2).map((event) => ({
+      id: event.id,
+      title: event.title,
+      meta: `${event.type} · ${event.owner}`,
+      icon: Clock3,
+      accent: 'bg-[#eefbf2] text-[#247a48]'
+    }))
+  ].slice(0, 4);
 
   const widgetsByKey: Record<WidgetKey, React.ReactNode> = {
     stats: (
@@ -372,55 +436,215 @@ function DashboardModule({ workspace }: { workspace: WorkspaceSnapshot }) {
 
   return (
     <div className="space-y-6">
-      <div className="grid gap-4 lg:grid-cols-[1.4fr_0.6fr]">
-        <ModuleCard
-          title={`Olá, ${workspace.name}`}
-          subtitle="Seu centro de comando para planejar, produzir e publicar conteúdo com IA."
-          badge={workspace.plan}
-          className="bg-[linear-gradient(135deg,rgba(15,23,42,0.98),rgba(15,118,110,0.88))] text-white"
-        >
-          <div className="grid gap-4 sm:grid-cols-3">
-            <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
-              <p className="text-xs uppercase tracking-[0.2em] text-white/50">Hoje</p>
-              <p className="mt-3 font-display text-3xl font-semibold">{workspace.agenda.length}</p>
-              <p className="mt-1 text-sm text-white/70">Eventos agendados</p>
+      <div className="grid gap-6 xl:grid-cols-[1.45fr_0.75fr]">
+        <div className="overflow-hidden rounded-[2rem] border border-[#242244]/5 bg-[linear-gradient(135deg,#2d2a53_0%,#252347_55%,#34306b_100%)] p-6 text-white shadow-glow">
+          <div className="flex flex-wrap items-start justify-between gap-4">
+            <div className="max-w-xl">
+              <p className="text-sm font-medium text-white/65">Olá, {workspace.company}</p>
+              <h2 className="mt-3 max-w-lg font-display text-4xl font-semibold tracking-tight text-balance">
+                Você tem {weeklyLoad} entregas em movimento nesta semana.
+              </h2>
+              <p className="mt-4 max-w-xl text-sm leading-7 text-white/70">
+                O dashboard agora prioriza o que está pronto para gravar, publicar e analisar sem te jogar em uma parede de informação.
+              </p>
             </div>
-            <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
-              <p className="text-xs uppercase tracking-[0.2em] text-white/50">Conteúdo</p>
-              <p className="mt-3 font-display text-3xl font-semibold">{workspace.posts.length}</p>
-              <p className="mt-1 text-sm text-white/70">Posts nesta semana</p>
-            </div>
-            <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
-              <p className="text-xs uppercase tracking-[0.2em] text-white/50">Ideias</p>
-              <p className="mt-3 font-display text-3xl font-semibold">{workspace.ideas.length}</p>
-              <p className="mt-1 text-sm text-white/70">Ganchos aprovados</p>
-            </div>
+            <Badge className="border-white/10 bg-white/10 text-white hover:bg-white/10">{workspace.plan}</Badge>
           </div>
-          <div className="mt-5 flex flex-wrap items-center gap-2">
-            <Button className="bg-white text-slate-900 hover:bg-white/90">
-              <Bot className="h-4 w-4" />
-              Abrir IA
-            </Button>
-            <Button variant="outline" className="border-white/15 bg-white/5 text-white hover:bg-white/10">
-              <Plus className="h-4 w-4" />
-              Criar post
-            </Button>
-          </div>
-        </ModuleCard>
 
-        <ModuleCard title="Métricas rápidas" subtitle="Resumo da operação">
-          <div className="grid gap-3">
-            {workspace.metrics.summary.map((item) => (
-              <div key={item.label} className="flex items-center justify-between rounded-2xl border border-border bg-background p-4">
+          <div className="mt-6 grid gap-4 lg:grid-cols-[1.1fr_0.9fr]">
+            <div className="flex gap-3 overflow-x-auto pb-1">
+              {spotlightCards.map((card) => {
+                const Icon = card.icon;
+
+                return (
+                  <article
+                    key={card.eyebrow}
+                    className={cn(
+                      'min-w-[190px] flex-1 rounded-[1.75rem] bg-gradient-to-br p-4 text-[#221f3f] shadow-soft',
+                      card.accent
+                    )}
+                  >
+                    <div className="flex items-start justify-between gap-3">
+                      <p className="text-xs font-semibold uppercase tracking-[0.2em] text-[#221f3f]/55">{card.eyebrow}</p>
+                      <Icon className="h-4 w-4 shrink-0 text-[#221f3f]/70" />
+                    </div>
+                    <p className="mt-8 font-display text-2xl font-semibold leading-tight tracking-tight">{card.title}</p>
+                    <p className="mt-3 text-sm text-[#221f3f]/70">{card.detail}</p>
+                  </article>
+                );
+              })}
+            </div>
+
+            <div className="rounded-[1.75rem] border border-white/10 bg-white/10 p-5">
+              <div className="flex items-center justify-between gap-3">
                 <div>
-                  <p className="text-sm font-medium">{item.label}</p>
-                  <p className="text-xs text-muted-foreground">{item.trend}</p>
+                  <p className="text-xs uppercase tracking-[0.2em] text-white/55">Capacidade</p>
+                  <p className="mt-2 font-display text-2xl font-semibold">Uso do workspace</p>
                 </div>
-                <p className="font-display text-2xl font-semibold">{item.value}</p>
+                <ChartSpline className="h-5 w-5 text-white/65" />
+              </div>
+              <div className="mt-5 space-y-4">
+                {workspace.usage.slice(0, 3).map((item) => {
+                  const progress = item.limit === Infinity ? 100 : Math.min((item.used / item.limit) * 100, 100);
+                  return (
+                    <div key={item.metric}>
+                      <div className="flex items-center justify-between text-sm text-white/75">
+                        <span>{item.metric}</span>
+                        <span>
+                          {item.used}
+                          {item.limit === Infinity ? '' : `/${item.limit}`}
+                        </span>
+                      </div>
+                      <div className="mt-2 h-2 rounded-full bg-white/10">
+                        <div className="h-2 rounded-full bg-white" style={{ width: `${progress}%` }} />
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+              <div className="mt-5 flex flex-wrap gap-2">
+                <Button className="bg-white text-[#221f3f] hover:bg-white/90">
+                  <Bot className="h-4 w-4" />
+                  Abrir IA
+                </Button>
+                <Button variant="outline" className="border-white/10 bg-white/5 text-white hover:bg-white/10">
+                  <ArrowUpRight className="h-4 w-4" />
+                  Ver operação
+                </Button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <ModuleCard title="Pulso da operação" subtitle="Indicadores, notas e próximos gargalos" className="border-white/80 bg-white/88">
+          <div className="space-y-3">
+            {workspace.metrics.summary.map((item) => (
+              <div key={item.label} className="rounded-[1.5rem] border border-border/80 bg-[#f7f4ef] p-4">
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <p className="text-sm font-medium text-foreground">{item.label}</p>
+                    <p className="text-xs text-muted-foreground">{item.trend}</p>
+                  </div>
+                  <p className="font-display text-2xl font-semibold">{item.value}</p>
+                </div>
               </div>
             ))}
           </div>
+          <div className="mt-5 rounded-[1.5rem] border border-dashed border-border bg-[#f3f0ff] p-4">
+            <div className="flex items-center gap-3">
+              <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-[#2e2b54] text-white">
+                <Sparkles className="h-5 w-5" />
+              </div>
+              <div>
+                <p className="font-medium">IA acompanhando a semana</p>
+                <p className="text-sm text-muted-foreground">Mais força em bastidores, CTA de DM e prova social.</p>
+              </div>
+            </div>
+          </div>
         </ModuleCard>
+      </div>
+
+      <div className="grid gap-6 xl:grid-cols-[1.05fr_0.95fr]">
+        <div className="space-y-6">
+          <ModuleCard title="Statistics" subtitle="Leitura rápida do que evoluiu desde ontem" className="border-white/80 bg-white/88">
+            <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+              {workspace.quickStats.slice(0, 3).map((stat) => (
+                <div key={stat.label} className="rounded-[1.5rem] border border-border/80 bg-[#fbf8f4] p-4">
+                  <p className="text-sm text-muted-foreground">{stat.label}</p>
+                  <p className="mt-4 font-display text-4xl font-semibold tracking-tight">{stat.value}</p>
+                  <p className="mt-2 text-xs font-medium text-[#5d43d7]">{stat.trend}</p>
+                </div>
+              ))}
+              <div className="rounded-[1.5rem] border border-border/80 bg-[#fbf8f4] p-4">
+                <p className="text-sm text-muted-foreground">Alcance nesta semana</p>
+                <div className="mt-4 h-[96px]">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <AreaChart data={mainSeries}>
+                      <defs>
+                        <linearGradient id="dashboardAreaFill" x1="0" y1="0" x2="0" y2="1">
+                          <stop offset="0%" stopColor="#b39dff" stopOpacity={0.55} />
+                          <stop offset="100%" stopColor="#b39dff" stopOpacity={0.02} />
+                        </linearGradient>
+                      </defs>
+                      <Tooltip cursor={false} />
+                      <Area type="monotone" dataKey="value" stroke="#7b63ff" strokeWidth={3} fill="url(#dashboardAreaFill)" />
+                    </AreaChart>
+                  </ResponsiveContainer>
+                </div>
+              </div>
+            </div>
+          </ModuleCard>
+
+          <ModuleCard title="My Assignments" subtitle="Entregas, publicações e pontos de atenção" className="border-white/80 bg-white/88">
+            <div className="space-y-3">
+              {assignments.map((item) => {
+                const Icon = item.icon;
+
+                return (
+                  <div key={item.id} className="flex items-center gap-4 rounded-[1.5rem] border border-border/70 bg-[#fbf8f4] p-4">
+                    <div className={cn('flex h-11 w-11 items-center justify-center rounded-2xl', item.accent)}>
+                      <Icon className="h-5 w-5" />
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <p className="font-medium text-foreground">{item.title}</p>
+                      <p className="text-sm text-muted-foreground">{item.meta}</p>
+                    </div>
+                    <span className="text-sm font-semibold text-foreground/80">{item.when}</span>
+                  </div>
+                );
+              })}
+            </div>
+          </ModuleCard>
+        </div>
+
+        <div className="space-y-6">
+          <ModuleCard title="Calendário" subtitle="Selecione o dia e acompanhe os próximos movimentos" className="border-white/80 bg-white/88">
+            <DayPicker
+              mode="single"
+              selected={selectedDate}
+              onSelect={setSelectedDate}
+              className="rounded-[1.5rem] bg-[#fbf8f4] p-3"
+            />
+            <div className="mt-4 space-y-3">
+              {selectedEvents.length ? (
+                selectedEvents.map((event) => (
+                  <div key={event.id} className="flex items-center justify-between gap-3 rounded-[1.25rem] border border-border/70 bg-[#fbf8f4] p-4">
+                    <div>
+                      <p className="font-medium">{event.title}</p>
+                      <p className="text-sm text-muted-foreground">{event.type} · {event.owner}</p>
+                    </div>
+                    <Badge variant="outline">{event.date}</Badge>
+                  </div>
+                ))
+              ) : (
+                <div className="rounded-[1.25rem] border border-dashed border-border bg-[#fbf8f4] p-4 text-sm text-muted-foreground">
+                  Sem eventos nesta data. O calendário está pronto para receber mais blocos editoriais.
+                </div>
+              )}
+            </div>
+          </ModuleCard>
+
+          <ModuleCard title="Upcoming" subtitle="O que merece atenção antes do fim do dia" className="border-white/80 bg-white/88">
+            <div className="space-y-3">
+              {topMovements.map((item) => {
+                const Icon = item.icon;
+
+                return (
+                  <div key={item.id} className="flex items-center gap-4 rounded-[1.5rem] border border-border/70 bg-[#fbf8f4] p-4">
+                    <div className={cn('flex h-11 w-11 items-center justify-center rounded-2xl', item.accent)}>
+                      <Icon className="h-5 w-5" />
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <p className="font-medium">{item.title}</p>
+                      <p className="text-sm text-muted-foreground">{item.meta}</p>
+                    </div>
+                    <ArrowUpRight className="h-4 w-4 text-muted-foreground" />
+                  </div>
+                );
+              })}
+            </div>
+          </ModuleCard>
+        </div>
       </div>
 
       <Card className="glass p-4">

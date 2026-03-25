@@ -43,6 +43,7 @@ export function LoginForm() {
     try {
       document.cookie = 'contentos-demo=1; path=/; max-age=2592000; samesite=lax';
       router.push('/demo/dashboard');
+      router.refresh();
     } finally {
       setLoadingDemo(false);
     }
@@ -52,7 +53,7 @@ export function LoginForm() {
     const supabase = createSupabaseBrowserClient();
 
     if (!supabase) {
-      toast.error('Credenciais do Supabase ausentes. Entre em modo demo.')
+      toast.error('Credenciais do Supabase ausentes. Entre em modo demo.');
       return;
     }
 
@@ -65,9 +66,10 @@ export function LoginForm() {
       return;
     }
 
-    document.cookie = 'contentos-demo=1; path=/; max-age=2592000; samesite=lax';
+    document.cookie = 'contentos-demo=; path=/; max-age=0; samesite=lax';
     toast.success('Login realizado com sucesso');
     router.push('/demo/dashboard');
+    router.refresh();
   };
 
   return (

@@ -4,11 +4,14 @@ import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { motion } from 'framer-motion';
 import {
+  BellDot,
   Bot,
   CalendarDays,
   ChevronLeft,
   ChevronRight,
   Command,
+  LogOut,
+  Mail,
   Plus,
   Search,
   Sparkles
@@ -17,6 +20,7 @@ import {
 import { Button } from '@/components/ui/button';
 import { Separator } from '@/components/ui/separator';
 import { navigationItems } from '@/lib/constants';
+import { listWorkspaceSnapshots } from '@/lib/demo-data';
 import { useUiStore } from '@/store/use-ui-store';
 import { cn } from '@/lib/utils';
 import { WorkspaceSwitcher } from '@/components/layout/workspace-switcher';
@@ -31,24 +35,25 @@ export function AppShell({
   const pathname = usePathname();
   const sidebarOpen = useUiStore((state) => state.sidebarOpen);
   const setSidebarOpen = useUiStore((state) => state.setSidebarOpen);
+  const currentWorkspace = listWorkspaceSnapshots().find((item) => item.slug === workspace);
 
   return (
-    <div className="min-h-screen bg-[linear-gradient(180deg,rgba(248,250,252,0.9),rgba(241,245,249,1))]">
-      <div className="mx-auto flex min-h-screen max-w-[1600px] gap-0 lg:gap-4">
+    <div className="min-h-screen bg-[radial-gradient(circle_at_top_left,rgba(148,163,255,0.16),transparent_24%),radial-gradient(circle_at_85%_12%,rgba(255,217,173,0.2),transparent_22%),linear-gradient(180deg,rgba(229,236,250,0.95),rgba(244,240,236,0.98))]">
+      <div className="mx-auto flex min-h-screen max-w-[1640px] gap-4 p-3 lg:p-4">
         <aside
           className={cn(
-            'sticky top-0 hidden h-screen shrink-0 flex-col border-r border-border/80 bg-white/75 px-4 py-5 backdrop-blur-xl lg:flex',
-            sidebarOpen ? 'w-[312px]' : 'w-[96px]'
+            'sticky top-3 hidden h-[calc(100vh-1.5rem)] shrink-0 flex-col rounded-[2rem] border border-white/70 bg-white/80 px-4 py-5 shadow-soft backdrop-blur-xl lg:flex',
+            sidebarOpen ? 'w-[304px]' : 'w-[92px]'
           )}
         >
           <div className="flex items-center gap-3 px-2">
-            <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-foreground text-background shadow-soft">
+            <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-[#2e2b54] text-white shadow-soft">
               <Sparkles className="h-5 w-5" />
             </div>
             {sidebarOpen ? (
               <div>
                 <p className="font-display text-lg font-semibold tracking-tight">ContentOS</p>
-                <p className="text-xs text-muted-foreground">Sistema operacional de conteúdo</p>
+                <p className="text-xs text-muted-foreground">Operação de conteúdo com IA</p>
               </div>
             ) : null}
           </div>
@@ -71,8 +76,8 @@ export function AppShell({
                   className={cn(
                     'group flex items-center gap-3 rounded-2xl px-3 py-3 text-sm font-medium transition',
                     active
-                      ? 'bg-foreground text-background shadow-soft'
-                      : 'text-foreground/80 hover:bg-accent hover:text-accent-foreground'
+                      ? 'bg-[#2e2b54] text-white shadow-soft'
+                      : 'text-foreground/75 hover:bg-white hover:text-foreground'
                   )}
                 >
                   <Icon className="h-4 w-4 shrink-0" />
@@ -88,42 +93,55 @@ export function AppShell({
           </nav>
 
           <div className="mt-5 space-y-2">
-            <Button className="w-full justify-start" size="sm">
+            <Button className="w-full justify-start bg-[#2e2b54] text-white hover:opacity-95" size="sm">
               <Plus className="h-4 w-4" />
               {sidebarOpen ? 'Criar' : null}
             </Button>
-            <Button variant="outline" className="w-full justify-start" size="sm">
+            <Button variant="glass" className="w-full justify-start bg-white/90" size="sm">
               <Bot className="h-4 w-4" />
               {sidebarOpen ? 'Abrir IA' : null}
             </Button>
           </div>
 
-          <div className="mt-5 rounded-3xl border border-border bg-gradient-to-br from-foreground to-slate-800 p-4 text-background">
+          <div className="mt-5 rounded-3xl border border-white/80 bg-[linear-gradient(145deg,#2e2b54,#5b66d6)] p-4 text-white shadow-soft">
             {sidebarOpen ? (
               <>
-                <p className="text-xs uppercase tracking-[0.2em] text-white/60">Plataforma</p>
-                <p className="mt-2 font-display text-lg font-semibold leading-tight">ContentOS SaaS</p>
+                <p className="text-xs uppercase tracking-[0.2em] text-white/60">Workspace ativo</p>
+                <p className="mt-2 font-display text-lg font-semibold leading-tight">
+                  {currentWorkspace?.name ?? 'ContentOS SaaS'}
+                </p>
                 <p className="mt-2 text-sm text-white/70">
-                  Prepare-se para escalar com billing, feature flags e IA.
+                  {currentWorkspace?.plan ?? 'Plano demo'} com IA, métricas e pipeline.
                 </p>
               </>
             ) : null}
           </div>
 
-          <button
-            type="button"
-            onClick={() => setSidebarOpen(!sidebarOpen)}
-            className="mt-4 inline-flex items-center justify-center rounded-2xl border border-border bg-white p-3 text-foreground shadow-sm transition hover:bg-accent hover:text-accent-foreground"
-          >
-            {sidebarOpen ? <ChevronLeft className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
-          </button>
+          <div className="mt-4 flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setSidebarOpen(!sidebarOpen)}
+              className="inline-flex flex-1 items-center justify-center rounded-2xl border border-border bg-white p-3 text-foreground shadow-sm transition hover:bg-accent hover:text-accent-foreground"
+            >
+              {sidebarOpen ? <ChevronLeft className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
+            </button>
+            {sidebarOpen ? (
+              <Link
+                href="/login"
+                className="inline-flex items-center gap-2 rounded-2xl border border-border bg-white px-4 py-3 text-sm font-medium text-foreground transition hover:bg-accent hover:text-accent-foreground"
+              >
+                <LogOut className="h-4 w-4" />
+                Trocar conta
+              </Link>
+            ) : null}
+          </div>
         </aside>
 
-        <div className="flex min-h-screen flex-1 flex-col">
-          <header className="sticky top-0 z-20 border-b border-border/80 bg-white/75 backdrop-blur-xl">
-            <div className="flex items-center gap-3 px-4 py-4 lg:px-6">
-              <div className="flex flex-1 items-center gap-3">
-                <div className="flex h-11 flex-1 items-center gap-3 rounded-full border border-border bg-white/90 px-4 shadow-sm">
+        <div className="flex min-h-screen flex-1 flex-col overflow-hidden rounded-[2rem] border border-white/70 bg-[#fcfaf7]/88 shadow-soft backdrop-blur-xl">
+          <header className="sticky top-0 z-20 border-b border-border/70 bg-[#fcfaf7]/90 backdrop-blur-xl">
+            <div className="flex flex-col gap-4 px-4 py-4 lg:px-6">
+              <div className="flex items-center gap-3">
+                <div className="flex h-11 flex-1 items-center gap-3 rounded-full border border-white/80 bg-white/90 px-4 shadow-sm">
                   <Search className="h-4 w-4 text-muted-foreground" />
                   <input
                     aria-label="Pesquisar"
@@ -135,27 +153,81 @@ export function AppShell({
                     K
                   </span>
                 </div>
+
+                <div className="hidden items-center gap-2 md:flex">
+                  <Button variant="outline" size="icon" className="rounded-2xl">
+                    <Mail className="h-4 w-4" />
+                  </Button>
+                  <Button variant="outline" size="icon" className="rounded-2xl">
+                    <BellDot className="h-4 w-4" />
+                  </Button>
+                  <Button variant="outline" size="sm" className="rounded-2xl bg-white">
+                    <CalendarDays className="h-4 w-4" />
+                    Hoje
+                  </Button>
+                  <Button variant="glass" size="sm" className="rounded-2xl">
+                    <Bot className="h-4 w-4" />
+                    IA
+                  </Button>
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <div className="hidden rounded-2xl bg-[#2e2b54] px-3 py-2 text-right text-white shadow-soft sm:block">
+                    <p className="text-xs uppercase tracking-[0.18em] text-white/60">{currentWorkspace?.plan ?? 'Demo'}</p>
+                    <p className="text-sm font-semibold">{currentWorkspace?.company ?? 'ContentOS'}</p>
+                  </div>
+                  <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-[linear-gradient(145deg,#ffd9ad,#f9f4d7)] text-sm font-semibold text-[#2e2b54] shadow-sm">
+                    {(currentWorkspace?.name ?? 'CO').slice(0, 2).toUpperCase()}
+                  </div>
+                  <Button className="bg-[#2e2b54] text-white hover:opacity-95" size="sm">
+                    <Plus className="h-4 w-4" />
+                    Criar
+                  </Button>
+                </div>
               </div>
 
-              <div className="hidden items-center gap-2 md:flex">
-                <Button variant="outline" size="sm">
-                  <CalendarDays className="h-4 w-4" />
-                  Hoje
-                </Button>
-                <Button variant="glass" size="sm">
-                  <Bot className="h-4 w-4" />
-                  IA
-                </Button>
+              <div className="flex items-center justify-between gap-3 lg:hidden">
+                <div>
+                  <p className="text-xs uppercase tracking-[0.18em] text-muted-foreground">{currentWorkspace?.plan ?? 'Demo'}</p>
+                  <p className="font-semibold text-foreground">{currentWorkspace?.name ?? 'ContentOS'}</p>
+                </div>
+                <div className="flex items-center gap-2">
+                  <Button variant="outline" size="icon" className="rounded-2xl bg-white">
+                    <Mail className="h-4 w-4" />
+                  </Button>
+                  <Button variant="glass" size="sm" className="rounded-2xl">
+                    <Bot className="h-4 w-4" />
+                    IA
+                  </Button>
+                </div>
               </div>
 
-              <Button size="sm">
-                <Plus className="h-4 w-4" />
-                Criar
-              </Button>
+              <nav className="flex gap-2 overflow-x-auto pb-1 lg:hidden">
+                {navigationItems.map((item) => {
+                  const active = pathname.startsWith(item.href(workspace));
+                  const Icon = item.icon;
+
+                  return (
+                    <Link
+                      key={item.key}
+                      href={item.href(workspace) as any}
+                      className={cn(
+                        'inline-flex items-center gap-2 rounded-full border px-3 py-2 text-sm font-medium whitespace-nowrap transition',
+                        active
+                          ? 'border-[#2e2b54] bg-[#2e2b54] text-white'
+                          : 'border-white/80 bg-white/85 text-foreground'
+                      )}
+                    >
+                      <Icon className="h-4 w-4" />
+                      {item.label}
+                    </Link>
+                  );
+                })}
+              </nav>
             </div>
           </header>
 
-          <main className="flex-1 px-4 py-6 lg:px-6">
+          <main className="flex-1 px-4 py-5 lg:px-6 lg:py-6">
             <motion.div
               key={pathname}
               initial={{ opacity: 0, y: 10 }}
