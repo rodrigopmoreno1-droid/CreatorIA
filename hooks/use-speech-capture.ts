@@ -36,7 +36,12 @@ function getSpeechRecognitionConstructor() {
     return null;
   }
 
-  return window.SpeechRecognition ?? window.webkitSpeechRecognition ?? null;
+  const browserWindow = window as Window & {
+    SpeechRecognition?: new () => SpeechRecognitionInstance;
+    webkitSpeechRecognition?: new () => SpeechRecognitionInstance;
+  };
+
+  return browserWindow.SpeechRecognition ?? browserWindow.webkitSpeechRecognition ?? null;
 }
 
 export function useSpeechCapture({ lang = 'pt-BR', maxDurationMs = 120000, onTranscript }: UseSpeechCaptureOptions = {}) {

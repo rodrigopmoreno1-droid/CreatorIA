@@ -2,7 +2,7 @@
 
 import { useMemo, useState } from 'react';
 import Link from 'next/link';
-import { Bot, Loader2, PencilLine, Plus, Sparkles, Trash2 } from 'lucide-react';
+import { Bot, Loader2, Mic, PencilLine, Plus, Sparkles, Square, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 
 import { Badge } from '@/components/ui/badge';
@@ -12,6 +12,7 @@ import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { PageIntro } from '@/components/platform/page-intro';
 import { ScriptEditorModal, type EditableScriptDraft } from '@/components/platform/script-editor-modal';
+import { useSpeechCapture } from '@/hooks/use-speech-capture';
 import type { ProductItem, ScriptItem } from '@/types/platform';
 
 type GeneratedScript = EditableScriptDraft;
@@ -104,6 +105,38 @@ export function ScriptsWorkspace({
 
   const draftScripts = useMemo(() => scripts.filter((script) => script.status === 'draft'), [scripts]);
   const approvedScripts = useMemo(() => scripts.filter((script) => script.status === 'approved'), [scripts]);
+
+  const promptVoiceCapture = useSpeechCapture({
+    onTranscript: async (text) => {
+      try {
+        const response = await fetch('/api/ai', {
+          method: 'POST',
+          headers: {
+            'content-type': 'application/json'
+          },
+          body: JSON.stringify({
+            action: 'rewriteHumanTone',
+            payload: {
+              text
+            }
+          })
+        });
+
+        const payload = (await response.json().catch(() => null)) as { content?: unknown; error?: string } | null;
+
+        if (!response.ok) {
+          throw new Error(payload?.error ?? 'Nao foi possivel refinar a transcricao.');
+        }
+
+        const nextText = typeof payload?.content === 'string' ? payload.content : text;
+        setPrompt(nextText);
+        toast.success('Transcricao aplicada ao briefing.');
+      } catch {
+        setPrompt(text);
+        toast.success('Transcricao aplicada ao briefing.');
+      }
+    }
+  });
 
   async function handleGenerate() {
     if (!prompt.trim()) {
@@ -273,7 +306,13 @@ export function ScriptsWorkspace({
         eyebrow="Roteiros"
         title="Geracao, edicao e aprovacao"
         actions={
-          <Button variant="outline" onClick={() => setPrompt('')}>
+          <Button
+            variant="outline"
+            onClick={() => {
+              setPrompt('');
+              promptVoiceCapture.reset();
+            }}
+          >
             Limpar briefing
           </Button>
         }
@@ -285,10 +324,20 @@ export function ScriptsWorkspace({
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-sm font-semibold text-foreground">Briefing</p>
-                <p className="mt-1 text-[13px] leading-6 text-muted-foreground">IA, produto e contexto viram tres propostas.</p>
               </div>
-              <div className="flex h-9 w-9 items-center justify-center rounded-full border border-border bg-muted/30 text-foreground" aria-label="IA aplicada">
-                <Bot className="h-4 w-4" />
+              <div className="flex items-center gap-2">
+                <div className="flex h-9 w-9 items-center justify-center rounded-full border border-border bg-muted/30 text-foreground" aria-label="IA aplicada">
+                  <Bot className="h-4 w-4" />
+                </div>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={promptVoiceCapture.isRecording ? promptVoiceCapture.stop : promptVoiceCapture.start}
+                  disabled={!promptVoiceCapture.isSupported}
+                >
+                  {promptVoiceCapture.isRecording ? <Square className="h-4 w-4" /> : <Mic className="h-4 w-4" />}
+                  {promptVoiceCapture.isRecording ? 'Parar' : 'Voz'}
+                </Button>
               </div>
             </div>
 
@@ -300,6 +349,15 @@ export function ScriptsWorkspace({
                 placeholder="Ex.: quero um roteiro para vender consultoria contabil usando um gancho atual sobre risco fiscal e uma linguagem humana."
                 className="min-h-[138px]"
               />
+              {promptVoiceCapture.error ? (
+                <div className="rounded-[16px] border border-rose-200 bg-rose-50 px-3 py-2 text-[13px] text-rose-700">
+                  {promptVoiceCapture.error}
+                </div>
+              ) : null}
+              <div className="flex flex-wrap items-center gap-2 text-[12px] text-muted-foreground">
+                {promptVoiceCapture.isRecording ? <span className="rounded-full border border-border px-2.5 py-1">gravando...</span> : null}
+                {promptVoiceCapture.isProcessing ? <span className="rounded-full border border-border px-2.5 py-1">transcrevendo...</span> : null}
+              </div>
             </div>
 
             <div className="grid gap-4 lg:grid-cols-[0.9fr_1.1fr]">
@@ -352,7 +410,6 @@ export function ScriptsWorkspace({
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-[10px] font-semibold uppercase tracking-[0.24em] text-white/45">Contexto</p>
-                <h2 className="mt-2 text-[22px] font-semibold tracking-tight">O que a IA vai usar</h2>
               </div>
               <Sparkles className="h-4 w-4 text-white/58" />
             </div>
