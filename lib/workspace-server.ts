@@ -1,3 +1,4 @@
+import type { User } from '@supabase/supabase-js';
 import { createSupabaseAdminClient } from '@/lib/supabase/admin';
 import { createSupabaseServerClient } from '@/lib/supabase/server';
 
@@ -26,7 +27,7 @@ function slugifyCompanyName(input: string) {
     .slice(0, 48);
 }
 
-async function getAuthenticatedUserId() {
+export async function getAuthenticatedUser() {
   const supabase = await createSupabaseServerClient();
 
   if (!supabase) {
@@ -37,14 +38,18 @@ async function getAuthenticatedUserId() {
     data: { user }
   } = await supabase.auth.getUser();
 
+  return user ?? null;
+}
+
+async function getAuthenticatedUserId() {
+  const user = await getAuthenticatedUser();
   return user?.id ?? null;
 }
 
-export async function getCurrentWorkspaceContext(): Promise<WorkspaceContext | null> {
-  const userId = await getAuthenticatedUserId();
+export async function getWorkspaceContextForUserId(userId: string): Promise<WorkspaceContext | null> {
   const admin = createSupabaseAdminClient();
 
-  if (!userId || !admin) {
+  if (!admin) {
     return null;
   }
 
@@ -65,6 +70,14 @@ export async function getCurrentWorkspaceContext(): Promise<WorkspaceContext | n
     workspaceSlug: data.companies.slug,
     companyName: data.companies.name
   };
+}
+
+export async function getCurrentWorkspaceContext(): Promise<WorkspaceContext | null> {
+  const userId = await getAuthenticatedUserId();
+  if (!userId) {
+    return null;
+  }
+  return getWorkspaceContextForUserId(userId);
 }
 
 export async function getWorkspaceContextForSlug(workspaceSlug: string): Promise<WorkspaceContext | null> {
@@ -93,6 +106,28 @@ export async function getWorkspaceContextForSlug(workspaceSlug: string): Promise
     workspaceSlug: data.companies.slug,
     companyName: data.companies.name
   };
+}
+
+export async function ensureWorkspaceForUser(user: Pick<User, 'id' | 'email' | 'user_metadata'>) {
+  const existingWorkspace = await getWorkspaceContextForUserId(user.id);
+
+  if (existingWorkspace) {
+    return existingWorkspace;
+  }
+
+  const email = user.email?.trim();
+  const companyName = user.user_metadata?.company_name?.trim();
+
+  if (!email || !companyName) {
+    return null;
+  }
+
+  return createWorkspaceForUser({
+    userId: user.id,
+    fullName: user.user_metadata?.full_name?.trim() || email.split('@')[0] || 'Novo usuario',
+    email,
+    companyName
+  });
 }
 
 async function ensureRoleExists(roleId: string, label: string) {

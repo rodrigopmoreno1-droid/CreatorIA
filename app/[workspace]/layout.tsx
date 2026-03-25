@@ -2,7 +2,7 @@ import type { ReactNode } from 'react';
 import { redirect } from 'next/navigation';
 
 import { AppShell } from '@/components/layout/app-shell';
-import { getWorkspaceContextForSlug } from '@/lib/workspace-server';
+import { getAuthenticatedUser, getWorkspaceContextForSlug } from '@/lib/workspace-server';
 
 export default async function WorkspaceLayout({
   children,
@@ -12,9 +12,13 @@ export default async function WorkspaceLayout({
   params: Promise<{ workspace: string }>;
 }) {
   const { workspace } = await params;
-  const context = await getWorkspaceContextForSlug(workspace);
+  const [context, user] = await Promise.all([getWorkspaceContextForSlug(workspace), getAuthenticatedUser()]);
 
   if (!context) {
+    if (user) {
+      redirect('/setup');
+    }
+
     redirect('/login');
   }
 

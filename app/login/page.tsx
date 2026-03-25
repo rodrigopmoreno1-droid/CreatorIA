@@ -1,9 +1,21 @@
+import { redirect } from 'next/navigation';
 import Link from 'next/link';
 import { ArrowLeft, Bot, CalendarDays, Search } from 'lucide-react';
 
 import { LoginForm } from '@/components/auth/login-form';
+import { getAuthenticatedUser, getCurrentWorkspaceContext } from '@/lib/workspace-server';
 
-export default function LoginPage() {
+export default async function LoginPage() {
+  const [workspace, user] = await Promise.all([getCurrentWorkspaceContext(), getAuthenticatedUser()]);
+
+  if (workspace) {
+    redirect(`/${workspace.workspaceSlug}/dashboard`);
+  }
+
+  if (user) {
+    redirect('/setup');
+  }
+
   return (
     <main className="relative min-h-screen overflow-hidden bg-[linear-gradient(180deg,#eef2f8_0%,#f6f7fb_48%,#f4f4f1_100%)]">
       <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_left,rgba(15,23,42,0.08),transparent_24%),radial-gradient(circle_at_bottom_right,rgba(15,23,42,0.05),transparent_22%)]" />

@@ -36,6 +36,14 @@ async function ensureWorkspace(input: {
   return payload.workspace.workspaceSlug;
 }
 
+function getEmailRedirectUrl() {
+  if (typeof window === 'undefined') {
+    return undefined;
+  }
+
+  return `${window.location.origin}/auth/callback`;
+}
+
 export function LoginForm() {
   const router = useRouter();
   const supabase = createSupabaseBrowserClient();
@@ -47,6 +55,15 @@ export function LoginForm() {
   const [companyName, setCompanyName] = useState('');
   const [signupEmail, setSignupEmail] = useState('');
   const [signupPassword, setSignupPassword] = useState('');
+
+  async function resolvePostAuthDestination() {
+    try {
+      const workspaceSlug = await ensureWorkspace({});
+      return `/${workspaceSlug}/dashboard`;
+    } catch {
+      return '/setup';
+    }
+  }
 
   async function handleLogin(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -68,8 +85,9 @@ export function LoginForm() {
       return;
     }
 
+    const destination = await resolvePostAuthDestination();
     toast.success('Login realizado com sucesso.');
-    router.push('/');
+    router.push(destination as never);
     router.refresh();
   }
 
@@ -91,6 +109,7 @@ export function LoginForm() {
       email: signupEmail,
       password: signupPassword,
       options: {
+        emailRedirectTo: getEmailRedirectUrl(),
         data: {
           full_name: fullName.trim(),
           company_name: companyName.trim()
@@ -105,27 +124,21 @@ export function LoginForm() {
     }
 
     if (!signUpResult.data.session) {
-      const signInResult = await supabase.auth.signInWithPassword({
-        email: signupEmail,
-        password: signupPassword
-      });
-
-      if (signInResult.error) {
-        setLoading(false);
-        toast.success('Conta criada. Confira seu e-mail para concluir a verificacao.');
-        return;
-      }
+      setLoading(false);
+      toast.success('Conta criada. Confira seu e-mail para concluir a verificacao.');
+      return;
     }
 
     try {
-      const workspaceSlug = await ensureWorkspace({
-        fullName,
-        companyName,
-        email: signupEmail
-      });
+      const workspaceSlug =
+        (await ensureWorkspace({
+          fullName,
+          companyName,
+          email: signupEmail
+        })) || (await resolvePostAuthDestination());
 
       toast.success('Conta criada e workspace configurado.');
-      router.push(`/${workspaceSlug}/dashboard`);
+      router.push((workspaceSlug.startsWith('/') ? workspaceSlug : `/${workspaceSlug}/dashboard`) as never);
       router.refresh();
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Nao foi possivel concluir seu cadastro.';
