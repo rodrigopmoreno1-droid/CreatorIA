@@ -1,3 +1,6 @@
+import { createSupabaseAdminClient } from '@/lib/supabase/admin';
+import { PRODUCT_IMPORT_BUCKET } from '@/lib/product-import-storage';
+
 type IdeaInput = {
   topic: string;
   audience?: string;
@@ -23,8 +26,11 @@ type ProductImportInput = {
   sourceText?: string;
   file?: {
     mimeType: string;
-    base64: string;
+    base64?: string;
+    storagePath?: string;
+    bucket?: string;
     name?: string;
+    sizeBytes?: number;
   };
   maxItems?: number;
 };
@@ -85,6 +91,13 @@ type WebSource = {
   url: string;
   citedText?: string;
   pageAge?: string;
+};
+
+type ResolvedProductImportFile = {
+  mimeType: string;
+  name: string;
+  text?: string;
+  base64?: string;
 };
 
 function getCurrentDateLabel() {
@@ -158,6 +171,71 @@ function extractAnthropicResponse(payload: AnthropicMessagesPayload) {
   return {
     text: textParts.join('\n').trim(),
     sources: [...sources.values()]
+  };
+}
+
+function isTextLikeImportFile(mimeType: string, fileName: string) {
+  return (
+    mimeType.startsWith('text/') ||
+    ['application/json', 'application/xml'].includes(mimeType) ||
+    /\.(csv|tsv|txt|md|json|xml|rtf)$/i.test(fileName)
+  );
+}
+
+function trimImportedText(text: string, maxLength = 120_000) {
+  if (text.length <= maxLength) {
+    return text;
+  }
+
+  return `${text.slice(0, maxLength)}\n\n[Conteudo truncado para caber na analise.]`;
+}
+
+async function resolveProductImportFile(file?: ProductImportInput['file']): Promise<ResolvedProductImportFile | null> {
+  if (!file) {
+    return null;
+  }
+
+  if (file.base64) {
+    return {
+      mimeType: file.mimeType,
+      name: file.name ?? 'arquivo-importado',
+      base64: file.base64
+    };
+  }
+
+  if (!file.storagePath) {
+    return null;
+  }
+
+  const admin = createSupabaseAdminClient();
+
+  if (!admin) {
+    return null;
+  }
+
+  const bucket = file.bucket ?? PRODUCT_IMPORT_BUCKET;
+  const { data, error } = await admin.storage.from(bucket).download(file.storagePath);
+
+  if (error || !data) {
+    throw new Error(error?.message ?? 'Nao foi possivel acessar o arquivo importado.');
+  }
+
+  const fileName = file.name ?? file.storagePath;
+
+  if (isTextLikeImportFile(file.mimeType, fileName)) {
+    const text = await data.text();
+    return {
+      mimeType: file.mimeType,
+      name: fileName,
+      text: trimImportedText(text)
+    };
+  }
+
+  const arrayBuffer = await data.arrayBuffer();
+  return {
+    mimeType: file.mimeType,
+    name: fileName,
+    base64: Buffer.from(arrayBuffer).toString('base64')
   };
 }
 
@@ -655,6 +733,7 @@ export async function rewriteHumanTone(input: { text: string }) {
 export async function extractProductsFromSource(input: ProductImportInput) {
   const maxItems = input.maxItems ?? 20;
   const fallback = { products: [] as Array<Record<string, string>> };
+  const uploadedFile = await resolveProductImportFile(input.file);
   const prompt = await buildCreatorAiPrompt([
     'Voce organiza catalogos de produtos para um SaaS de operacao de conteudo.',
     'Responda somente JSON valido.',
@@ -663,18 +742,19 @@ export async function extractProductsFromSource(input: ProductImportInput) {
     'Se algum campo nao aparecer com clareza, deixe a string vazia.',
     input.prompt ? `Pedido do usuario: ${input.prompt}` : null,
     input.sourceText ? `Texto base: ${input.sourceText}` : null,
-    input.file?.name ? `Arquivo analisado: ${input.file.name}` : null
-  ], input.sourceText ?? input.prompt ?? input.file?.name);
+    uploadedFile?.name ? `Arquivo analisado: ${uploadedFile.name}` : input.file?.name ? `Arquivo analisado: ${input.file.name}` : null,
+    uploadedFile?.text ? `Conteudo do arquivo:\n${uploadedFile.text}` : null
+  ], input.sourceText ?? uploadedFile?.text ?? input.prompt ?? uploadedFile?.name ?? input.file?.name);
 
-  if (input.file?.base64 && process.env.GEMINI_API_KEY) {
+  if (uploadedFile?.base64 && process.env.GEMINI_API_KEY) {
     const response = await callGeminiWithParts([
       {
         text: prompt
       },
       {
         inline_data: {
-          mime_type: input.file.mimeType,
-          data: input.file.base64
+          mime_type: uploadedFile.mimeType,
+          data: uploadedFile.base64
         }
       }
     ]);

@@ -1,7 +1,13 @@
 import { NextResponse } from 'next/server';
 
 import { chatWithAi } from '@/services/ai';
-import { getWorkspaceAiMessages, resolveWorkspaceDataAccess, toAiConversationItem, toAiMessageItem } from '@/lib/platform-data';
+import {
+  getWorkspaceAiMessages,
+  resolveWorkspaceDataAccess,
+  supportsWorkspaceAiTrashColumns,
+  toAiConversationItem,
+  toAiMessageItem
+} from '@/lib/platform-data';
 
 type ChatPayload = {
   prompt?: string;
@@ -30,13 +36,21 @@ export async function POST(
   }
 
   const { admin, context } = access;
-  const { data: conversation, error: conversationError } = await admin
-    .from('ai_conversations')
-    .select('id,company_id,title,created_by_user_id,last_message_at,created_at,updated_at,deleted_at,deleted_by_user_id')
-    .eq('company_id', context.companyId)
-    .eq('id', conversationId)
-    .is('deleted_at', null)
-    .maybeSingle();
+  const supportsTrashColumns = await supportsWorkspaceAiTrashColumns(workspace);
+  const { data: conversation, error: conversationError } = supportsTrashColumns
+    ? await admin
+        .from('ai_conversations')
+        .select('id,company_id,title,created_by_user_id,last_message_at,created_at,updated_at,deleted_at,deleted_by_user_id')
+        .eq('company_id', context.companyId)
+        .eq('id', conversationId)
+        .is('deleted_at', null)
+        .maybeSingle()
+    : await admin
+        .from('ai_conversations')
+        .select('id,company_id,title,created_by_user_id,last_message_at,created_at,updated_at')
+        .eq('company_id', context.companyId)
+        .eq('id', conversationId)
+        .maybeSingle();
 
   if (conversationError || !conversation) {
     return NextResponse.json({ error: 'Conversa nao encontrada.' }, { status: 404 });
@@ -84,16 +98,20 @@ export async function POST(
 
   const nextTitle = conversation.title === 'Nova conversa' ? deriveConversationTitle(prompt) : conversation.title;
 
-  const { data: updatedConversation, error: updateError } = await admin
+  const updateQuery = admin
     .from('ai_conversations')
     .update({
       title: nextTitle,
       last_message_at: new Date().toISOString()
     })
     .eq('company_id', context.companyId)
-    .eq('id', conversationId)
-    .select('id,company_id,title,created_by_user_id,last_message_at,created_at,updated_at,deleted_at,deleted_by_user_id')
-    .single();
+    .eq('id', conversationId);
+
+  const { data: updatedConversation, error: updateError } = supportsTrashColumns
+    ? await updateQuery
+        .select('id,company_id,title,created_by_user_id,last_message_at,created_at,updated_at,deleted_at,deleted_by_user_id')
+        .single()
+    : await updateQuery.select('id,company_id,title,created_by_user_id,last_message_at,created_at,updated_at').single();
 
   if (updateError || !updatedConversation) {
     return NextResponse.json({ error: updateError?.message ?? 'Nao foi possivel atualizar a conversa.' }, { status: 500 });

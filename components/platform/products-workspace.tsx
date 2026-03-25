@@ -10,6 +10,8 @@ import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { PageIntro } from '@/components/platform/page-intro';
 import { useSpeechCapture } from '@/hooks/use-speech-capture';
+import { createSupabaseBrowserClient } from '@/lib/supabase/browser';
+import { PRODUCT_IMPORT_MAX_FILE_SIZE_BYTES } from '@/lib/product-import-storage';
 import type { ProductDraft, ProductItem } from '@/types/platform';
 
 type ProductFormState = ProductDraft & {
@@ -18,6 +20,14 @@ type ProductFormState = ProductDraft & {
 
 type ImportedProductDraft = ProductFormState & {
   id: string;
+};
+
+type ImportFileReference = {
+  bucket: string;
+  storagePath: string;
+  mimeType: string;
+  name: string;
+  sizeBytes: number;
 };
 
 const emptyForm: ProductFormState = {
@@ -75,22 +85,12 @@ function normalizeImportedProducts(payload: unknown): ImportedProductDraft[] {
     .filter((item): item is ImportedProductDraft => Boolean(item));
 }
 
-async function fileToBase64(file: File) {
-  const dataUrl = await new Promise<string>((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve(typeof reader.result === 'string' ? reader.result : '');
-    reader.onerror = () => reject(new Error('Nao foi possivel ler o arquivo.'));
-    reader.readAsDataURL(file);
-  });
+function formatFileSize(bytes: number) {
+  if (bytes < 1024 * 1024) {
+    return `${Math.max(1, Math.round(bytes / 1024))} KB`;
+  }
 
-  const [meta, base64 = ''] = dataUrl.split(',');
-  const mimeMatch = meta.match(/data:(.*);base64/i);
-
-  return {
-    base64,
-    mimeType: mimeMatch?.[1] ?? file.type,
-    name: file.name
-  };
+  return `${(bytes / (1024 * 1024)).toFixed(1).replace('.0', '')} MB`;
 }
 
 function ProductRowEditor({
@@ -170,7 +170,8 @@ export function ProductsWorkspace({ workspace, initialProducts }: { workspace: s
   const [importFileName, setImportFileName] = useState('');
   const [importDrafts, setImportDrafts] = useState<ImportedProductDraft[]>([]);
   const [importBusy, setImportBusy] = useState(false);
-  const [importFileData, setImportFileData] = useState<{ base64: string; mimeType: string; name: string } | null>(null);
+  const [uploadBusy, setUploadBusy] = useState(false);
+  const [importFileRef, setImportFileRef] = useState<ImportFileReference | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   const voiceCapture = useSpeechCapture({
@@ -180,7 +181,7 @@ export function ProductsWorkspace({ workspace, initialProducts }: { workspace: s
     }
   });
 
-  const canImport = useMemo(() => Boolean(importSource.trim() || importFileData), [importFileData, importSource]);
+  const canImport = useMemo(() => Boolean(importSource.trim() || importFileRef), [importFileRef, importSource]);
 
   async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -267,7 +268,7 @@ export function ProductsWorkspace({ workspace, initialProducts }: { workspace: s
           payload: {
             prompt: importSource.trim(),
             sourceText: importSource.trim(),
-            file: importFileData
+            file: importFileRef
           }
         })
       });
@@ -330,7 +331,7 @@ export function ProductsWorkspace({ workspace, initialProducts }: { workspace: s
       setProducts((current) => [...nextProducts, ...current]);
       setImportDrafts([]);
       setImportSource('');
-      setImportFileData(null);
+      setImportFileRef(null);
       setImportFileName('');
       if (fileInputRef.current) {
         fileInputRef.current.value = '';
@@ -346,25 +347,84 @@ export function ProductsWorkspace({ workspace, initialProducts }: { workspace: s
 
   async function handleFileChange(file: File | null) {
     if (!file) {
-      setImportFileData(null);
+      setImportFileRef(null);
       setImportFileName('');
       return;
     }
 
-    if (file.size > 10 * 1024 * 1024) {
-      toast.error('O arquivo precisa ter no maximo 10 MB.');
+    if (file.size > PRODUCT_IMPORT_MAX_FILE_SIZE_BYTES) {
+      toast.error(`O arquivo precisa ter no maximo ${Math.round(PRODUCT_IMPORT_MAX_FILE_SIZE_BYTES / (1024 * 1024))} MB.`);
       return;
     }
 
+    setUploadBusy(true);
+
     try {
-      const nextFile = await fileToBase64(file);
-      setImportFileData(nextFile);
+      const response = await fetch(`/api/workspaces/${workspace}/products/import-upload`, {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json'
+        },
+        body: JSON.stringify({
+          fileName: file.name,
+          mimeType: file.type || 'application/octet-stream',
+          sizeBytes: file.size
+        })
+      });
+
+      const payload = (await response.json().catch(() => null)) as
+        | {
+            upload?: {
+              bucket?: string;
+              path?: string;
+              token?: string;
+            };
+            error?: string;
+          }
+        | null;
+
+      if (!response.ok || !payload?.upload?.bucket || !payload.upload.path || !payload.upload.token) {
+        throw new Error(payload?.error ?? 'Nao foi possivel preparar o upload do arquivo.');
+      }
+
+      const supabase = createSupabaseBrowserClient();
+
+      if (!supabase) {
+        throw new Error('Supabase nao configurado para upload de arquivos.');
+      }
+
+      const { error: uploadError } = await supabase.storage
+        .from(payload.upload.bucket)
+        .uploadToSignedUrl(payload.upload.path, payload.upload.token, file, {
+          contentType: file.type || 'application/octet-stream',
+          cacheControl: '3600',
+          upsert: true
+        });
+
+      if (uploadError) {
+        throw new Error(uploadError.message);
+      }
+
+      setImportFileRef({
+        bucket: payload.upload.bucket,
+        storagePath: payload.upload.path,
+        mimeType: file.type || 'application/octet-stream',
+        name: file.name,
+        sizeBytes: file.size
+      });
       setImportFileName(file.name);
-      toast.success('Arquivo pronto para analise.');
+      toast.success(`Arquivo pronto para analise (${formatFileSize(file.size)}).`);
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Nao foi possivel ler o arquivo.';
       toast.error(message);
+      setImportFileRef(null);
+      setImportFileName('');
+      if (fileInputRef.current) {
+        fileInputRef.current.value = '';
+      }
     }
+
+    setUploadBusy(false);
   }
 
   return (
@@ -452,21 +512,22 @@ export function ProductsWorkspace({ workspace, initialProducts }: { workspace: s
                 type="button"
                 onClick={() => fileInputRef.current?.click()}
                 className="justify-start"
+                disabled={uploadBusy}
               >
-                <FileUp className="h-4 w-4" />
-                Arquivo
+                {uploadBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <FileUp className="h-4 w-4" />}
+                {uploadBusy ? 'Enviando...' : 'Arquivo'}
               </Button>
               <Button
                 variant="outline"
                 type="button"
                 onClick={voiceCapture.isRecording ? voiceCapture.stop : voiceCapture.start}
-                disabled={!voiceCapture.isSupported}
                 className="justify-start"
+                disabled={!voiceCapture.isSupported || voiceCapture.isProcessing}
               >
                 {voiceCapture.isRecording ? <Square className="h-4 w-4" /> : <Mic className="h-4 w-4" />}
                 {voiceCapture.isRecording ? 'Parar' : 'Voz'}
               </Button>
-              <Button type="button" onClick={handleImportAnalysis} disabled={importBusy || !canImport}>
+              <Button type="button" onClick={handleImportAnalysis} disabled={importBusy || uploadBusy || !canImport}>
                 {importBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <AudioLines className="h-4 w-4" />}
                 Analisar
               </Button>
@@ -486,6 +547,12 @@ export function ProductsWorkspace({ workspace, initialProducts }: { workspace: s
               </div>
             ) : null}
 
+            <p className="text-[12px] leading-5 text-muted-foreground">
+              Arquivos de imagem e PDF agora sobem direto para o Storage, com suporte para ate {Math.round(
+                PRODUCT_IMPORT_MAX_FILE_SIZE_BYTES / (1024 * 1024)
+              )} MB.
+            </p>
+
             <div className="space-y-2">
               <label className="text-sm font-medium">O que o arquivo ou a voz traz</label>
               <Textarea
@@ -496,6 +563,11 @@ export function ProductsWorkspace({ workspace, initialProducts }: { workspace: s
               />
               <div className="flex flex-wrap items-center gap-2 text-[12px] text-muted-foreground">
                 {importFileName ? <span className="rounded-full border border-border px-2.5 py-1">{importFileName}</span> : null}
+                {importFileRef ? (
+                  <span className="rounded-full border border-border px-2.5 py-1">
+                    {formatFileSize(importFileRef.sizeBytes)}
+                  </span>
+                ) : null}
                 {voiceCapture.isRecording ? <span className="rounded-full border border-border px-2.5 py-1">gravando...</span> : null}
                 {voiceCapture.isProcessing ? <span className="rounded-full border border-border px-2.5 py-1">transcrevendo...</span> : null}
               </div>
@@ -511,7 +583,7 @@ export function ProductsWorkspace({ workspace, initialProducts }: { workspace: s
                     onClick={() => {
                       setImportDrafts([]);
                       setImportSource('');
-                      setImportFileData(null);
+                      setImportFileRef(null);
                       setImportFileName('');
                     }}
                   >

@@ -41,8 +41,8 @@ type AiConversationRow = {
   last_message_at: string;
   created_at: string;
   updated_at: string;
-  deleted_at: string | null;
-  deleted_by_user_id: string | null;
+  deleted_at?: string | null;
+  deleted_by_user_id?: string | null;
 };
 
 type AiMessageRow = {
@@ -133,9 +133,38 @@ function trimToTitle(input: string) {
 }
 
 const AI_CONVERSATION_TRASH_RETENTION_DAYS = 30;
+const AI_CONVERSATION_TRASH_SELECT =
+  'id,company_id,title,created_by_user_id,last_message_at,created_at,updated_at,deleted_at,deleted_by_user_id';
+const AI_CONVERSATION_SELECT = 'id,company_id,title,created_by_user_id,last_message_at,created_at,updated_at';
+
+let aiConversationTrashColumnsSupported: boolean | null = null;
 
 function getAiConversationTrashCutoffIso() {
   return new Date(Date.now() - AI_CONVERSATION_TRASH_RETENTION_DAYS * 24 * 60 * 60 * 1000).toISOString();
+}
+
+function isMissingColumnError(error: { code?: string; message?: string } | null | undefined) {
+  return error?.code === '42703' || /column .* does not exist/i.test(error?.message ?? '');
+}
+
+async function detectAiConversationTrashColumns(access: WorkspaceDataAccess) {
+  if (aiConversationTrashColumnsSupported !== null) {
+    return aiConversationTrashColumnsSupported;
+  }
+
+  const { error } = await access.admin.from('ai_conversations').select('deleted_at').eq('company_id', access.context.companyId).limit(1);
+
+  if (error && isMissingColumnError(error)) {
+    aiConversationTrashColumnsSupported = false;
+    return false;
+  }
+
+  if (error) {
+    throw new Error(error.message);
+  }
+
+  aiConversationTrashColumnsSupported = true;
+  return true;
 }
 
 export function parseScriptMetadata(storyboard: unknown): ScriptMetadata {
@@ -283,8 +312,8 @@ export function toAiConversationItem(row: AiConversationRow): AiConversation {
     lastMessageAt: row.last_message_at,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
-    deletedAt: row.deleted_at,
-    deletedByUserId: row.deleted_by_user_id
+    deletedAt: row.deleted_at ?? null,
+    deletedByUserId: row.deleted_by_user_id ?? null
   };
 }
 
@@ -429,12 +458,19 @@ export async function getWorkspaceAiConversations(workspaceSlug: string) {
   await purgeExpiredDeletedAiConversations(access);
 
   const { admin, context } = access;
-  const { data, error } = await admin
-    .from('ai_conversations')
-    .select('id,company_id,title,created_by_user_id,last_message_at,created_at,updated_at,deleted_at,deleted_by_user_id')
-    .eq('company_id', context.companyId)
-    .is('deleted_at', null)
-    .order('last_message_at', { ascending: false });
+  const supportsTrashColumns = await detectAiConversationTrashColumns(access);
+  const { data, error } = supportsTrashColumns
+    ? await admin
+        .from('ai_conversations')
+        .select(AI_CONVERSATION_TRASH_SELECT)
+        .eq('company_id', context.companyId)
+        .is('deleted_at', null)
+        .order('last_message_at', { ascending: false })
+    : await admin
+        .from('ai_conversations')
+        .select(AI_CONVERSATION_SELECT)
+        .eq('company_id', context.companyId)
+        .order('last_message_at', { ascending: false });
 
   if (error) {
     throw new Error(error.message);
@@ -450,12 +486,18 @@ export async function getWorkspaceAiTrashConversations(workspaceSlug: string) {
     return [];
   }
 
+  const supportsTrashColumns = await detectAiConversationTrashColumns(access);
+
+  if (!supportsTrashColumns) {
+    return [];
+  }
+
   await purgeExpiredDeletedAiConversations(access);
 
   const { admin, context } = access;
   const { data, error } = await admin
     .from('ai_conversations')
-    .select('id,company_id,title,created_by_user_id,last_message_at,created_at,updated_at,deleted_at,deleted_by_user_id')
+    .select(AI_CONVERSATION_TRASH_SELECT)
     .eq('company_id', context.companyId)
     .not('deleted_at', 'is', null)
     .order('deleted_at', { ascending: false });
@@ -465,6 +507,16 @@ export async function getWorkspaceAiTrashConversations(workspaceSlug: string) {
   }
 
   return (data ?? []).map((row) => toAiConversationItem(row as AiConversationRow));
+}
+
+export async function supportsWorkspaceAiTrashColumns(workspaceSlug: string) {
+  const access = await resolveWorkspaceDataAccess(workspaceSlug);
+
+  if (!access) {
+    return false;
+  }
+
+  return detectAiConversationTrashColumns(access);
 }
 
 export async function getWorkspaceAiMessages(workspaceSlug: string, conversationId: string) {
@@ -498,18 +550,26 @@ export async function createWorkspaceAiConversation(workspaceSlug: string, title
 
   const user = await getAuthenticatedUser();
   const { admin, context } = access;
-  const { data, error } = await admin
-    .from('ai_conversations')
-    .insert({
-      company_id: context.companyId,
-      created_by_user_id: user?.id ?? null,
-      title: trimToTitle(title),
-      last_message_at: new Date().toISOString(),
-      deleted_at: null,
-      deleted_by_user_id: null
-    })
-    .select('id,company_id,title,created_by_user_id,last_message_at,created_at,updated_at,deleted_at,deleted_by_user_id')
-    .single();
+  const supportsTrashColumns = await detectAiConversationTrashColumns(access);
+
+  const insertPayload = {
+    company_id: context.companyId,
+    created_by_user_id: user?.id ?? null,
+    title: trimToTitle(title),
+    last_message_at: new Date().toISOString()
+  };
+
+  const { data, error } = supportsTrashColumns
+    ? await admin
+        .from('ai_conversations')
+        .insert({
+          ...insertPayload,
+          deleted_at: null,
+          deleted_by_user_id: null
+        })
+        .select(AI_CONVERSATION_TRASH_SELECT)
+        .single()
+    : await admin.from('ai_conversations').insert(insertPayload).select(AI_CONVERSATION_SELECT).single();
 
   if (error || !data) {
     throw new Error(error?.message ?? 'Nao foi possivel criar a conversa.');
@@ -519,6 +579,12 @@ export async function createWorkspaceAiConversation(workspaceSlug: string, title
 }
 
 async function purgeExpiredDeletedAiConversations(access: WorkspaceDataAccess) {
+  const supportsTrashColumns = await detectAiConversationTrashColumns(access);
+
+  if (!supportsTrashColumns) {
+    return;
+  }
+
   const cutoff = getAiConversationTrashCutoffIso();
   const { error } = await access.admin
     .from('ai_conversations')
