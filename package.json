@@ -7,7 +7,7 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "typecheck": "next typegen && tsc --noEmit",
+    "typecheck": "mkdir -p .next/types && next typegen && tsc --noEmit",
     "lint": "next lint",
     "seed:demo": "tsx scripts/seed-demo.ts"
   },

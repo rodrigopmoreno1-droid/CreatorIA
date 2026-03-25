@@ -932,9 +932,44 @@ function DashboardModule({ workspace }: { workspace: WorkspaceSnapshot }) {
 
 function CalendarModule({ workspace }: { workspace: WorkspaceSnapshot }) {
   const [selected, setSelected] = useState<Date | undefined>(new Date());
+  const [events, setEvents] = useState<CalendarItem[]>(workspace.calendarEvents);
+  const [activeType, setActiveType] = useState<'todos' | 'Feed' | 'Reels' | 'Stories' | 'Campanha' | 'Gravação'>(
+    'todos'
+  );
+  const [generatedPlan, setGeneratedPlan] = useState<Array<{ date: string; title: string; channel: string }>>([]);
+  const [loadingPlan, setLoadingPlan] = useState(false);
+
+  useEffect(() => {
+    setEvents(workspace.calendarEvents);
+  }, [workspace.calendarEvents]);
 
   const selectedLabel = selected?.toISOString().slice(0, 10);
-  const events = workspace.calendarEvents.filter((event) => event.date === selectedLabel);
+  const visibleEvents = events.filter((event) => {
+    const sameDay = event.date === selectedLabel;
+    const typeMatch = activeType === 'todos' ? true : normalizeText(event.type) === normalizeText(activeType);
+    return sameDay && typeMatch;
+  });
+
+  async function handleSuggestCalendar() {
+    setLoadingPlan(true);
+
+    try {
+      const content = await requestAiAction<{ month: string; items: Array<{ date: string; title: string; channel: string }> }>(
+        'suggestCalendar',
+        {
+          month: (selectedLabel ?? workspace.calendarEvents[0]?.date ?? '2026-03').slice(0, 7),
+          product: workspace.products[0]?.name
+        }
+      );
+
+      setGeneratedPlan(content.items);
+      toast.success('Calendário sugerido pela IA.');
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Não foi possível gerar o calendário.');
+    } finally {
+      setLoadingPlan(false);
+    }
+  }
 
   return (
     <div className="grid gap-6 xl:grid-cols-[0.8fr_1.2fr]">
@@ -946,40 +981,144 @@ function CalendarModule({ workspace }: { workspace: WorkspaceSnapshot }) {
           className="rounded-3xl border border-border bg-background p-4"
         />
         <div className="mt-4 flex flex-wrap gap-2">
-          <Badge variant="outline">Feed</Badge>
-          <Badge variant="outline">Reels</Badge>
-          <Badge variant="outline">Stories</Badge>
-          <Badge variant="outline">Campanhas</Badge>
+          {['todos', 'Feed', 'Reels', 'Stories', 'Campanha', 'Gravação'].map((type) => (
+            <Button
+              key={type}
+              variant={activeType === type ? 'default' : 'outline'}
+              size="sm"
+              className="h-8 rounded-full px-3"
+              onClick={() => setActiveType(type as typeof activeType)}
+            >
+              {type}
+            </Button>
+          ))}
+        </div>
+        <div className="mt-4 flex flex-wrap gap-2">
+          <Button onClick={handleSuggestCalendar} disabled={loadingPlan}>
+            {loadingPlan ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
+            Sugerir semana
+          </Button>
+          <Button variant="outline">
+            <CalendarDays className="h-4 w-4" />
+            Arrastar no calendário
+          </Button>
         </div>
       </ModuleCard>
 
-      <ModuleCard title="Eventos do dia" subtitle={`Itens marcados para ${selectedLabel ? formatDateLabel(selectedLabel) : 'hoje'}`}>
-        <div className="space-y-3">
-          {events.length ? (
-            events.map((event) => (
-              <div key={event.id} className="flex items-center gap-4 rounded-2xl border border-border bg-background p-4">
-                <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-foreground text-background">
-                  <CalendarDays className="h-5 w-5" />
+      <div className="space-y-6">
+        <ModuleCard title="Eventos do dia" subtitle={`Itens marcados para ${selectedLabel ? formatDateLabel(selectedLabel) : 'hoje'}`}>
+          <div className="space-y-3">
+            {visibleEvents.length ? (
+              visibleEvents.map((event) => (
+                <div key={event.id} className="group relative">
+                  <SideBlockActions
+                    label="evento"
+                    onEdit={() => toast.info(`Edicao rapida liberada para ${event.title}.`)}
+                    onDelete={() => setEvents((current) => current.filter((item) => item.id !== event.id))}
+                  />
+                  <div className="flex items-center gap-4 rounded-2xl border border-border bg-background p-4">
+                    <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-foreground text-background">
+                      <CalendarDays className="h-5 w-5" />
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <p className="font-medium">{event.title}</p>
+                      <p className="text-sm text-muted-foreground">{event.type} · {event.owner}</p>
+                    </div>
+                    <Badge variant="outline">{event.date}</Badge>
+                  </div>
                 </div>
-                <div className="min-w-0 flex-1">
-                  <p className="font-medium">{event.title}</p>
-                  <p className="text-sm text-muted-foreground">{event.type} · {event.owner}</p>
+              ))
+            ) : (
+              <EmptyState
+                title="Sem eventos nesta data"
+                description="A visão está limpa para você arrastar novos conteúdos e encaixar o dia com mais precisão."
+              />
+            )}
+          </div>
+        </ModuleCard>
+
+        <ModuleCard title="Plano sugerido pela IA" subtitle="Blocos prontos para copiar para o calendário">
+          {generatedPlan.length ? (
+            <div className="space-y-3">
+              {generatedPlan.map((item) => (
+                <div key={`${item.date}-${item.title}`} className="rounded-[1.5rem] border border-border bg-background p-4">
+                  <div className="flex items-center justify-between gap-3">
+                    <div>
+                      <p className="font-medium">{item.title}</p>
+                      <p className="text-sm text-muted-foreground">{item.channel}</p>
+                    </div>
+                    <Badge variant="outline">{item.date}</Badge>
+                  </div>
                 </div>
-                <Badge variant="outline">{event.date}</Badge>
-              </div>
-            ))
-          ) : (
-            <div className="rounded-3xl border border-dashed border-border bg-muted/40 p-6 text-center text-sm text-muted-foreground">
-              Sem eventos nesta data. Arraste conteúdos para este dia no calendário.
+              ))}
             </div>
+          ) : (
+            <EmptyState
+              title="Sem plano sugerido ainda"
+              description="Use o botão de IA para receber uma semana pronta com feed, reels e stories."
+            />
           )}
-        </div>
-      </ModuleCard>
+        </ModuleCard>
+      </div>
     </div>
   );
 }
 
 function IdeasModule({ workspace }: { workspace: WorkspaceSnapshot }) {
+  const [ideas, setIdeas] = useState<IdeaItem[]>(workspace.ideas);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [search, setSearch] = useState('');
+  const [loading, setLoading] = useState(false);
+  const deferredSearch = useDeferredValue(search);
+
+  useEffect(() => {
+    setIdeas(workspace.ideas);
+  }, [workspace.ideas]);
+
+  const filteredIdeas = useMemo(() => {
+    const query = normalizeText(deferredSearch.trim());
+    if (!query) return ideas;
+    return ideas.filter((idea) => {
+      return (
+        normalizeText(idea.title).includes(query) ||
+        normalizeText(idea.hook).includes(query) ||
+        idea.tags.some((tag) => normalizeText(tag).includes(query))
+      );
+    });
+  }, [deferredSearch, ideas]);
+
+  async function handleGenerateIdeas() {
+    setLoading(true);
+
+    try {
+      const content = await requestAiAction<Array<{ title: string; hook: string; format: string; angle: string }>>(
+        'generateIdeas',
+        {
+          topic: workspace.products[0]?.name ?? 'Conteúdo para Instagram',
+          audience: workspace.products[0]?.audience,
+          product: workspace.products[0]?.name,
+          count: 6
+        }
+      );
+
+      const generated = content.map((item, index) => ({
+        id: `idea-ai-${Date.now()}-${index}`,
+        title: item.title,
+        hook: item.hook,
+        source: 'IA',
+        score: 90 - index,
+        tags: [item.format, item.angle]
+      }));
+
+      setIdeas((current) => [...generated, ...current]);
+      toast.success('Ideias geradas com a IA.');
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Falha ao gerar ideias.');
+    } finally {
+      setLoading(false);
+    }
+  }
+
   return (
     <div className="space-y-6">
       <div className="grid gap-4 lg:grid-cols-[1.1fr_0.9fr]">
@@ -997,14 +1136,16 @@ function IdeasModule({ workspace }: { workspace: WorkspaceSnapshot }) {
                 <Pill key={tag}>{tag}</Pill>
               ))}
             </div>
-            <div className="flex gap-3">
-              <Button>
-                <Sparkles className="h-4 w-4" />
-                Gerar 10 ideias
-              </Button>
-              <Button variant="outline">
-                <Filter className="h-4 w-4" />
-                Filtrar
+            <div className="flex flex-col gap-3 sm:flex-row">
+              <Input
+                value={search}
+                onChange={(event) => setSearch(event.target.value)}
+                placeholder="Filtrar por tema, hook ou tag"
+                className="rounded-full border-white/80 bg-white"
+              />
+              <Button onClick={handleGenerateIdeas} disabled={loading}>
+                {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
+                Gerar 6 ideias
               </Button>
             </div>
           </div>
@@ -1021,56 +1162,225 @@ function IdeasModule({ workspace }: { workspace: WorkspaceSnapshot }) {
         </ModuleCard>
       </div>
 
-      <div className="grid gap-4 md:grid-cols-3">
-        {workspace.ideas.map((idea) => (
-          <ModuleCard key={idea.id} title={idea.title} subtitle={idea.hook} badge={`${idea.score}% fit`}>
-            <div className="flex flex-wrap gap-2">
-              {idea.tags.map((tag) => (
-                <Pill key={tag}>{tag}</Pill>
-              ))}
-            </div>
-          </ModuleCard>
-        ))}
-      </div>
+      {filteredIdeas.length ? (
+        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+          {filteredIdeas.map((idea) => {
+            const editing = editingId === idea.id;
+
+            return (
+              <div key={idea.id} className="group relative">
+                <SideBlockActions
+                  label="ideia"
+                  onEdit={() => setEditingId((current) => (current === idea.id ? null : idea.id))}
+                  onDelete={() => setIdeas((current) => current.filter((item) => item.id !== idea.id))}
+                />
+                <ModuleCard title={idea.title} subtitle={idea.hook} badge={`${idea.score}% fit`} className="h-full">
+                  {editing ? (
+                    <div className="space-y-3">
+                      <Input
+                        value={idea.title}
+                        onChange={(event) =>
+                          setIdeas((current) =>
+                            current.map((item) => (item.id === idea.id ? { ...item, title: event.target.value } : item))
+                          )
+                        }
+                        placeholder="Titulo"
+                      />
+                      <Textarea
+                        value={idea.hook}
+                        onChange={(event) =>
+                          setIdeas((current) =>
+                            current.map((item) => (item.id === idea.id ? { ...item, hook: event.target.value } : item))
+                          )
+                        }
+                        placeholder="Gancho"
+                        className="min-h-[110px]"
+                      />
+                      <div className="flex justify-end">
+                        <Button variant="outline" size="sm" onClick={() => setEditingId(null)}>
+                          Salvar
+                        </Button>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="space-y-4">
+                      <div className="flex flex-wrap gap-2">
+                        {idea.tags.map((tag) => (
+                          <Pill key={tag}>{tag}</Pill>
+                        ))}
+                      </div>
+                      <div className="flex items-center justify-between text-xs text-muted-foreground">
+                        <span>Origem: {idea.source}</span>
+                        <span>Bloco editavel</span>
+                      </div>
+                    </div>
+                  )}
+                </ModuleCard>
+              </div>
+            );
+          })}
+        </div>
+      ) : (
+        <EmptyState
+          title="Nenhuma ideia encontrada"
+          description="Ajuste o filtro ou gere uma nova leva com a IA para preencher o backlog."
+        />
+      )}
     </div>
   );
 }
 
 function ScriptsModule({ workspace }: { workspace: WorkspaceSnapshot }) {
+  const [scripts, setScripts] = useState<ScriptItem[]>(workspace.scripts);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
+  const approvals = useWorkspaceStore((state) => state.approvalsByWorkspace[workspace.slug] ?? {});
+  const setApprovalStatus = useWorkspaceStore((state) => state.setApprovalStatus);
+
+  useEffect(() => {
+    setScripts(workspace.scripts);
+  }, [workspace.scripts]);
+
+  async function handleGenerateScript() {
+    setLoading(true);
+
+    try {
+      const [script, storyboard] = await Promise.all([
+        requestAiAction<{
+          title: string;
+          hook: string;
+          spoken: string;
+          takes: string[];
+          cta: string;
+          caption: string;
+        }>('generateScript', {
+          topic: workspace.ideas[0]?.title ?? workspace.products[0]?.name ?? 'Roteiro para reels',
+          goal: 'Gerar roteiro para gravacao e publicacao',
+          tone: 'humano e direto'
+        }),
+        requestAiAction<{ frames: string[] }>('generateStoryboard', {
+          topic: workspace.ideas[0]?.title ?? workspace.products[0]?.name ?? 'Roteiro para reels'
+        })
+      ]);
+
+      setScripts((current) => [
+        {
+          id: `script-ai-${Date.now()}`,
+          title: script.title,
+          hook: script.hook,
+          beats: script.takes,
+          cta: script.cta,
+          caption: script.caption,
+          spoken: script.spoken,
+          storyboard: storyboard.frames
+        },
+        ...current
+      ]);
+      toast.success('Roteiro e storyboard gerados.');
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Não foi possível gerar o roteiro.');
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  const activeStoryboard = scripts[0]?.storyboard ?? ['Abertura forte', 'Prova visual', 'Demonstração', 'CTA final'];
+
   return (
     <div className="grid gap-6 xl:grid-cols-[1fr_0.95fr]">
-      <ModuleCard title="Roteiros gerados" subtitle="Gancho, takes, CTA e storyboard" badge="IA">
+      <ModuleCard
+        title="Roteiros gerados"
+        subtitle="Gancho, takes, CTA e storyboard"
+        badge="IA"
+      >
+        <div className="mb-4 flex justify-end">
+          <Button onClick={handleGenerateScript} disabled={loading}>
+            {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Wand2 className="h-4 w-4" />}
+            Gerar roteiro
+          </Button>
+        </div>
         <div className="space-y-4">
-          {workspace.scripts.map((script) => (
-            <div key={script.id} className="rounded-3xl border border-border bg-background p-5">
-              <div className="flex items-start justify-between gap-3">
-                <div>
-                  <p className="font-medium">{script.title}</p>
-                  <p className="mt-1 text-sm text-muted-foreground">{script.hook}</p>
+          {scripts.map((script) => {
+            const editing = editingId === script.id;
+
+            return (
+              <div key={script.id} className="group relative">
+                <SideBlockActions
+                  label="roteiro"
+                  onEdit={() => setEditingId((current) => (current === script.id ? null : script.id))}
+                  onDelete={() => setScripts((current) => current.filter((item) => item.id !== script.id))}
+                />
+                <div className="rounded-3xl border border-border bg-background p-5">
+                  <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
+                    <div className="space-y-2">
+                      {editing ? (
+                        <>
+                          <Input
+                            value={script.title}
+                            onChange={(event) =>
+                              setScripts((current) =>
+                                current.map((item) => (item.id === script.id ? { ...item, title: event.target.value } : item))
+                              )
+                            }
+                          />
+                          <Textarea
+                            value={script.hook}
+                            onChange={(event) =>
+                              setScripts((current) =>
+                                current.map((item) => (item.id === script.id ? { ...item, hook: event.target.value } : item))
+                              )
+                            }
+                            className="min-h-[96px]"
+                          />
+                        </>
+                      ) : (
+                        <>
+                          <p className="font-medium">{script.title}</p>
+                          <p className="text-sm text-muted-foreground">{script.hook}</p>
+                        </>
+                      )}
+                    </div>
+                    <ApprovalControls
+                      status={approvals[script.id]}
+                      onChange={(status) => setApprovalStatus(workspace.slug, script.id, status)}
+                    />
+                  </div>
+                  <div className="mt-4 flex flex-wrap gap-2">
+                    {script.beats.map((beat) => (
+                      <Pill key={beat}>{beat}</Pill>
+                    ))}
+                  </div>
+                  <div className="mt-4 rounded-2xl border border-dashed border-border bg-white p-4">
+                    <p className="text-xs uppercase tracking-[0.2em] text-muted-foreground">CTA</p>
+                    <p className="mt-2 font-medium">{script.cta}</p>
+                    {script.caption ? <p className="mt-3 text-sm text-muted-foreground">{script.caption}</p> : null}
+                  </div>
+                  {script.spoken ? (
+                    <div className="mt-4 rounded-2xl border border-border/80 bg-[#fbf8f4] p-4 text-sm leading-6 text-muted-foreground">
+                      {script.spoken}
+                    </div>
+                  ) : null}
+                  {editing ? (
+                    <div className="mt-4 flex justify-end">
+                      <Button variant="outline" size="sm" onClick={() => setEditingId(null)}>
+                        Salvar
+                      </Button>
+                    </div>
+                  ) : null}
                 </div>
-                <Badge variant="success">Pronto</Badge>
               </div>
-              <div className="mt-4 flex flex-wrap gap-2">
-                {script.beats.map((beat) => (
-                  <Pill key={beat}>{beat}</Pill>
-                ))}
-              </div>
-              <div className="mt-4 rounded-2xl border border-dashed border-border bg-white p-4">
-                <p className="text-xs uppercase tracking-[0.2em] text-muted-foreground">CTA</p>
-                <p className="mt-2 font-medium">{script.cta}</p>
-              </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
       </ModuleCard>
 
       <ModuleCard title="Storyboard" subtitle="Preview rabisco para gravação">
         <div className="grid gap-3 sm:grid-cols-2">
-          {['Cena 1', 'Cena 2', 'Cena 3', 'CTA final'].map((frame, index) => (
-            <div key={frame} className="rounded-3xl border border-border bg-background p-4">
+          {activeStoryboard.map((frame, index) => (
+            <div key={`${frame}-${index}`} className="rounded-3xl border border-border bg-background p-4">
               <div className="aspect-[4/5] rounded-[1.5rem] border border-dashed border-border bg-[linear-gradient(135deg,rgba(15,23,42,0.03),rgba(20,184,166,0.06))] p-4">
                 <div className="flex items-center justify-between text-xs text-muted-foreground">
-                  <span>{frame}</span>
+                  <span>Cena {index + 1}</span>
                   <span>0{index + 1}</span>
                 </div>
                 <div className="mt-5 space-y-3">
@@ -1078,6 +1388,7 @@ function ScriptsModule({ workspace }: { workspace: WorkspaceSnapshot }) {
                   <div className="h-3 w-full rounded-full bg-foreground/5" />
                   <div className="h-3 w-2/3 rounded-full bg-foreground/10" />
                 </div>
+                <p className="mt-6 text-sm leading-6 text-muted-foreground">{frame}</p>
               </div>
             </div>
           ))}
@@ -1088,12 +1399,60 @@ function ScriptsModule({ workspace }: { workspace: WorkspaceSnapshot }) {
 }
 
 function StoriesModule({ workspace }: { workspace: WorkspaceSnapshot }) {
+  const [stories, setStories] = useState<StoryItem[]>(
+    workspace.stories.map((story) => ({ ...story, cta: 'Responder DM' }))
+  );
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
+  const approvals = useWorkspaceStore((state) => state.approvalsByWorkspace[workspace.slug] ?? {});
+  const setApprovalStatus = useWorkspaceStore((state) => state.setApprovalStatus);
+
+  useEffect(() => {
+    setStories(workspace.stories.map((story) => ({ ...story, cta: 'Responder DM' })));
+  }, [workspace.stories]);
+
+  async function handleGenerateStories() {
+    setLoading(true);
+
+    try {
+      const content = await requestAiAction<{ sequence: Array<{ title: string; hook: string; cta: string; time: string }> }>(
+        'generateStories',
+        {
+          theme: workspace.products[0]?.name ?? 'Stories para Instagram',
+          count: 5
+        }
+      );
+
+      setStories(
+        content.sequence.map((item, index) => ({
+          id: `story-ai-${Date.now()}-${index}`,
+          title: item.title,
+          hook: item.hook,
+          status: 'Rascunho IA',
+          time: item.time,
+          cta: item.cta
+        }))
+      );
+      toast.success('Sequência de stories pronta para revisão.');
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Não foi possível gerar stories.');
+    } finally {
+      setLoading(false);
+    }
+  }
+
   return (
     <div className="grid gap-6 xl:grid-cols-[1.1fr_0.9fr]">
       <ModuleCard title="Sequência de stories" subtitle="Preview estilo Instagram" className="overflow-hidden">
+        <div className="mb-4 flex justify-end">
+          <Button onClick={handleGenerateStories} disabled={loading}>
+            {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
+            Gerar sequência
+          </Button>
+        </div>
         <div className="space-y-6">
           <div className="flex gap-4 overflow-x-auto pb-2">
-            {workspace.stories.map((story) => (
+            {stories.map((story) => (
               <div key={story.id} className="min-w-[92px] text-center">
                 <div className="story-ring mx-auto rounded-full p-[2px]">
                   <div className="flex h-20 w-20 items-center justify-center rounded-full bg-white text-lg font-semibold text-[#17171b]">
@@ -1107,62 +1466,85 @@ function StoriesModule({ workspace }: { workspace: WorkspaceSnapshot }) {
           </div>
 
           <div className="grid gap-4 sm:grid-cols-2">
-            {workspace.stories.map((story, index) => (
-              <div key={story.id} className="overflow-hidden rounded-[1.75rem] border border-white/80 bg-[linear-gradient(180deg,#272344_0%,#171523_100%)] p-4 text-white shadow-soft">
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-3">
-                    <div className="story-ring rounded-full p-[2px]">
-                      <div className="flex h-10 w-10 items-center justify-center rounded-full bg-white text-sm font-semibold text-[#17171b]">
-                        {index + 1}
+            {stories.map((story, index) => {
+              const editing = editingId === story.id;
+
+              return (
+                <div key={story.id} className="group relative">
+                  <SideBlockActions
+                    label="story"
+                    onEdit={() => setEditingId((current) => (current === story.id ? null : story.id))}
+                    onDelete={() => setStories((current) => current.filter((item) => item.id !== story.id))}
+                  />
+                  <div className="overflow-hidden rounded-[1.75rem] border border-white/80 bg-[linear-gradient(180deg,#272344_0%,#171523_100%)] p-4 text-white shadow-soft">
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="flex items-center gap-3">
+                        <div className="story-ring rounded-full p-[2px]">
+                          <div className="flex h-10 w-10 items-center justify-center rounded-full bg-white text-sm font-semibold text-[#17171b]">
+                            {index + 1}
+                          </div>
+                        </div>
+                        <div>
+                          <p className="text-sm font-semibold">{story.title}</p>
+                          <p className="text-xs text-white/55">{story.status}</p>
+                        </div>
                       </div>
+                      <Badge className="border-white/10 bg-white/10 text-white">{story.time}</Badge>
                     </div>
-                    <div>
-                      <p className="text-sm font-semibold">{story.title}</p>
-                      <p className="text-xs text-white/55">{story.status}</p>
+
+                    <div className="mt-5 rounded-[1.5rem] border border-white/10 bg-white/6 p-4">
+                      <p className="text-xs uppercase tracking-[0.2em] text-white/50">Mensagem principal</p>
+                      {editing ? (
+                        <Textarea
+                          value={story.hook}
+                          onChange={(event) =>
+                            setStories((current) =>
+                              current.map((item) => (item.id === story.id ? { ...item, hook: event.target.value } : item))
+                            )
+                          }
+                          className="mt-3 min-h-[120px] border-white/10 bg-white/10 text-white placeholder:text-white/45"
+                        />
+                      ) : (
+                        <p className="mt-3 text-sm leading-6 text-white/75">{story.hook}</p>
+                      )}
+                    </div>
+
+                    <div className="mt-4 flex flex-wrap items-center justify-between gap-3 text-white/70">
+                      <div className="flex items-center gap-3">
+                        <Heart className="h-4 w-4" />
+                        <MessageCircle className="h-4 w-4" />
+                        <Send className="h-4 w-4" />
+                      </div>
+                      <ApprovalControls
+                        status={approvals[story.id]}
+                        onChange={(status) => setApprovalStatus(workspace.slug, story.id, status)}
+                      />
                     </div>
                   </div>
-                  <Badge className="border-white/10 bg-white/10 text-white">{story.time}</Badge>
                 </div>
-
-                <div className="mt-5 rounded-[1.5rem] border border-white/10 bg-white/6 p-4">
-                  <p className="text-xs uppercase tracking-[0.2em] text-white/50">Mensagem principal</p>
-                  <p className="mt-3 text-sm leading-6 text-white/75">{story.hook}</p>
-                </div>
-
-                <div className="mt-4 flex items-center justify-between text-white/70">
-                  <div className="flex items-center gap-3">
-                    <Heart className="h-4 w-4" />
-                    <MessageCircle className="h-4 w-4" />
-                    <Send className="h-4 w-4" />
-                  </div>
-                  <CheckCircle2 className="h-4 w-4" />
-                </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         </div>
       </ModuleCard>
 
       <ModuleCard title="Sugestão IA" subtitle="Roteiro de 5 telas para aumentar resposta" className="surface-muted">
         <div className="space-y-4">
-          {[
-            'Tela 1: gancho rápido com dor principal',
-            'Tela 2: prova visual com bastidor',
-            'Tela 3: enquete para segmentar',
-            'Tela 4: resultado ou transformação',
-            'Tela 5: CTA para link ou DM'
-          ].map((item, index) => (
-            <div key={item} className="flex items-start gap-3 rounded-[1.5rem] border border-white/70 bg-white/88 p-4">
+          {stories.map((story, index) => (
+            <div key={story.id} className="flex items-start gap-3 rounded-[1.5rem] border border-white/70 bg-white/88 p-4">
               <div className="gradient-sunset flex h-8 w-8 items-center justify-center rounded-full text-xs font-semibold text-white">
                 {index + 1}
               </div>
-              <p className="text-sm leading-6 text-muted-foreground">{item}</p>
+              <div>
+                <p className="text-sm font-medium text-foreground">{story.title}</p>
+                <p className="mt-1 text-sm leading-6 text-muted-foreground">{story.cta ?? 'Responder DM'}</p>
+              </div>
             </div>
           ))}
           <div className="dark-rail rounded-[1.5rem] p-5 text-white">
             <p className="text-xs uppercase tracking-[0.2em] text-white/55">CTA sugerido</p>
             <p className="mt-3 font-display text-2xl font-semibold">Leve para DM ou link com contexto.</p>
-            <p className="mt-2 text-sm text-white/65">A narrativa deve aquecer antes de pedir ação para manter retenção alta.</p>
+            <p className="mt-2 text-sm text-white/65">A narrativa aquece antes do pedido para aumentar retenção e resposta.</p>
           </div>
         </div>
       </ModuleCard>
@@ -1170,21 +1552,42 @@ function StoriesModule({ workspace }: { workspace: WorkspaceSnapshot }) {
   );
 }
 
-function useSortableOrder<T extends { id: string }>(items: T[]) {
-  const [orderedItems, setOrderedItems] = useState(items);
-  const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 8 } }));
+function PipelineLane({
+  column,
+  accent,
+  count,
+  children
+}: {
+  column: string;
+  accent: string;
+  count: number;
+  children: React.ReactNode;
+}) {
+  const { setNodeRef, isOver } = useDroppable({ id: column });
 
-  function onDragEnd(event: DragEndEvent) {
-    const { active, over } = event;
-    if (!over || active.id === over.id) return;
-    setOrderedItems((current) => {
-      const oldIndex = current.findIndex((item) => item.id === active.id);
-      const newIndex = current.findIndex((item) => item.id === over.id);
-      return arrayMove(current, oldIndex, newIndex);
-    });
-  }
-
-  return { orderedItems, sensors, onDragEnd };
+  return (
+    <Card
+      ref={setNodeRef}
+      className={cn(
+        'surface-card inner-stroke w-[320px] shrink-0 p-4 transition',
+        isOver && 'border-[#ff8b73] shadow-[0_20px_40px_rgba(255,123,84,0.14)]'
+      )}
+    >
+      <div className="mb-4 flex items-center justify-between">
+        <div className="flex items-center gap-3">
+          <span className={cn('h-3 w-3 rounded-full', accent)} />
+          <div>
+            <p className="font-medium">{column}</p>
+            <p className="text-xs text-muted-foreground">{count} cards</p>
+          </div>
+        </div>
+        <Button variant="outline" size="sm" className="h-8 rounded-2xl px-3">
+          <Plus className="h-3.5 w-3.5" />
+        </Button>
+      </div>
+      {children}
+    </Card>
+  );
 }
 
 function PipelineModule({ workspace }: { workspace: WorkspaceSnapshot }) {
@@ -1192,6 +1595,12 @@ function PipelineModule({ workspace }: { workspace: WorkspaceSnapshot }) {
   const [cards, setCards] = useState(workspace.pipelineCards);
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 8 } }));
   const columnAccents = ['bg-amber-400', 'bg-sky-400', 'bg-violet-400', 'bg-emerald-400', 'bg-rose-400', 'bg-cyan-400', 'bg-lime-400', 'bg-fuchsia-400', 'bg-slate-400'];
+  const approvals = useWorkspaceStore((state) => state.approvalsByWorkspace[workspace.slug] ?? {});
+  const setApprovalStatus = useWorkspaceStore((state) => state.setApprovalStatus);
+
+  useEffect(() => {
+    setCards(workspace.pipelineCards);
+  }, [workspace.pipelineCards]);
 
   const byColumn = useMemo(() => {
     return columns.reduce<Record<string, typeof cards>>((acc, column) => {
@@ -1205,12 +1614,23 @@ function PipelineModule({ workspace }: { workspace: WorkspaceSnapshot }) {
     if (!over || active.id === over.id) return;
 
     const activeCard = cards.find((card) => card.id === active.id);
-    const overCard = cards.find((card) => card.id === over.id);
-    if (!activeCard || !overCard) return;
+    if (!activeCard) return;
 
-    setCards((current) =>
-      current.map((card) => (card.id === active.id ? { ...card, column: overCard.column } : card))
-    );
+    const overCard = cards.find((card) => card.id === over.id);
+    const nextColumn = typeof over.id === 'string' && columns.includes(over.id) ? over.id : overCard?.column;
+    if (!nextColumn) return;
+
+    setCards((current) => {
+      const oldIndex = current.findIndex((card) => card.id === active.id);
+      const newIndex = overCard ? current.findIndex((card) => card.id === overCard.id) : oldIndex;
+      const reordered = arrayMove(
+        current.map((card) => (card.id === active.id ? { ...card, column: nextColumn } : card)),
+        oldIndex,
+        newIndex
+      );
+
+      return reordered;
+    });
   }
 
   return (
@@ -1229,26 +1649,25 @@ function PipelineModule({ workspace }: { workspace: WorkspaceSnapshot }) {
       </div>
 
       <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={onDragEnd}>
-        <div className="grid gap-4 xl:grid-cols-3 2xl:grid-cols-4">
+        <div className="flex gap-4 overflow-x-auto pb-3">
           {columns.map((column, index) => (
-            <Card key={column} className="surface-card inner-stroke p-4">
-              <div className="mb-4 flex items-center justify-between">
-                <div className="flex items-center gap-3">
-                  <span className={cn('h-3 w-3 rounded-full', columnAccents[index % columnAccents.length])} />
-                  <div>
-                    <p className="font-medium">{column}</p>
-                    <p className="text-xs text-muted-foreground">{byColumn[column]?.length ?? 0} cards</p>
-                  </div>
-                </div>
-                <Button variant="outline" size="sm" className="h-8 rounded-2xl px-3">
-                  <Plus className="h-3.5 w-3.5" />
-                </Button>
-              </div>
+            <PipelineLane
+              key={column}
+              column={column}
+              accent={columnAccents[index % columnAccents.length]}
+              count={byColumn[column]?.length ?? 0}
+            >
               <SortableContext items={(byColumn[column] ?? []).map((card) => card.id)} strategy={rectSortingStrategy}>
                 <div className="space-y-3">
                   {(byColumn[column] ?? []).map((card) => (
                     <SortableCard key={card.id} id={card.id}>
-                      <div className="surface-muted rounded-[1.5rem] p-4">
+                      <div className="group relative">
+                        <SideBlockActions
+                          label="card"
+                          onEdit={() => toast.info(`Edicao lateral pronta para ${card.title}.`)}
+                          onDelete={() => setCards((current) => current.filter((item) => item.id !== card.id))}
+                        />
+                        <div className="surface-muted rounded-[1.5rem] p-4">
                         <div className="flex items-start justify-between gap-3">
                           <div className="flex items-start gap-3">
                             <GripVertical className="mt-1 h-4 w-4 text-muted-foreground" />
@@ -1291,12 +1710,24 @@ function PipelineModule({ workspace }: { workspace: WorkspaceSnapshot }) {
                           </div>
                           <span className="text-xs text-muted-foreground">{card.tags.length} tags</span>
                         </div>
+                          <div className="mt-4">
+                            <ApprovalControls
+                              status={approvals[card.id]}
+                              onChange={(status) => setApprovalStatus(workspace.slug, card.id, status)}
+                            />
+                          </div>
+                        </div>
                       </div>
                     </SortableCard>
                   ))}
+                  {byColumn[column]?.length ? null : (
+                    <div className="rounded-[1.5rem] border border-dashed border-border/80 bg-white/50 p-4 text-sm text-muted-foreground">
+                      Solte um card aqui.
+                    </div>
+                  )}
                 </div>
               </SortableContext>
-            </Card>
+            </PipelineLane>
           ))}
         </div>
       </DndContext>
@@ -1474,47 +1905,180 @@ function FeedModule({ workspace }: { workspace: WorkspaceSnapshot }) {
 }
 
 function PostsModule({ workspace }: { workspace: WorkspaceSnapshot }) {
+  const [posts, setPosts] = useState<PostItem[]>(
+    workspace.posts.map((post) => ({
+      ...post,
+      caption: `${post.title} com foco em clareza, impacto visual e CTA direto.`,
+      location: 'Recife, PE',
+      mediaUrl: ''
+    }))
+  );
+  const [channelFilter, setChannelFilter] = useState<'todos' | 'Feed' | 'Reels' | 'Stories'>('todos');
+  const [publishingId, setPublishingId] = useState<string | null>(null);
+  const approvals = useWorkspaceStore((state) => state.approvalsByWorkspace[workspace.slug] ?? {});
+  const setApprovalStatus = useWorkspaceStore((state) => state.setApprovalStatus);
+
+  useEffect(() => {
+    setPosts(
+      workspace.posts.map((post) => ({
+        ...post,
+        caption: `${post.title} com foco em clareza, impacto visual e CTA direto.`,
+        location: 'Recife, PE',
+        mediaUrl: ''
+      }))
+    );
+  }, [workspace.posts]);
+
+  const filteredPosts = posts.filter((post) => (channelFilter === 'todos' ? true : post.channel === channelFilter));
+
+  async function handleRewriteCaption(post: PostItem) {
+    try {
+      const content = await requestAiAction<string>('generateCaption', {
+        topic: post.title,
+        tone: 'humano e convincente'
+      });
+      setPosts((current) => current.map((item) => (item.id === post.id ? { ...item, caption: content } : item)));
+      toast.success('Legenda reescrita pela IA.');
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Não foi possível reescrever a legenda.');
+    }
+  }
+
+  async function handlePublish(post: PostItem) {
+    setPublishingId(post.id);
+
+    try {
+      const response = await fetch('/api/integrations/meta', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          caption: post.caption,
+          mediaUrl: post.mediaUrl,
+          mediaType: normalizeText(post.channel) === 'reels' ? 'REELS' : 'IMAGE'
+        })
+      });
+      const payload = (await response.json().catch(() => null)) as { ok?: boolean; message?: string } | null;
+
+      if (!response.ok || !payload?.ok) {
+        throw new Error(payload?.message ?? 'Falha ao enviar para a Meta.');
+      }
+
+      setPosts((current) => current.map((item) => (item.id === post.id ? { ...item, status: 'Publicado' } : item)));
+      toast.success(payload.message ?? 'Post publicado com sucesso.');
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Falha ao publicar no Instagram.');
+    } finally {
+      setPublishingId(null);
+    }
+  }
+
   return (
     <ModuleCard title="Posts agendados" subtitle="Status, legenda e desempenho por canal">
+      <div className="mb-5 flex flex-wrap items-center gap-2">
+        {['todos', 'Feed', 'Reels', 'Stories'].map((channel) => (
+          <Button
+            key={channel}
+            variant={channelFilter === channel ? 'default' : 'outline'}
+            size="sm"
+            className="h-8 rounded-full px-3"
+            onClick={() => setChannelFilter(channel as typeof channelFilter)}
+          >
+            {channel}
+          </Button>
+        ))}
+      </div>
       <div className="grid gap-4 lg:grid-cols-2 xl:grid-cols-3">
-        {workspace.posts.map((post, index) => (
-          <div key={post.id} className="surface-muted rounded-[1.5rem] p-4">
-            <div className="flex items-center justify-between gap-3">
-              <div>
-                <p className="font-medium text-foreground">{post.title}</p>
-                <p className="mt-1 text-sm text-muted-foreground">{post.channel}</p>
+        {filteredPosts.map((post, index) => (
+          <div key={post.id} className="group relative">
+            <SideBlockActions
+              label="post"
+              onEdit={() => toast.info(`Edicao lateral pronta para ${post.title}.`)}
+              onDelete={() => setPosts((current) => current.filter((item) => item.id !== post.id))}
+            />
+            <div className="surface-muted rounded-[1.5rem] p-4">
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <p className="font-medium text-foreground">{post.title}</p>
+                  <p className="mt-1 text-sm text-muted-foreground">{post.channel}</p>
+                </div>
+                <Badge variant={post.status === 'Publicado' ? 'success' : post.status === 'Agendado' ? 'warning' : 'outline'}>
+                  {post.status}
+                </Badge>
               </div>
-              <Badge variant={post.status === 'Publicado' ? 'success' : post.status === 'Agendado' ? 'warning' : 'outline'}>
-                {post.status}
-              </Badge>
-            </div>
-            <div
-              className={cn(
-                'mt-4 rounded-[1.35rem] p-4 text-white',
-                index % 2 === 0
-                  ? 'bg-[linear-gradient(135deg,#2d2a54,#4f68da)]'
-                  : 'bg-[linear-gradient(135deg,#ffb36b,#ff6178)]'
-              )}
-            >
-              <p className="text-xs uppercase tracking-[0.2em] text-white/55">Legenda base</p>
-              <p className="mt-3 text-sm leading-6 text-white/80">
-                {post.title} com foco em clareza, impacto visual e CTA direto.
-              </p>
-            </div>
-            <div className="mt-4 flex items-center justify-between text-sm">
-              <div>
-                <p className="text-muted-foreground">Agendamento</p>
-                <p className="font-medium text-foreground">{post.scheduledAt}</p>
+              <div
+                className={cn(
+                  'mt-4 rounded-[1.35rem] p-4 text-white',
+                  index % 2 === 0
+                    ? 'bg-[linear-gradient(135deg,#2d2a54,#4f68da)]'
+                    : 'bg-[linear-gradient(135deg,#ffb36b,#ff6178)]'
+                )}
+              >
+                <p className="text-xs uppercase tracking-[0.2em] text-white/55">Legenda base</p>
+                <Textarea
+                  value={post.caption}
+                  onChange={(event) =>
+                    setPosts((current) =>
+                      current.map((item) => (item.id === post.id ? { ...item, caption: event.target.value } : item))
+                    )
+                  }
+                  className="mt-3 min-h-[120px] border-white/10 bg-white/10 text-white placeholder:text-white/45"
+                />
               </div>
-              <div className="text-right">
-                <p className="text-muted-foreground">Engajamento</p>
-                <p className="font-medium text-foreground">{post.engagement}</p>
+              <div className="mt-4 grid gap-3">
+                <label className="space-y-1 text-sm">
+                  <span className="text-muted-foreground">Agendamento</span>
+                  <Input
+                    type="datetime-local"
+                    value={post.scheduledAt.replace(' ', 'T')}
+                    onChange={(event) =>
+                      setPosts((current) =>
+                        current.map((item) =>
+                          item.id === post.id ? { ...item, scheduledAt: event.target.value.replace('T', ' ') } : item
+                        )
+                      )
+                    }
+                    className="rounded-2xl border-white/80 bg-white"
+                  />
+                </label>
+                <label className="space-y-1 text-sm">
+                  <span className="text-muted-foreground">Media URL publica</span>
+                  <Input
+                    value={post.mediaUrl}
+                    onChange={(event) =>
+                      setPosts((current) =>
+                        current.map((item) => (item.id === post.id ? { ...item, mediaUrl: event.target.value } : item))
+                      )
+                    }
+                    placeholder="https://..."
+                    className="rounded-2xl border-white/80 bg-white"
+                  />
+                </label>
               </div>
-            </div>
-            <div className="mt-4 flex flex-wrap gap-2">
-              {post.tags.map((tag) => (
-                <Pill key={tag}>{tag}</Pill>
-              ))}
+              <div className="mt-4 flex items-center justify-between text-sm">
+                <div>
+                  <p className="text-muted-foreground">Engajamento</p>
+                  <p className="font-medium text-foreground">{post.engagement}</p>
+                </div>
+                <ApprovalControls
+                  status={approvals[post.id]}
+                  onChange={(status) => setApprovalStatus(workspace.slug, post.id, status)}
+                />
+              </div>
+              <div className="mt-4 flex flex-wrap gap-2">
+                {post.tags.map((tag) => (
+                  <Pill key={tag}>{tag}</Pill>
+                ))}
+              </div>
+              <div className="mt-4 flex flex-wrap gap-2">
+                <Button variant="outline" size="sm" onClick={() => handleRewriteCaption(post)}>
+                  <Sparkles className="h-4 w-4" />
+                  Reescrever legenda
+                </Button>
+                <Button size="sm" onClick={() => handlePublish(post)} disabled={publishingId === post.id}>
+                  {publishingId === post.id ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
+                  Enviar para Meta
+                </Button>
+              </div>
             </div>
           </div>
         ))}
@@ -1525,12 +2089,43 @@ function PostsModule({ workspace }: { workspace: WorkspaceSnapshot }) {
 
 function MetricsModule({ workspace }: { workspace: WorkspaceSnapshot }) {
   const [activeSeries, setActiveSeries] = useState(workspace.metrics.series[0]?.name ?? 'Alcance');
+  const [analysis, setAnalysis] = useState<{
+    summary: string;
+    insights: string[];
+    risks: string[];
+  } | null>(null);
+  const [loading, setLoading] = useState(false);
   const currentSeries = workspace.metrics.series.find((series) => series.name === activeSeries) ?? workspace.metrics.series[0];
 
   const chartData = currentSeries?.points.map((point) => ({
     label: point.label,
     value: point.value
   }));
+
+  async function handleAnalyzeMetrics() {
+    setLoading(true);
+
+    try {
+      const content = await requestAiAction<{
+        summary: string;
+        insights: string[];
+        risks: string[];
+      }>('analyzeMetrics', {
+        summary: workspace.metrics.summary.map((item) => `${item.label}: ${item.value} (${item.trend ?? ''})`).join(' | '),
+        series: workspace.metrics.series.map((series) => ({
+          name: series.name,
+          value: series.points.reduce((sum, point) => sum + point.value, 0)
+        }))
+      });
+
+      setAnalysis(content);
+      toast.success('Leitura de métricas pronta.');
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Não foi possível analisar as métricas.');
+    } finally {
+      setLoading(false);
+    }
+  }
 
   return (
     <div className="space-y-6">
@@ -1541,17 +2136,23 @@ function MetricsModule({ workspace }: { workspace: WorkspaceSnapshot }) {
       </div>
       <div className="grid gap-6 xl:grid-cols-[1fr_0.7fr]">
         <ModuleCard title="Performance semanal" subtitle="Leitura de alcance e engajamento">
-          <div className="mb-4 flex flex-wrap gap-2">
-            {workspace.metrics.series.map((series) => (
-              <Button
-                key={series.name}
-                variant={series.name === activeSeries ? 'default' : 'outline'}
-                size="sm"
-                onClick={() => setActiveSeries(series.name)}
-              >
-                {series.name}
-              </Button>
-            ))}
+          <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
+            <div className="flex flex-wrap gap-2">
+              {workspace.metrics.series.map((series) => (
+                <Button
+                  key={series.name}
+                  variant={series.name === activeSeries ? 'default' : 'outline'}
+                  size="sm"
+                  onClick={() => setActiveSeries(series.name)}
+                >
+                  {series.name}
+                </Button>
+              ))}
+            </div>
+            <Button size="sm" onClick={handleAnalyzeMetrics} disabled={loading}>
+              {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
+              IA analisa
+            </Button>
           </div>
           <div className="h-[340px] rounded-3xl border border-border bg-background p-4">
             <HydratedChart>
@@ -1601,6 +2202,34 @@ function MetricsModule({ workspace }: { workspace: WorkspaceSnapshot }) {
                 </ResponsiveContainer>
               </HydratedChart>
             </div>
+            <div className="rounded-[1.5rem] border border-border bg-background p-4">
+              {analysis ? (
+                <div className="space-y-3">
+                  <p className="font-medium text-foreground">{analysis.summary}</p>
+                  <div>
+                    <p className="text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground">Insights</p>
+                    <ul className="mt-2 space-y-2 text-sm text-muted-foreground">
+                      {analysis.insights.map((item) => (
+                        <li key={item}>• {item}</li>
+                      ))}
+                    </ul>
+                  </div>
+                  <div>
+                    <p className="text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground">Riscos</p>
+                    <ul className="mt-2 space-y-2 text-sm text-muted-foreground">
+                      {analysis.risks.map((item) => (
+                        <li key={item}>• {item}</li>
+                      ))}
+                    </ul>
+                  </div>
+                </div>
+              ) : (
+                <EmptyState
+                  title="Analise de IA pendente"
+                  description="Rode a leitura com IA para transformar as métricas em plano de ação."
+                />
+              )}
+            </div>
           </div>
         </ModuleCard>
       </div>
@@ -1609,6 +2238,35 @@ function MetricsModule({ workspace }: { workspace: WorkspaceSnapshot }) {
 }
 
 function CompetitorsModule({ workspace }: { workspace: WorkspaceSnapshot }) {
+  const [analysis, setAnalysis] = useState<{
+    summary: string;
+    opportunities: string[];
+    watchouts: string[];
+  } | null>(null);
+  const [loading, setLoading] = useState(false);
+
+  async function handleAnalyzeCompetitors() {
+    setLoading(true);
+
+    try {
+      const content = await requestAiAction<{
+        summary: string;
+        opportunities: string[];
+        watchouts: string[];
+      }>('analyzeCompetitors', {
+        competitors: workspace.competitors.map((item) => item.name),
+        niche: workspace.industry
+      });
+
+      setAnalysis(content);
+      toast.success('Concorrentes analisados pela IA.');
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Não foi possível analisar os concorrentes.');
+    } finally {
+      setLoading(false);
+    }
+  }
+
   return (
     <div className="space-y-6">
       <div className="grid gap-4 lg:grid-cols-[1.1fr_0.9fr]">
@@ -1645,22 +2303,42 @@ function CompetitorsModule({ workspace }: { workspace: WorkspaceSnapshot }) {
         </ModuleCard>
 
         <ModuleCard title="IA analisa concorrentes" subtitle="Resumo pronto para tomada de decisão">
+          <div className="mb-4 flex justify-end">
+            <Button size="sm" onClick={handleAnalyzeCompetitors} disabled={loading}>
+              {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
+              Rodar analise
+            </Button>
+          </div>
           <div className="space-y-3">
             <div className="rounded-3xl border border-border bg-foreground p-5 text-background">
               <p className="text-xs uppercase tracking-[0.2em] text-white/50">Resumo IA</p>
               <p className="mt-3 font-medium leading-7">
-                Conteúdo com bastidores, prova social e CTA para DM está gerando mais tração que posts puramente
-                educativos.
+                {analysis?.summary ??
+                  'Conteúdo com bastidores, prova social e CTA para DM está gerando mais tração que posts puramente educativos.'}
               </p>
             </div>
             <div className="rounded-3xl border border-border bg-background p-5">
               <p className="text-sm font-medium">Ações recomendadas</p>
               <ul className="mt-3 space-y-2 text-sm text-muted-foreground">
-                <li>• Aumentar volume de reels com demonstração real</li>
-                <li>• Replicar stories com enquete e sequência curta</li>
-                <li>• Criar comparação direta entre produto e alternativa</li>
+                {(analysis?.opportunities ?? [
+                  'Aumentar volume de reels com demonstração real',
+                  'Replicar stories com enquete e sequência curta',
+                  'Criar comparação direta entre produto e alternativa'
+                ]).map((item) => (
+                  <li key={item}>• {item}</li>
+                ))}
               </ul>
             </div>
+            {analysis?.watchouts?.length ? (
+              <div className="rounded-3xl border border-border bg-background p-5">
+                <p className="text-sm font-medium">Pontos de atenção</p>
+                <ul className="mt-3 space-y-2 text-sm text-muted-foreground">
+                  {analysis.watchouts.map((item) => (
+                    <li key={item}>• {item}</li>
+                  ))}
+                </ul>
+              </div>
+            ) : null}
           </div>
         </ModuleCard>
       </div>
@@ -1916,6 +2594,38 @@ function BillingModule({ workspace }: { workspace: WorkspaceSnapshot }) {
 
 function AdminModule({ workspace }: { workspace: WorkspaceSnapshot }) {
   const [flags, setFlags] = useState(workspace.featureFlags);
+  const [memberName, setMemberName] = useState('');
+  const [memberRole, setMemberRole] = useState('Social Media');
+  const [memberFocus, setMemberFocus] = useState<WorkspaceViewMode>('social');
+  const members = useWorkspaceStore((state) => state.membersByWorkspace[workspace.slug] ?? workspace.teamMembers);
+  const addMember = useWorkspaceStore((state) => state.addMember);
+  const removeMember = useWorkspaceStore((state) => state.removeMember);
+  const updateMemberRole = useWorkspaceStore((state) => state.updateMemberRole);
+
+  function handleAddMember() {
+    const trimmed = memberName.trim();
+    if (!trimmed) {
+      toast.error('Digite o nome do membro.');
+      return;
+    }
+
+    const result = addMember(workspace.slug, {
+      id: `member-${Date.now()}`,
+      name: trimmed,
+      role: memberRole,
+      focus: memberFocus,
+      online: true,
+      color: ['#2e2b54', '#ff5d83', '#5b66d6', '#ff9f5a', '#1d9f84'][members.length % 5] ?? '#2e2b54'
+    });
+
+    if (!result.ok) {
+      toast.error(result.message ?? 'Não foi possível adicionar o membro.');
+      return;
+    }
+
+    setMemberName('');
+    toast.success('Membro adicionado ao workspace.');
+  }
 
   return (
     <div className="space-y-6">
@@ -1957,9 +2667,107 @@ function AdminModule({ workspace }: { workspace: WorkspaceSnapshot }) {
               <p className="text-xs uppercase tracking-[0.2em] text-muted-foreground">Permissões</p>
               <p className="mt-2 text-sm text-muted-foreground">Super Admin · Admin · Social Media · Filmmaker · Blogueira · Viewer</p>
             </div>
+            <div className="rounded-3xl border border-border bg-background p-4">
+              <p className="text-xs uppercase tracking-[0.2em] text-muted-foreground">Membros online</p>
+              <p className="mt-2 font-medium">{members.length} / 5 membros ativos nesta versão</p>
+            </div>
           </div>
         </ModuleCard>
       </div>
+
+      <ModuleCard title="Equipe do workspace" subtitle="Crie ate 5 membros e marque a hierarquia operacional">
+        <div className="grid gap-6 xl:grid-cols-[0.8fr_1.2fr]">
+          <div className="space-y-3 rounded-[1.75rem] border border-border bg-background p-4">
+            <Input
+              value={memberName}
+              onChange={(event) => setMemberName(event.target.value)}
+              placeholder="Nome do membro"
+              className="rounded-2xl border-white/80 bg-white"
+            />
+            <label className="grid gap-2 text-sm text-muted-foreground">
+              <span>Função</span>
+              <select
+                value={memberRole}
+                onChange={(event) => setMemberRole(event.target.value)}
+                className="h-11 rounded-2xl border border-white/80 bg-white px-4 text-foreground outline-none"
+              >
+                {['Coordenador', 'Social Media', 'Roteirista', 'Filmmaker', 'Viewer'].map((role) => (
+                  <option key={role} value={role}>
+                    {role}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="grid gap-2 text-sm text-muted-foreground">
+              <span>Foco operacional</span>
+              <select
+                value={memberFocus}
+                onChange={(event) => setMemberFocus(event.target.value as WorkspaceViewMode)}
+                className="h-11 rounded-2xl border border-white/80 bg-white px-4 text-foreground outline-none"
+              >
+                <option value="general">Geral</option>
+                <option value="production">Gravação</option>
+                <option value="social">Social Media</option>
+              </select>
+            </label>
+            <Button onClick={handleAddMember} className="w-full">
+              <Plus className="h-4 w-4" />
+              Adicionar membro
+            </Button>
+          </div>
+
+          <div className="space-y-3">
+            {members.map((member) => (
+              <div key={member.id} className="rounded-[1.75rem] border border-border bg-background p-4">
+                <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+                  <div className="flex items-center gap-4">
+                    <span
+                      className="flex h-12 w-12 items-center justify-center rounded-full text-sm font-semibold text-white"
+                      style={{ backgroundColor: member.color }}
+                    >
+                      {getInitials(member.name)}
+                    </span>
+                    <div>
+                      <p className="font-medium text-foreground">{member.name}</p>
+                      <p className="text-sm text-muted-foreground">
+                        {member.role} · {member.focus === 'general' ? 'geral' : member.focus === 'production' ? 'gravacao' : 'social'}
+                      </p>
+                    </div>
+                  </div>
+                  <div className="grid gap-2 md:grid-cols-2 lg:flex lg:items-center">
+                    <select
+                      value={member.role}
+                      onChange={(event) => updateMemberRole(workspace.slug, member.id, event.target.value, member.focus)}
+                      className="h-10 rounded-2xl border border-white/80 bg-white px-4 text-sm text-foreground outline-none"
+                    >
+                      {['Coordenador', 'Social Media', 'Roteirista', 'Filmmaker', 'Viewer'].map((role) => (
+                        <option key={role} value={role}>
+                          {role}
+                        </option>
+                      ))}
+                    </select>
+                    <select
+                      value={member.focus}
+                      onChange={(event) =>
+                        updateMemberRole(workspace.slug, member.id, member.role, event.target.value as WorkspaceViewMode)
+                      }
+                      className="h-10 rounded-2xl border border-white/80 bg-white px-4 text-sm text-foreground outline-none"
+                    >
+                      <option value="general">Geral</option>
+                      <option value="production">Gravação</option>
+                      <option value="social">Social Media</option>
+                    </select>
+                    <Button variant="outline" size="sm" onClick={() => removeMember(workspace.slug, member.id)}>
+                      <Trash2 className="h-4 w-4" />
+                      Remover
+                    </Button>
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      </ModuleCard>
 
       <ModuleCard title="Notas internas" subtitle="Backoffice e decisões do time">
         <div className="grid gap-3 md:grid-cols-2">
@@ -1980,6 +2788,20 @@ function AdminModule({ workspace }: { workspace: WorkspaceSnapshot }) {
 
 export function WorkspaceModuleView({ workspace, module }: WorkspaceModuleProps) {
   const meta = moduleMeta[module];
+  const ensureWorkspace = useWorkspaceStore((state) => state.ensureWorkspace);
+  const viewMode = useWorkspaceStore((state) => state.viewModeByWorkspace[workspace.slug] ?? 'general');
+  const members = useWorkspaceStore((state) => state.membersByWorkspace[workspace.slug] ?? workspace.teamMembers);
+  const actingAs = useWorkspaceStore((state) => state.actingAsByWorkspace[workspace.slug] ?? workspace.teamMembers[0]?.id ?? '');
+  const activeMember = members.find((member) => member.id === actingAs) ?? members[0];
+
+  useEffect(() => {
+    ensureWorkspace(workspace);
+  }, [ensureWorkspace, workspace]);
+
+  const scopedWorkspace = useMemo(
+    () => filterWorkspaceByContext(workspace, viewMode, activeMember),
+    [activeMember, viewMode, workspace]
+  );
 
   const headerAction =
     module === 'dashboard' ? (
@@ -2007,22 +2829,24 @@ export function WorkspaceModuleView({ workspace, module }: WorkspaceModuleProps)
         action={headerAction}
       />
 
-      {module === 'dashboard' ? <DashboardModule workspace={workspace} /> : null}
-      {module === 'calendar' ? <CalendarModule workspace={workspace} /> : null}
-      {module === 'ideas' ? <IdeasModule workspace={workspace} /> : null}
-      {module === 'scripts' ? <ScriptsModule workspace={workspace} /> : null}
-      {module === 'stories' ? <StoriesModule workspace={workspace} /> : null}
-      {module === 'pipeline' ? <PipelineModule workspace={workspace} /> : null}
-      {module === 'library' ? <LibraryModule workspace={workspace} /> : null}
-      {module === 'feed' ? <FeedModule workspace={workspace} /> : null}
-      {module === 'posts' ? <PostsModule workspace={workspace} /> : null}
-      {module === 'metrics' ? <MetricsModule workspace={workspace} /> : null}
-      {module === 'competitors' ? <CompetitorsModule workspace={workspace} /> : null}
-      {module === 'products' ? <ProductsModule workspace={workspace} /> : null}
-      {module === 'creators' ? <CreatorsModule workspace={workspace} /> : null}
-      {module === 'ai' ? <AiChatModule workspace={workspace} /> : null}
-      {module === 'billing' ? <BillingModule workspace={workspace} /> : null}
-      {module === 'admin' ? <AdminModule workspace={workspace} /> : null}
+      <ViewScopeBanner workspace={scopedWorkspace} viewMode={viewMode} activeMember={activeMember} />
+
+      {module === 'dashboard' ? <DashboardModule workspace={scopedWorkspace} /> : null}
+      {module === 'calendar' ? <CalendarModule workspace={scopedWorkspace} /> : null}
+      {module === 'ideas' ? <IdeasModule workspace={scopedWorkspace} /> : null}
+      {module === 'scripts' ? <ScriptsModule workspace={scopedWorkspace} /> : null}
+      {module === 'stories' ? <StoriesModule workspace={scopedWorkspace} /> : null}
+      {module === 'pipeline' ? <PipelineModule workspace={scopedWorkspace} /> : null}
+      {module === 'library' ? <LibraryModule workspace={scopedWorkspace} /> : null}
+      {module === 'feed' ? <FeedModule workspace={scopedWorkspace} /> : null}
+      {module === 'posts' ? <PostsModule workspace={scopedWorkspace} /> : null}
+      {module === 'metrics' ? <MetricsModule workspace={scopedWorkspace} /> : null}
+      {module === 'competitors' ? <CompetitorsModule workspace={scopedWorkspace} /> : null}
+      {module === 'products' ? <ProductsModule workspace={scopedWorkspace} /> : null}
+      {module === 'creators' ? <CreatorsModule workspace={scopedWorkspace} /> : null}
+      {module === 'ai' ? <AiChatModule workspace={scopedWorkspace} /> : null}
+      {module === 'billing' ? <BillingModule workspace={scopedWorkspace} /> : null}
+      {module === 'admin' ? <AdminModule workspace={scopedWorkspace} /> : null}
 
       <div className="rounded-3xl border border-border bg-white/70 p-4 text-sm text-muted-foreground shadow-soft">
         <div className="flex flex-wrap items-center justify-between gap-3">
