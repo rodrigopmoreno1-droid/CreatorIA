@@ -28,8 +28,8 @@ const META_GRAPH_VERSION = 'v23.0';
 const META_TOKEN_COOKIE = 'contentos-meta-token';
 const META_SCOPES = [
   'pages_show_list',
-  'business_management',
   'instagram_basic',
+  'pages_read_engagement',
   'instagram_manage_insights',
   'instagram_content_publish'
 ].join(',');
