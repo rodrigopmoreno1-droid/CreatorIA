@@ -340,13 +340,13 @@ function SectionHeader({
   action?: React.ReactNode;
 }) {
   return (
-    <div className="flex flex-col gap-4 border-b border-border/80 pb-5 md:flex-row md:items-end md:justify-between">
+    <div className="flex flex-col gap-3 border-b border-border pb-4 md:flex-row md:items-end md:justify-between">
       <div>
-        <div className="mb-3 inline-flex items-center gap-2 rounded-full border border-white/80 bg-white px-3 py-1 text-xs font-semibold uppercase tracking-[0.22em] text-muted-foreground shadow-sm">
-          ContentOS
+        <div className="mb-2 inline-flex items-center gap-2 rounded-lg border border-border bg-white px-2.5 py-1 text-[10px] font-medium tracking-[0.08em] text-muted-foreground">
+          Workspace
         </div>
-        <h1 className="font-display text-3xl font-semibold tracking-tight text-balance md:text-4xl">{title}</h1>
-        <p className="mt-3 max-w-3xl text-sm leading-7 text-muted-foreground md:text-base">{description}</p>
+        <h1 className="font-display text-[22px] font-semibold tracking-tight text-balance md:text-[26px]">{title}</h1>
+        <p className="mt-2 max-w-3xl text-[13px] leading-6 text-muted-foreground">{description}</p>
       </div>
       {action ? <div className="flex shrink-0 items-center gap-2">{action}</div> : null}
     </div>
@@ -355,11 +355,11 @@ function SectionHeader({
 
 function StatCard({ label, value, trend }: { label: string; value: string; trend?: string }) {
   return (
-    <Card className="glass">
-      <CardContent className="p-5">
-        <p className="text-xs uppercase tracking-[0.2em] text-muted-foreground">{label}</p>
-        <div className="mt-3 flex items-end justify-between gap-3">
-          <p className="font-display text-3xl font-semibold tracking-tight">{value}</p>
+    <Card className="surface-card">
+      <CardContent className="p-4">
+        <p className="text-[11px] tracking-[0.08em] text-muted-foreground">{label}</p>
+        <div className="mt-2 flex items-end justify-between gap-3">
+          <p className="font-display text-2xl font-semibold tracking-tight">{value}</p>
           {trend ? <Badge variant="success">{trend}</Badge> : null}
         </div>
       </CardContent>
@@ -369,7 +369,7 @@ function StatCard({ label, value, trend }: { label: string; value: string; trend
 
 function Pill({ children }: { children: React.ReactNode }) {
   return (
-    <span className="surface-muted inline-flex items-center rounded-full px-3 py-1 text-xs font-medium text-muted-foreground">
+    <span className="inline-flex items-center rounded-lg border border-border bg-muted px-2.5 py-1 text-[11px] font-medium text-muted-foreground">
       {children}
     </span>
   );
@@ -389,10 +389,10 @@ function ModuleCard({
   className?: string;
 }) {
   return (
-    <Card className={cn('surface-card inner-stroke', className)}>
-      <CardHeader className="space-y-2">
+    <Card className={cn('surface-card', className)}>
+      <CardHeader className="space-y-1">
         <div className="flex items-center justify-between gap-3">
-          <CardTitle className="text-lg">{title}</CardTitle>
+          <CardTitle>{title}</CardTitle>
           {badge ? <Badge variant="outline">{badge}</Badge> : null}
         </div>
         {subtitle ? <CardDescription>{subtitle}</CardDescription> : null}
@@ -414,9 +414,9 @@ function ViewScopeBanner({
   const scopedCount = workspace.pipelineCards.length + workspace.posts.length + workspace.agenda.length;
 
   return (
-    <div className="flex flex-col gap-3 rounded-[1.75rem] border border-white/80 bg-white/78 p-4 shadow-soft lg:flex-row lg:items-center lg:justify-between">
+    <div className="flex flex-col gap-3 rounded-2xl border border-border bg-white p-4 lg:flex-row lg:items-center lg:justify-between">
       <div>
-        <p className="text-xs font-semibold uppercase tracking-[0.2em] text-muted-foreground">Visao ativa</p>
+        <p className="text-[10px] font-medium tracking-[0.08em] text-muted-foreground">Visão ativa</p>
         <div className="mt-2 flex flex-wrap items-center gap-2">
           <Badge variant="outline">{viewMode === 'general' ? 'Geral' : viewMode === 'production' ? 'Gravacao' : 'Social Media'}</Badge>
           {activeMember ? <Badge variant="success">Operando como {activeMember.name}</Badge> : null}
@@ -527,29 +527,6 @@ function DashboardModule({ workspace }: { workspace: WorkspaceSnapshot }) {
   const selectedEvents = workspace.calendarEvents.filter((event) => event.date === selectedDateLabel);
   const mainSeries = workspace.metrics.series[0]?.points ?? [];
   const weeklyLoad = workspace.posts.length + workspace.stories.length + workspace.agenda.length;
-  const spotlightCards = [
-    {
-      eyebrow: 'Roteiro premium',
-      title: workspace.scripts[0]?.title ?? 'Roteiro em construção',
-      detail: `${workspace.scripts[0]?.beats.length ?? 0} takes prontos`,
-      accent: 'from-[#b8a6ff] to-[#d4c5ff]',
-      icon: PlayCircle
-    },
-    {
-      eyebrow: 'Oferta da semana',
-      title: workspace.products[0]?.name ?? 'Produto em destaque',
-      detail: workspace.products[0]?.price ?? 'Valor definido no produto',
-      accent: 'from-[#ffd7ab] to-[#ffe9c7]',
-      icon: Target
-    },
-    {
-      eyebrow: 'Creator em alta',
-      title: workspace.creators[0]?.name ?? 'Nova collab',
-      detail: workspace.creators[0]?.metrics ?? 'Métricas da creator',
-      accent: 'from-[#ebff55] to-[#f7ff9b]',
-      icon: Users
-    }
-  ];
   const assignments = [
     ...workspace.agenda.map((item) => ({
       id: item.id,
@@ -557,7 +534,7 @@ function DashboardModule({ workspace }: { workspace: WorkspaceSnapshot }) {
       meta: `${item.type} · ${item.owner}`,
       when: item.time,
       icon: CalendarDays,
-      accent: 'bg-[#f2ecff] text-[#5d43d7]'
+      accent: 'bg-muted text-foreground'
     })),
     ...workspace.posts.slice(0, 2).map((post) => ({
       id: post.id,
@@ -565,7 +542,7 @@ function DashboardModule({ workspace }: { workspace: WorkspaceSnapshot }) {
       meta: `${post.channel} · ${post.status}`,
       when: post.scheduledAt.slice(11, 16),
       icon: NotebookText,
-      accent: 'bg-[#fff0dd] text-[#9d6127]'
+      accent: 'bg-muted text-foreground'
     }))
   ].slice(0, 4);
   const topMovements = [
@@ -574,14 +551,14 @@ function DashboardModule({ workspace }: { workspace: WorkspaceSnapshot }) {
       title: card.title,
       meta: `${card.column} · ${card.assignee}`,
       icon: SquareKanban,
-      accent: 'bg-[#eff2ff] text-[#4453c8]'
+      accent: 'bg-muted text-foreground'
     })),
     ...workspace.calendarEvents.slice(0, 2).map((event) => ({
       id: event.id,
       title: event.title,
       meta: `${event.type} · ${event.owner}`,
       icon: Clock3,
-      accent: 'bg-[#eefbf2] text-[#247a48]'
+      accent: 'bg-muted text-foreground'
     }))
   ].slice(0, 4);
 
@@ -615,18 +592,16 @@ function DashboardModule({ workspace }: { workspace: WorkspaceSnapshot }) {
       <ModuleCard title="Stories do dia" subtitle="Sequências e rascunhos">
         <div className="grid gap-3">
           {workspace.stories.map((story, index) => (
-            <div key={story.id} className="rounded-[1.5rem] border border-border bg-gradient-to-br from-slate-900 to-slate-800 p-4 text-white">
+            <div key={story.id} className="rounded-xl border border-border bg-background p-4">
               <div className="flex items-center justify-between gap-3">
                 <div>
-                  <p className="text-xs uppercase tracking-[0.2em] text-white/50">Story {index + 1}</p>
-                  <p className="mt-2 font-display text-lg font-semibold">{story.title}</p>
+                  <p className="text-[10px] tracking-[0.08em] text-muted-foreground">Story {index + 1}</p>
+                  <p className="mt-1 text-[13px] font-semibold">{story.title}</p>
                 </div>
-                <Badge variant="outline" className="border-white/10 bg-white/5 text-white">
-                  {story.time}
-                </Badge>
+                <Badge variant="outline">{story.time}</Badge>
               </div>
-              <p className="mt-3 text-sm text-white/70">{story.hook}</p>
-              <div className="mt-4 flex items-center justify-between text-xs text-white/50">
+              <p className="mt-2 text-[13px] text-muted-foreground">{story.hook}</p>
+              <div className="mt-3 flex items-center justify-between text-[11px] text-muted-foreground">
                 <span>{story.status}</span>
                 <span>Preview Instagram</span>
               </div>
@@ -690,139 +665,105 @@ function DashboardModule({ workspace }: { workspace: WorkspaceSnapshot }) {
 
   return (
     <div className="space-y-6">
-      <div className="grid gap-6 xl:grid-cols-[1.45fr_0.75fr]">
-        <div className="overflow-hidden rounded-[2rem] border border-[#242244]/5 bg-[linear-gradient(135deg,#2d2a53_0%,#252347_55%,#34306b_100%)] p-6 text-white shadow-glow">
-          <div className="flex flex-wrap items-start justify-between gap-4">
-            <div className="max-w-xl">
-              <p className="text-sm font-medium text-white/65">Olá, {workspace.company}</p>
-              <h2 className="mt-3 max-w-lg font-display text-4xl font-semibold tracking-tight text-balance">
-                Você tem {weeklyLoad} entregas em movimento nesta semana.
-              </h2>
-              <p className="mt-4 max-w-xl text-sm leading-7 text-white/70">
-                O dashboard agora prioriza o que está pronto para gravar, publicar e analisar sem te jogar em uma parede de informação.
-              </p>
-            </div>
-            <Badge className="border-white/10 bg-white/10 text-white hover:bg-white/10">{workspace.plan}</Badge>
-          </div>
-
-          <div className="mt-6 grid gap-4 lg:grid-cols-[1.1fr_0.9fr]">
-            <div className="flex gap-3 overflow-x-auto pb-1">
-              {spotlightCards.map((card) => {
-                const Icon = card.icon;
-
-                return (
-                  <article
-                    key={card.eyebrow}
-                    className={cn(
-                      'min-w-[190px] flex-1 rounded-[1.75rem] bg-gradient-to-br p-4 text-[#221f3f] shadow-soft',
-                      card.accent
-                    )}
-                  >
-                    <div className="flex items-start justify-between gap-3">
-                      <p className="text-xs font-semibold uppercase tracking-[0.2em] text-[#221f3f]/55">{card.eyebrow}</p>
-                      <Icon className="h-4 w-4 shrink-0 text-[#221f3f]/70" />
-                    </div>
-                    <p className="mt-8 font-display text-2xl font-semibold leading-tight tracking-tight">{card.title}</p>
-                    <p className="mt-3 text-sm text-[#221f3f]/70">{card.detail}</p>
-                  </article>
-                );
-              })}
-            </div>
-
-            <div className="rounded-[1.75rem] border border-white/10 bg-white/10 p-5">
-              <div className="flex items-center justify-between gap-3">
-                <div>
-                  <p className="text-xs uppercase tracking-[0.2em] text-white/55">Capacidade</p>
-                  <p className="mt-2 font-display text-2xl font-semibold">Uso do workspace</p>
-                </div>
-                <ChartSpline className="h-5 w-5 text-white/65" />
+      <div className="grid gap-4 xl:grid-cols-[1.2fr_0.8fr]">
+        <Card className="surface-card">
+          <CardContent className="p-5">
+            <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+              <div className="max-w-xl">
+                <p className="text-[11px] tracking-[0.08em] text-muted-foreground">{workspace.company}</p>
+                <h2 className="mt-2 font-display text-2xl font-semibold tracking-tight">
+                  {weeklyLoad} entregas ativas nesta semana.
+                </h2>
+                <p className="mt-2 max-w-xl text-[13px] leading-6 text-muted-foreground">
+                  Uma visão simples do que precisa gravar, publicar e acompanhar hoje.
+                </p>
               </div>
-              <div className="mt-5 space-y-4">
-                {workspace.usage.slice(0, 3).map((item) => {
-                  const progress = item.limit === Infinity ? 100 : Math.min((item.used / item.limit) * 100, 100);
-                  return (
-                    <div key={item.metric}>
-                      <div className="flex items-center justify-between text-sm text-white/75">
-                        <span>{item.metric}</span>
-                        <span>
-                          {item.used}
-                          {item.limit === Infinity ? '' : `/${item.limit}`}
-                        </span>
-                      </div>
-                      <div className="mt-2 h-2 rounded-full bg-white/10">
-                        <div className="h-2 rounded-full bg-white" style={{ width: `${progress}%` }} />
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-              <div className="mt-5 flex flex-wrap gap-2">
-                <Button className="bg-white text-[#221f3f] hover:bg-white/90">
+              <div className="flex flex-wrap items-center gap-2">
+                <Badge variant="outline">{workspace.plan}</Badge>
+                <Button variant="outline" size="sm">
                   <Bot className="h-4 w-4" />
-                  Abrir IA
-                </Button>
-                <Button variant="outline" className="border-white/10 bg-white/5 text-white hover:bg-white/10">
-                  <ArrowUpRight className="h-4 w-4" />
-                  Ver operação
+                  IA
                 </Button>
               </div>
             </div>
-          </div>
-        </div>
+            <div className="mt-5 grid gap-3 sm:grid-cols-3">
+              <div className="rounded-xl border border-border bg-background p-4">
+                <p className="text-[11px] text-muted-foreground">Roteiro em foco</p>
+                <p className="mt-1 text-[13px] font-semibold">{workspace.scripts[0]?.title ?? 'Sem roteiro ativo'}</p>
+              </div>
+              <div className="rounded-xl border border-border bg-background p-4">
+                <p className="text-[11px] text-muted-foreground">Produto em foco</p>
+                <p className="mt-1 text-[13px] font-semibold">{workspace.products[0]?.name ?? 'Sem produto ativo'}</p>
+              </div>
+              <div className="rounded-xl border border-border bg-background p-4">
+                <p className="text-[11px] text-muted-foreground">Creator em foco</p>
+                <p className="mt-1 text-[13px] font-semibold">{workspace.creators[0]?.name ?? 'Sem creator ativa'}</p>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
 
-        <ModuleCard title="Pulso da operação" subtitle="Indicadores, notas e próximos gargalos" className="border-white/80 bg-white/88">
+        <ModuleCard title="Pulso da operação" subtitle="Indicadores e capacidade do workspace">
           <div className="space-y-3">
             {workspace.metrics.summary.map((item) => (
-              <div key={item.label} className="rounded-[1.5rem] border border-border/80 bg-[#f7f4ef] p-4">
+              <div key={item.label} className="rounded-xl border border-border bg-background p-4">
                 <div className="flex items-center justify-between gap-3">
                   <div>
-                    <p className="text-sm font-medium text-foreground">{item.label}</p>
-                    <p className="text-xs text-muted-foreground">{item.trend}</p>
+                    <p className="text-[12px] font-medium text-foreground">{item.label}</p>
+                    <p className="text-[11px] text-muted-foreground">{item.trend}</p>
                   </div>
-                  <p className="font-display text-2xl font-semibold">{item.value}</p>
+                  <p className="font-display text-xl font-semibold">{item.value}</p>
                 </div>
               </div>
             ))}
           </div>
-          <div className="mt-5 rounded-[1.5rem] border border-dashed border-border bg-[#f3f0ff] p-4">
-            <div className="flex items-center gap-3">
-              <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-[#2e2b54] text-white">
-                <Sparkles className="h-5 w-5" />
-              </div>
-              <div>
-                <p className="font-medium">IA acompanhando a semana</p>
-                <p className="text-sm text-muted-foreground">Mais força em bastidores, CTA de DM e prova social.</p>
-              </div>
-            </div>
+          <div className="mt-4 space-y-3">
+            {workspace.usage.slice(0, 3).map((item) => {
+              const progress = item.limit === Infinity ? 100 : Math.min((item.used / item.limit) * 100, 100);
+              return (
+                <div key={item.metric}>
+                  <div className="flex items-center justify-between text-[12px] text-muted-foreground">
+                    <span>{item.metric}</span>
+                    <span>
+                      {item.used}
+                      {item.limit === Infinity ? '' : `/${item.limit}`}
+                    </span>
+                  </div>
+                  <div className="mt-1.5 h-1.5 rounded-full bg-muted">
+                    <div className="h-1.5 rounded-full bg-foreground/75" style={{ width: `${progress}%` }} />
+                  </div>
+                </div>
+              );
+            })}
           </div>
         </ModuleCard>
       </div>
 
       <div className="grid gap-6 xl:grid-cols-[1.05fr_0.95fr]">
         <div className="space-y-6">
-          <ModuleCard title="Statistics" subtitle="Leitura rápida do que evoluiu desde ontem" className="border-white/80 bg-white/88">
+          <ModuleCard title="Indicadores" subtitle="Leitura rápida do que evoluiu desde ontem">
             <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
               {workspace.quickStats.slice(0, 3).map((stat) => (
-                <div key={stat.label} className="rounded-[1.5rem] border border-border/80 bg-[#fbf8f4] p-4">
-                  <p className="text-sm text-muted-foreground">{stat.label}</p>
-                  <p className="mt-4 font-display text-4xl font-semibold tracking-tight">{stat.value}</p>
-                  <p className="mt-2 text-xs font-medium text-[#5d43d7]">{stat.trend}</p>
+                <div key={stat.label} className="rounded-xl border border-border bg-background p-4">
+                  <p className="text-[12px] text-muted-foreground">{stat.label}</p>
+                  <p className="mt-3 font-display text-2xl font-semibold tracking-tight">{stat.value}</p>
+                  <p className="mt-1 text-[11px] text-muted-foreground">{stat.trend}</p>
                 </div>
               ))}
-              <div className="rounded-[1.5rem] border border-border/80 bg-[#fbf8f4] p-4">
-                <p className="text-sm text-muted-foreground">Alcance nesta semana</p>
+              <div className="rounded-xl border border-border bg-background p-4">
+                <p className="text-[12px] text-muted-foreground">Alcance nesta semana</p>
                 <div className="mt-4 h-[96px]">
                   <HydratedChart>
                     <ResponsiveContainer width="100%" height="100%">
                       <AreaChart data={mainSeries}>
                         <defs>
                           <linearGradient id="dashboardAreaFill" x1="0" y1="0" x2="0" y2="1">
-                            <stop offset="0%" stopColor="#b39dff" stopOpacity={0.55} />
-                            <stop offset="100%" stopColor="#b39dff" stopOpacity={0.02} />
+                            <stop offset="0%" stopColor="#111827" stopOpacity={0.18} />
+                            <stop offset="100%" stopColor="#111827" stopOpacity={0.02} />
                           </linearGradient>
                         </defs>
                         <Tooltip cursor={false} />
-                        <Area type="monotone" dataKey="value" stroke="#7b63ff" strokeWidth={3} fill="url(#dashboardAreaFill)" />
+                        <Area type="monotone" dataKey="value" stroke="#111827" strokeWidth={2} fill="url(#dashboardAreaFill)" />
                       </AreaChart>
                     </ResponsiveContainer>
                   </HydratedChart>
@@ -831,21 +772,21 @@ function DashboardModule({ workspace }: { workspace: WorkspaceSnapshot }) {
             </div>
           </ModuleCard>
 
-          <ModuleCard title="My Assignments" subtitle="Entregas, publicações e pontos de atenção" className="border-white/80 bg-white/88">
+          <ModuleCard title="Minha fila" subtitle="Entregas, publicações e pontos de atenção">
             <div className="space-y-3">
               {assignments.map((item) => {
                 const Icon = item.icon;
 
                 return (
-                  <div key={item.id} className="flex items-center gap-4 rounded-[1.5rem] border border-border/70 bg-[#fbf8f4] p-4">
-                    <div className={cn('flex h-11 w-11 items-center justify-center rounded-2xl', item.accent)}>
-                      <Icon className="h-5 w-5" />
+                  <div key={item.id} className="flex items-center gap-3 rounded-xl border border-border bg-background p-4">
+                    <div className={cn('flex h-9 w-9 items-center justify-center rounded-lg', item.accent)}>
+                      <Icon className="h-4 w-4" />
                     </div>
                     <div className="min-w-0 flex-1">
-                      <p className="font-medium text-foreground">{item.title}</p>
-                      <p className="text-sm text-muted-foreground">{item.meta}</p>
+                      <p className="text-[13px] font-medium text-foreground">{item.title}</p>
+                      <p className="text-[12px] text-muted-foreground">{item.meta}</p>
                     </div>
-                    <span className="text-sm font-semibold text-foreground/80">{item.when}</span>
+                    <span className="text-[12px] font-semibold text-foreground/80">{item.when}</span>
                   </div>
                 );
               })}
@@ -854,45 +795,45 @@ function DashboardModule({ workspace }: { workspace: WorkspaceSnapshot }) {
         </div>
 
         <div className="space-y-6">
-          <ModuleCard title="Calendário" subtitle="Selecione o dia e acompanhe os próximos movimentos" className="border-white/80 bg-white/88">
+          <ModuleCard title="Calendário" subtitle="Selecione o dia e acompanhe os próximos movimentos">
             <DayPicker
               mode="single"
               selected={selectedDate}
               onSelect={setSelectedDate}
-              className="rounded-[1.5rem] bg-[#fbf8f4] p-3"
+              className="rounded-xl bg-muted p-3"
             />
             <div className="mt-4 space-y-3">
               {selectedEvents.length ? (
                 selectedEvents.map((event) => (
-                  <div key={event.id} className="flex items-center justify-between gap-3 rounded-[1.25rem] border border-border/70 bg-[#fbf8f4] p-4">
+                  <div key={event.id} className="flex items-center justify-between gap-3 rounded-xl border border-border bg-background p-4">
                     <div>
-                      <p className="font-medium">{event.title}</p>
-                      <p className="text-sm text-muted-foreground">{event.type} · {event.owner}</p>
+                      <p className="text-[13px] font-medium">{event.title}</p>
+                      <p className="text-[12px] text-muted-foreground">{event.type} · {event.owner}</p>
                     </div>
                     <Badge variant="outline">{event.date}</Badge>
                   </div>
                 ))
               ) : (
-                <div className="rounded-[1.25rem] border border-dashed border-border bg-[#fbf8f4] p-4 text-sm text-muted-foreground">
+                <div className="rounded-xl border border-dashed border-border bg-background p-4 text-[12px] text-muted-foreground">
                   Sem eventos nesta data. O calendário está pronto para receber mais blocos editoriais.
                 </div>
               )}
             </div>
           </ModuleCard>
 
-          <ModuleCard title="Upcoming" subtitle="O que merece atenção antes do fim do dia" className="border-white/80 bg-white/88">
+          <ModuleCard title="Próximos movimentos" subtitle="O que merece atenção antes do fim do dia">
             <div className="space-y-3">
               {topMovements.map((item) => {
                 const Icon = item.icon;
 
                 return (
-                  <div key={item.id} className="flex items-center gap-4 rounded-[1.5rem] border border-border/70 bg-[#fbf8f4] p-4">
-                    <div className={cn('flex h-11 w-11 items-center justify-center rounded-2xl', item.accent)}>
-                      <Icon className="h-5 w-5" />
+                  <div key={item.id} className="flex items-center gap-3 rounded-xl border border-border bg-background p-4">
+                    <div className={cn('flex h-9 w-9 items-center justify-center rounded-lg', item.accent)}>
+                      <Icon className="h-4 w-4" />
                     </div>
                     <div className="min-w-0 flex-1">
-                      <p className="font-medium">{item.title}</p>
-                      <p className="text-sm text-muted-foreground">{item.meta}</p>
+                      <p className="text-[13px] font-medium">{item.title}</p>
+                      <p className="text-[12px] text-muted-foreground">{item.meta}</p>
                     </div>
                     <ArrowUpRight className="h-4 w-4 text-muted-foreground" />
                   </div>
@@ -903,11 +844,11 @@ function DashboardModule({ workspace }: { workspace: WorkspaceSnapshot }) {
         </div>
       </div>
 
-      <Card className="glass p-4">
+      <Card className="surface-card p-4">
         <div className="mb-4 flex items-center justify-between">
           <div>
-            <p className="font-medium">Widgets arrastáveis</p>
-            <p className="text-sm text-muted-foreground">Reordene os blocos do dashboard como no Notion e Linear.</p>
+            <p className="text-[13px] font-medium">Widgets arrastáveis</p>
+            <p className="text-[12px] text-muted-foreground">Reordene sem esticar o layout.</p>
           </div>
           <Badge variant="outline">
             <Move className="mr-1 h-3 w-3" />
@@ -1377,9 +1318,9 @@ function ScriptsModule({ workspace }: { workspace: WorkspaceSnapshot }) {
       <ModuleCard title="Storyboard" subtitle="Preview rabisco para gravação">
         <div className="grid gap-3 sm:grid-cols-2">
           {activeStoryboard.map((frame, index) => (
-            <div key={`${frame}-${index}`} className="rounded-3xl border border-border bg-background p-4">
-              <div className="aspect-[4/5] rounded-[1.5rem] border border-dashed border-border bg-[linear-gradient(135deg,rgba(15,23,42,0.03),rgba(20,184,166,0.06))] p-4">
-                <div className="flex items-center justify-between text-xs text-muted-foreground">
+            <div key={`${frame}-${index}`} className="rounded-2xl border border-border bg-background p-4">
+              <div className="aspect-[4/5] rounded-xl border border-dashed border-border bg-muted p-4">
+                <div className="flex items-center justify-between text-[11px] text-muted-foreground">
                   <span>Cena {index + 1}</span>
                   <span>0{index + 1}</span>
                 </div>
@@ -1454,13 +1395,13 @@ function StoriesModule({ workspace }: { workspace: WorkspaceSnapshot }) {
           <div className="flex gap-4 overflow-x-auto pb-2">
             {stories.map((story) => (
               <div key={story.id} className="min-w-[92px] text-center">
-                <div className="story-ring mx-auto rounded-full p-[2px]">
-                  <div className="flex h-20 w-20 items-center justify-center rounded-full bg-white text-lg font-semibold text-[#17171b]">
+                <div className="mx-auto rounded-2xl border border-border bg-background p-3">
+                  <div className="flex h-14 w-14 items-center justify-center rounded-xl bg-muted text-base font-semibold text-foreground">
                     {story.title.charAt(0)}
                   </div>
                 </div>
-                <p className="mt-3 text-sm font-medium text-foreground">{story.title.split(' ').slice(0, 2).join(' ')}</p>
-                <p className="text-xs text-muted-foreground">{story.time}</p>
+                <p className="mt-2 text-[12px] font-medium text-foreground">{story.title.split(' ').slice(0, 2).join(' ')}</p>
+                <p className="text-[11px] text-muted-foreground">{story.time}</p>
               </div>
             ))}
           </div>
@@ -1476,24 +1417,22 @@ function StoriesModule({ workspace }: { workspace: WorkspaceSnapshot }) {
                     onEdit={() => setEditingId((current) => (current === story.id ? null : story.id))}
                     onDelete={() => setStories((current) => current.filter((item) => item.id !== story.id))}
                   />
-                  <div className="overflow-hidden rounded-[1.75rem] border border-white/80 bg-[linear-gradient(180deg,#272344_0%,#171523_100%)] p-4 text-white shadow-soft">
+                  <div className="overflow-hidden rounded-2xl border border-border bg-background p-4 shadow-soft">
                     <div className="flex items-start justify-between gap-3">
                       <div className="flex items-center gap-3">
-                        <div className="story-ring rounded-full p-[2px]">
-                          <div className="flex h-10 w-10 items-center justify-center rounded-full bg-white text-sm font-semibold text-[#17171b]">
+                        <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-muted text-sm font-semibold text-foreground">
                             {index + 1}
-                          </div>
                         </div>
                         <div>
-                          <p className="text-sm font-semibold">{story.title}</p>
-                          <p className="text-xs text-white/55">{story.status}</p>
+                          <p className="text-[13px] font-semibold text-foreground">{story.title}</p>
+                          <p className="text-[11px] text-muted-foreground">{story.status}</p>
                         </div>
                       </div>
-                      <Badge className="border-white/10 bg-white/10 text-white">{story.time}</Badge>
+                      <Badge variant="outline">{story.time}</Badge>
                     </div>
 
-                    <div className="mt-5 rounded-[1.5rem] border border-white/10 bg-white/6 p-4">
-                      <p className="text-xs uppercase tracking-[0.2em] text-white/50">Mensagem principal</p>
+                    <div className="mt-4 rounded-xl border border-border bg-muted/60 p-4">
+                      <p className="text-[10px] tracking-[0.08em] text-muted-foreground">Mensagem principal</p>
                       {editing ? (
                         <Textarea
                           value={story.hook}
@@ -1502,14 +1441,14 @@ function StoriesModule({ workspace }: { workspace: WorkspaceSnapshot }) {
                               current.map((item) => (item.id === story.id ? { ...item, hook: event.target.value } : item))
                             )
                           }
-                          className="mt-3 min-h-[120px] border-white/10 bg-white/10 text-white placeholder:text-white/45"
+                          className="mt-2 min-h-[110px] border-border bg-white"
                         />
                       ) : (
-                        <p className="mt-3 text-sm leading-6 text-white/75">{story.hook}</p>
+                        <p className="mt-2 text-[13px] leading-6 text-muted-foreground">{story.hook}</p>
                       )}
                     </div>
 
-                    <div className="mt-4 flex flex-wrap items-center justify-between gap-3 text-white/70">
+                    <div className="mt-4 flex flex-wrap items-center justify-between gap-3 text-muted-foreground">
                       <div className="flex items-center gap-3">
                         <Heart className="h-4 w-4" />
                         <MessageCircle className="h-4 w-4" />
@@ -1531,20 +1470,20 @@ function StoriesModule({ workspace }: { workspace: WorkspaceSnapshot }) {
       <ModuleCard title="Sugestão IA" subtitle="Roteiro de 5 telas para aumentar resposta" className="surface-muted">
         <div className="space-y-4">
           {stories.map((story, index) => (
-            <div key={story.id} className="flex items-start gap-3 rounded-[1.5rem] border border-white/70 bg-white/88 p-4">
-              <div className="gradient-sunset flex h-8 w-8 items-center justify-center rounded-full text-xs font-semibold text-white">
+            <div key={story.id} className="flex items-start gap-3 rounded-xl border border-border bg-white p-4">
+              <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-foreground text-[11px] font-semibold text-white">
                 {index + 1}
               </div>
               <div>
-                <p className="text-sm font-medium text-foreground">{story.title}</p>
-                <p className="mt-1 text-sm leading-6 text-muted-foreground">{story.cta ?? 'Responder DM'}</p>
+                <p className="text-[13px] font-medium text-foreground">{story.title}</p>
+                <p className="mt-1 text-[12px] leading-6 text-muted-foreground">{story.cta ?? 'Responder DM'}</p>
               </div>
             </div>
           ))}
-          <div className="dark-rail rounded-[1.5rem] p-5 text-white">
-            <p className="text-xs uppercase tracking-[0.2em] text-white/55">CTA sugerido</p>
-            <p className="mt-3 font-display text-2xl font-semibold">Leve para DM ou link com contexto.</p>
-            <p className="mt-2 text-sm text-white/65">A narrativa aquece antes do pedido para aumentar retenção e resposta.</p>
+          <div className="rounded-xl border border-border bg-white p-4">
+            <p className="text-[10px] tracking-[0.08em] text-muted-foreground">CTA sugerido</p>
+            <p className="mt-2 text-[14px] font-semibold text-foreground">Leve para DM ou link com contexto.</p>
+            <p className="mt-1 text-[12px] text-muted-foreground">A narrativa aquece antes do pedido para aumentar retenção e resposta.</p>
           </div>
         </div>
       </ModuleCard>
@@ -1687,7 +1626,7 @@ function PipelineModule({ workspace }: { workspace: WorkspaceSnapshot }) {
                           </div>
                           <div className="mt-2 h-2 rounded-full bg-foreground/8">
                             <div
-                              className="gradient-sunset h-2 rounded-full"
+                              className="h-2 rounded-full bg-foreground"
                               style={{ width: `${card.priority === 'high' ? 78 : card.priority === 'medium' ? 58 : 34}%` }}
                             />
                           </div>
@@ -1758,23 +1697,14 @@ function LibraryModule({ workspace }: { workspace: WorkspaceSnapshot }) {
         {workspace.assets.map((asset, index) => (
           <ModuleCard key={asset.id} title={asset.title} subtitle={`${asset.type} · ${asset.source}`} badge={asset.size}>
             <div className="space-y-3">
-              <div
-                className={cn(
-                  'rounded-[1.75rem] p-5 text-white',
-                  index % 3 === 0
-                    ? 'bg-[linear-gradient(135deg,#1f2548,#4c5bd6)]'
-                    : index % 3 === 1
-                      ? 'bg-[linear-gradient(135deg,#ffb46c,#ff7f66)]'
-                      : 'bg-[linear-gradient(135deg,#2c2c31,#121217)]'
-                )}
-              >
+              <div className="rounded-2xl border border-border bg-muted p-4">
                 <div className="flex items-center justify-between">
-                  <p className="text-xs uppercase tracking-[0.22em] text-white/55">Preview</p>
-                  <FolderOpen className="h-4 w-4 text-white/65" />
+                  <p className="text-[10px] tracking-[0.08em] text-muted-foreground">Preview</p>
+                  <FolderOpen className="h-4 w-4 text-muted-foreground" />
                 </div>
-                <div className="mt-8 rounded-[1.4rem] border border-white/10 bg-white/10 p-4">
-                  <div className="h-16 rounded-[1rem] bg-white/18" />
-                  <div className="mt-4 flex items-center justify-between text-xs text-white/65">
+                <div className="mt-4 rounded-xl border border-border bg-white p-4">
+                  <div className="h-16 rounded-lg bg-muted" />
+                  <div className="mt-3 flex items-center justify-between text-[11px] text-muted-foreground">
                     <span>{asset.source}</span>
                     <span>{asset.type}</span>
                   </div>
@@ -1819,15 +1749,13 @@ function FeedModule({ workspace }: { workspace: WorkspaceSnapshot }) {
         </Badge>
       </div>
 
-      <div className="surface-card inner-stroke flex gap-4 overflow-x-auto rounded-[1.75rem] p-4">
+      <div className="surface-card flex gap-4 overflow-x-auto rounded-2xl p-4">
         {posts.map((post, index) => (
           <div key={`${post.id}-story`} className="min-w-[88px] text-center">
-            <div className="story-ring mx-auto rounded-full p-[2px]">
-              <div className="flex h-16 w-16 items-center justify-center rounded-full bg-white text-sm font-semibold text-[#17171b]">
+            <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-xl border border-border bg-muted text-sm font-semibold text-foreground">
                 {index + 1}
-              </div>
             </div>
-            <p className="mt-2 truncate text-sm font-medium text-foreground">{post.channel}</p>
+            <p className="mt-2 truncate text-[12px] font-medium text-foreground">{post.channel}</p>
           </div>
         ))}
       </div>
@@ -1837,42 +1765,31 @@ function FeedModule({ workspace }: { workspace: WorkspaceSnapshot }) {
           <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
             {posts.map((post, index) => (
               <SortableCard key={post.id} id={post.id}>
-                <Card className="surface-card inner-stroke overflow-hidden">
+                <Card className="surface-card overflow-hidden">
                   <div className="p-4">
                     <div className="flex items-center justify-between">
                       <div className="flex items-center gap-3">
-                        <div className="story-ring rounded-full p-[2px]">
-                          <div className="flex h-11 w-11 items-center justify-center rounded-full bg-white text-sm font-semibold text-[#17171b]">
+                        <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-muted text-sm font-semibold text-foreground">
                             {index + 1}
-                          </div>
                         </div>
                         <div>
-                          <p className="font-semibold text-foreground">{workspace.name}</p>
-                          <p className="text-xs text-muted-foreground">{post.channel}</p>
+                          <p className="text-[13px] font-semibold text-foreground">{workspace.name}</p>
+                          <p className="text-[11px] text-muted-foreground">{post.channel}</p>
                         </div>
                       </div>
                       <GripVertical className="h-4 w-4 text-muted-foreground" />
                     </div>
 
-                    <div
-                      className={cn(
-                        'mt-4 aspect-[4/5] rounded-[1.5rem] p-4 text-white',
-                        index % 3 === 0
-                          ? 'bg-[linear-gradient(135deg,#8fd3ff,#4f6bdc)]'
-                          : index % 3 === 1
-                            ? 'bg-[linear-gradient(135deg,#ffb56d,#ff6f7f)]'
-                            : 'bg-[linear-gradient(135deg,#2d2a54,#121217)]'
-                      )}
-                    >
+                    <div className="mt-4 aspect-[4/5] rounded-2xl border border-border bg-muted p-4">
                       <div className="flex items-center justify-between">
-                        <span className="rounded-full bg-white/14 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em]">
+                        <span className="rounded-lg border border-border bg-white px-2.5 py-1 text-[10px] font-medium tracking-[0.08em] text-muted-foreground">
                           #{index + 1}
                         </span>
-                        <Pin className="h-4 w-4 text-white/70" />
+                        <Pin className="h-4 w-4 text-muted-foreground" />
                       </div>
                       <div className="mt-10 space-y-3">
-                        <p className="font-display text-2xl font-semibold tracking-tight">{post.title}</p>
-                        <p className="text-sm text-white/75">{post.scheduledAt}</p>
+                        <p className="font-display text-lg font-semibold tracking-tight text-foreground">{post.title}</p>
+                        <p className="text-[12px] text-muted-foreground">{post.scheduledAt}</p>
                       </div>
                     </div>
 
@@ -1885,7 +1802,7 @@ function FeedModule({ workspace }: { workspace: WorkspaceSnapshot }) {
                       <Badge variant="outline">{post.status}</Badge>
                     </div>
 
-                    <p className="mt-3 text-sm leading-6 text-muted-foreground">
+                    <p className="mt-3 text-[12px] leading-6 text-muted-foreground">
                       <span className="font-semibold text-foreground">@{workspace.slug}</span> {post.title}
                     </p>
                     <div className="mt-4 flex flex-wrap gap-2">
@@ -1998,22 +1915,15 @@ function PostsModule({ workspace }: { workspace: WorkspaceSnapshot }) {
             <div className="surface-muted rounded-[1.5rem] p-4">
               <div className="flex items-center justify-between gap-3">
                 <div>
-                  <p className="font-medium text-foreground">{post.title}</p>
-                  <p className="mt-1 text-sm text-muted-foreground">{post.channel}</p>
+                  <p className="text-[13px] font-medium text-foreground">{post.title}</p>
+                  <p className="mt-1 text-[12px] text-muted-foreground">{post.channel}</p>
                 </div>
                 <Badge variant={post.status === 'Publicado' ? 'success' : post.status === 'Agendado' ? 'warning' : 'outline'}>
                   {post.status}
                 </Badge>
               </div>
-              <div
-                className={cn(
-                  'mt-4 rounded-[1.35rem] p-4 text-white',
-                  index % 2 === 0
-                    ? 'bg-[linear-gradient(135deg,#2d2a54,#4f68da)]'
-                    : 'bg-[linear-gradient(135deg,#ffb36b,#ff6178)]'
-                )}
-              >
-                <p className="text-xs uppercase tracking-[0.2em] text-white/55">Legenda base</p>
+              <div className="mt-4 rounded-xl border border-border bg-background p-4">
+                <p className="text-[10px] tracking-[0.08em] text-muted-foreground">Legenda base</p>
                 <Textarea
                   value={post.caption}
                   onChange={(event) =>
@@ -2021,7 +1931,7 @@ function PostsModule({ workspace }: { workspace: WorkspaceSnapshot }) {
                       current.map((item) => (item.id === post.id ? { ...item, caption: event.target.value } : item))
                     )
                   }
-                  className="mt-3 min-h-[120px] border-white/10 bg-white/10 text-white placeholder:text-white/45"
+                  className="mt-2 min-h-[120px] border-border bg-white"
                 />
               </div>
               <div className="mt-4 grid gap-3">
@@ -2310,16 +2220,16 @@ function CompetitorsModule({ workspace }: { workspace: WorkspaceSnapshot }) {
             </Button>
           </div>
           <div className="space-y-3">
-            <div className="rounded-3xl border border-border bg-foreground p-5 text-background">
-              <p className="text-xs uppercase tracking-[0.2em] text-white/50">Resumo IA</p>
-              <p className="mt-3 font-medium leading-7">
+            <div className="rounded-2xl border border-border bg-white p-5">
+              <p className="text-[10px] tracking-[0.08em] text-muted-foreground">Resumo IA</p>
+              <p className="mt-2 text-[13px] font-medium leading-6 text-foreground">
                 {analysis?.summary ??
                   'Conteúdo com bastidores, prova social e CTA para DM está gerando mais tração que posts puramente educativos.'}
               </p>
             </div>
-            <div className="rounded-3xl border border-border bg-background p-5">
-              <p className="text-sm font-medium">Ações recomendadas</p>
-              <ul className="mt-3 space-y-2 text-sm text-muted-foreground">
+            <div className="rounded-2xl border border-border bg-background p-5">
+              <p className="text-[13px] font-medium">Ações recomendadas</p>
+              <ul className="mt-3 space-y-2 text-[12px] text-muted-foreground">
                 {(analysis?.opportunities ?? [
                   'Aumentar volume de reels com demonstração real',
                   'Replicar stories com enquete e sequência curta',
@@ -2330,9 +2240,9 @@ function CompetitorsModule({ workspace }: { workspace: WorkspaceSnapshot }) {
               </ul>
             </div>
             {analysis?.watchouts?.length ? (
-              <div className="rounded-3xl border border-border bg-background p-5">
-                <p className="text-sm font-medium">Pontos de atenção</p>
-                <ul className="mt-3 space-y-2 text-sm text-muted-foreground">
+              <div className="rounded-2xl border border-border bg-background p-5">
+                <p className="text-[13px] font-medium">Pontos de atenção</p>
+                <ul className="mt-3 space-y-2 text-[12px] text-muted-foreground">
                   {analysis.watchouts.map((item) => (
                     <li key={item}>• {item}</li>
                   ))}
@@ -2372,8 +2282,8 @@ function CreatorsModule({ workspace }: { workspace: WorkspaceSnapshot }) {
       {workspace.creators.map((creator) => (
         <ModuleCard key={creator.id} title={creator.name} subtitle={creator.handle} badge={creator.niche}>
           <div className="space-y-3">
-            <div className={cn('h-24 rounded-3xl bg-gradient-to-br', creator.accent)} />
-            <p className="text-sm text-muted-foreground">{creator.history}</p>
+            <div className="h-24 rounded-2xl border border-border bg-muted" />
+            <p className="text-[13px] text-muted-foreground">{creator.history}</p>
             <Badge variant="outline">{creator.metrics}</Badge>
           </div>
         </ModuleCard>
@@ -2421,7 +2331,7 @@ function AiChatModule({ workspace }: { workspace: WorkspaceSnapshot }) {
         {
           role: 'assistant',
           content:
-            'Fallback local: posso gerar ideias, roteiros, histórias e análises. Conecte sua API de IA para respostas reais.'
+            'Não consegui falar com a IA agora. Tente novamente em alguns segundos.'
         }
       ]);
     } finally {
@@ -2433,34 +2343,34 @@ function AiChatModule({ workspace }: { workspace: WorkspaceSnapshot }) {
     <div className="grid gap-6 xl:grid-cols-[1.05fr_0.75fr]">
       <ModuleCard title="Chat IA" subtitle="Interface no estilo ChatGPT para a operação" badge="online">
         <div className="space-y-4">
-          <div className="surface-muted max-h-[480px] space-y-3 overflow-y-auto rounded-[1.75rem] p-4">
+          <div className="surface-muted max-h-[480px] space-y-3 overflow-y-auto rounded-2xl p-4">
             {messages.map((message, index) => (
               <div
                 key={`${message.role}-${index}`}
                 className={cn(
-                  'max-w-[85%] rounded-[1.5rem] px-4 py-3 text-sm leading-6 shadow-sm',
+                  'max-w-[85%] rounded-xl px-4 py-3 text-[13px] leading-6 shadow-sm',
                   message.role === 'assistant'
                     ? 'bg-white text-foreground'
-                    : 'gradient-sunset ml-auto text-white'
+                    : 'ml-auto bg-[#17171b] text-white'
                 )}
               >
                 {message.content}
               </div>
             ))}
             {loading ? (
-              <div className="inline-flex items-center gap-2 rounded-[1.5rem] bg-white px-4 py-3 text-sm text-muted-foreground">
+              <div className="inline-flex items-center gap-2 rounded-xl bg-white px-4 py-3 text-[13px] text-muted-foreground">
                 <Loader2 className="h-4 w-4 animate-spin" />
                 Processando...
               </div>
             ) : null}
           </div>
-          <div className="surface-muted rounded-[1.75rem] p-4">
+          <div className="surface-muted rounded-2xl p-4">
             <div className="flex gap-3">
               <Textarea
                 value={prompt}
                 onChange={(event) => setPrompt(event.target.value)}
                 placeholder="Peça uma ideia, roteiro, story sequence ou análise..."
-                className="min-h-[110px] flex-1 border-white/70 bg-white"
+                className="min-h-[110px] flex-1 border-border bg-white"
               />
             </div>
             <div className="mt-4 flex items-center justify-between gap-3">
@@ -2491,10 +2401,10 @@ function AiChatModule({ workspace }: { workspace: WorkspaceSnapshot }) {
       </ModuleCard>
 
       <div className="space-y-6">
-        <div className="dark-rail rounded-[1.75rem] p-5 text-white">
-          <p className="text-xs uppercase tracking-[0.2em] text-white/55">Persona ativa</p>
-          <p className="mt-3 font-display text-3xl font-semibold">{workspace.name}</p>
-          <p className="mt-2 text-sm leading-6 text-white/65">
+        <div className="rounded-2xl border border-border bg-white p-5">
+          <p className="text-[10px] tracking-[0.08em] text-muted-foreground">Persona ativa</p>
+          <p className="mt-2 font-display text-xl font-semibold text-foreground">{workspace.name}</p>
+          <p className="mt-1 text-[12px] leading-6 text-muted-foreground">
             A IA assume o contexto do workspace para gerar respostas acionáveis, curtas e prontas para operar.
           </p>
         </div>
@@ -2529,7 +2439,7 @@ function BillingModule({ workspace }: { workspace: WorkspaceSnapshot }) {
     <div className="space-y-6">
       <div className="grid gap-4 xl:grid-cols-4">
         {saasPlans.map((plan) => (
-          <Card key={plan.name} className={cn('glass', plan.featured && 'border-foreground bg-foreground text-background')}>
+          <Card key={plan.name} className={cn('glass', plan.featured && 'border-foreground bg-[#17171b] text-background')}>
             <CardHeader>
               <div className="flex items-start justify-between gap-3">
                 <div>

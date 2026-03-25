@@ -4,27 +4,27 @@
 
 :root {
   --font-body: 'Manrope';
-  --font-display: 'Space Grotesk';
-  --background: 225 40% 95%;
-  --foreground: 239 27% 15%;
-  --card: 30 33% 98%;
-  --card-foreground: 239 27% 15%;
+  --font-display: 'Manrope';
+  --background: 220 16% 97%;
+  --foreground: 224 15% 17%;
+  --card: 0 0% 100%;
+  --card-foreground: 224 15% 17%;
   --popover: 0 0% 100%;
-  --popover-foreground: 239 27% 15%;
-  --primary: 239 27% 23%;
+  --popover-foreground: 224 15% 17%;
+  --primary: 224 21% 16%;
   --primary-foreground: 0 0% 100%;
-  --secondary: 228 26% 91%;
-  --secondary-foreground: 239 27% 15%;
-  --muted: 228 26% 92%;
-  --muted-foreground: 228 13% 41%;
-  --accent: 254 100% 96%;
-  --accent-foreground: 246 43% 26%;
+  --secondary: 220 14% 94%;
+  --secondary-foreground: 224 15% 17%;
+  --muted: 220 14% 95%;
+  --muted-foreground: 220 9% 42%;
+  --accent: 220 14% 94%;
+  --accent-foreground: 224 15% 17%;
   --destructive: 0 84% 60%;
   --destructive-foreground: 0 0% 100%;
-  --border: 226 22% 86%;
-  --input: 226 22% 86%;
-  --ring: 239 27% 23%;
-  --radius: 1rem;
+  --border: 220 14% 88%;
+  --input: 220 14% 88%;
+  --ring: 224 21% 16%;
+  --radius: 0.9rem;
 }
 
 .dark {
@@ -55,24 +55,18 @@
 
 html {
   scroll-behavior: smooth;
-  background:
-    radial-gradient(circle at top left, rgba(140, 155, 255, 0.18), transparent 28%),
-    radial-gradient(circle at 85% 10%, rgba(255, 215, 148, 0.16), transparent 24%),
-    linear-gradient(180deg, hsl(var(--background)), hsl(var(--background)));
+  background: hsl(var(--background));
 }
 
 body {
   min-height: 100vh;
-  background:
-    radial-gradient(circle at 18% 16%, rgba(128, 103, 255, 0.08), transparent 18%),
-    radial-gradient(circle at 82% 0%, rgba(255, 214, 166, 0.14), transparent 24%),
-    linear-gradient(180deg, rgba(228, 236, 252, 0.65), rgba(247, 243, 238, 0.85)),
-    hsl(var(--background));
+  background: hsl(var(--background));
   color: hsl(var(--foreground));
+  font-size: 14px;
 }
 
 ::selection {
-  background: rgba(140, 155, 255, 0.32);
+  background: rgba(99, 102, 241, 0.14);
 }
 
 .text-balance {
@@ -80,47 +74,47 @@ body {
 }
 
 .glass {
-  background: rgba(255, 255, 255, 0.78);
-  backdrop-filter: blur(22px);
-  border: 1px solid rgba(148, 163, 184, 0.2);
+  background: rgba(255, 255, 255, 0.9);
+  backdrop-filter: blur(10px);
+  border: 1px solid rgba(15, 23, 42, 0.06);
 }
 
 .surface-shell {
-  background: rgba(255, 255, 255, 0.84);
-  backdrop-filter: blur(26px);
-  border: 1px solid rgba(255, 255, 255, 0.72);
-  box-shadow: 0 20px 60px rgba(15, 23, 42, 0.1);
+  background: rgba(255, 255, 255, 0.92);
+  backdrop-filter: blur(8px);
+  border: 1px solid rgba(15, 23, 42, 0.06);
+  box-shadow: 0 10px 28px rgba(15, 23, 42, 0.05);
 }
 
 .surface-card {
-  background: rgba(255, 255, 255, 0.92);
-  border: 1px solid rgba(255, 255, 255, 0.78);
-  box-shadow: 0 14px 36px rgba(15, 23, 42, 0.08);
+  background: rgba(255, 255, 255, 0.96);
+  border: 1px solid rgba(15, 23, 42, 0.06);
+  box-shadow: 0 6px 18px rgba(15, 23, 42, 0.04);
 }
 
 .surface-muted {
-  background: linear-gradient(180deg, rgba(249, 246, 241, 0.95), rgba(245, 241, 236, 0.92));
-  border: 1px solid rgba(228, 232, 240, 0.8);
+  background: rgba(247, 248, 250, 0.92);
+  border: 1px solid rgba(15, 23, 42, 0.05);
 }
 
 .dark-rail {
-  background: linear-gradient(180deg, rgba(13, 13, 16, 0.98), rgba(27, 27, 34, 0.98));
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  box-shadow: 0 18px 48px rgba(15, 23, 42, 0.18);
+  background: rgba(255, 255, 255, 0.94);
+  border: 1px solid rgba(15, 23, 42, 0.06);
+  box-shadow: 0 8px 24px rgba(15, 23, 42, 0.04);
 }
 
 .gradient-sunset {
-  background: linear-gradient(135deg, #ffb36b 0%, #ff7b54 36%, #ff4f86 68%, #ff3d9a 100%);
+  background: hsl(var(--primary));
 }
 
 .story-ring {
-  background: linear-gradient(135deg, #ffb36b 0%, #ff6c7b 48%, #a855f7 100%);
+  background: linear-gradient(135deg, rgba(15, 23, 42, 0.2), rgba(15, 23, 42, 0.08));
 }
 
 .inner-stroke {
-  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.72);
+  box-shadow: inset 0 0 0 1px rgba(15, 23, 42, 0.03);
 }
 
 .shadow-soft {
-  box-shadow: 0 10px 40px rgba(15, 23, 42, 0.08);
+  box-shadow: 0 8px 20px rgba(15, 23, 42, 0.05);
 }
