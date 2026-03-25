@@ -42,18 +42,20 @@ export function AppShell({
         <aside
           className={cn(
             'hidden shrink-0 flex-col rounded-[28px] border border-[rgba(15,23,42,0.08)] bg-[#17171b] p-4 text-white shadow-[0_24px_48px_rgba(15,23,42,0.12)] lg:flex',
-            desktopMenuCollapsed ? 'w-[88px]' : 'w-[248px]'
+            desktopMenuCollapsed ? 'w-[64px] p-2.5' : 'w-[248px]'
           )}
         >
-          <div className={cn('flex items-center gap-3 px-2', desktopMenuCollapsed && 'justify-center px-0')}>
-            <div className="flex h-10 w-10 items-center justify-center rounded-2xl bg-white text-[#17171b]">
-              <Sparkles className="h-4 w-4" />
-            </div>
+          <div className={cn('flex items-center gap-3 px-2', desktopMenuCollapsed && 'justify-end px-0')}>
             {!desktopMenuCollapsed ? (
-              <div className="min-w-0">
-                <p className="truncate text-[15px] font-semibold tracking-tight">Creator AI</p>
-                <p className="truncate text-[11px] text-white/55">Operacao de conteudo</p>
-              </div>
+              <>
+                <div className="flex h-10 w-10 items-center justify-center rounded-2xl bg-white text-[#17171b]">
+                  <Sparkles className="h-4 w-4" />
+                </div>
+                <div className="min-w-0">
+                  <p className="truncate text-[15px] font-semibold tracking-tight">Creator AI</p>
+                  <p className="truncate text-[11px] text-white/55">Operacao de conteudo</p>
+                </div>
+              </>
             ) : null}
             <button
               type="button"
@@ -73,13 +75,7 @@ export function AppShell({
               <p className="text-[10px] font-medium uppercase tracking-[0.2em] text-white/45">Empresa</p>
               <p className="mt-2 truncate text-sm font-semibold text-white">{companyName}</p>
             </div>
-          ) : (
-            <div className="mt-6 flex justify-center">
-              <div className="flex h-12 w-12 items-center justify-center rounded-[18px] border border-white/10 bg-white/5 text-[11px] font-semibold text-white">
-                {getInitials(companyName)}
-              </div>
-            </div>
-          )}
+          ) : null}
 
           <Separator className={cn('my-5 bg-white/8', desktopMenuCollapsed && 'my-4')} />
 
@@ -111,7 +107,7 @@ export function AppShell({
               href={`/${workspace}/ai`}
               className={cn(
                 buttonVariants({ variant: 'glass', size: 'sm' }),
-                desktopMenuCollapsed && 'w-9 px-0'
+                desktopMenuCollapsed && 'w-8 px-0'
               )}
               aria-label="Abrir IA"
             >
@@ -122,7 +118,7 @@ export function AppShell({
               href="/login"
               className={cn(
                 'inline-flex h-9 items-center justify-center gap-2 rounded-xl border border-white/10 bg-white/5 px-3 text-[13px] font-medium text-white/85 transition hover:bg-white/10',
-                desktopMenuCollapsed && 'w-9 px-0'
+                desktopMenuCollapsed && 'w-8 px-0'
               )}
               aria-label="Trocar conta"
             >

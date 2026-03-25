@@ -1,6 +1,8 @@
 import { createSupabaseAdminClient } from '@/lib/supabase/admin';
-import { getWorkspaceContextForSlug, type WorkspaceContext } from '@/lib/workspace-server';
+import { getAuthenticatedUser, getWorkspaceContextForSlug, type WorkspaceContext } from '@/lib/workspace-server';
 import type {
+  AiConversation,
+  AiMessage,
   ProductItem,
   RecordingCard,
   RecordingColumnKey,
@@ -29,6 +31,25 @@ type ScriptRow = {
   status: string | null;
   created_at: string;
   updated_at: string;
+};
+
+type AiConversationRow = {
+  id: string;
+  company_id: string;
+  title: string;
+  created_by_user_id: string | null;
+  last_message_at: string;
+  created_at: string;
+  updated_at: string;
+};
+
+type AiMessageRow = {
+  id: string;
+  conversation_id: string;
+  company_id: string;
+  role: 'user' | 'assistant' | null;
+  content: string;
+  created_at: string;
 };
 
 type ScriptMetadata = {
@@ -98,6 +119,10 @@ function parseProductMetadata(metadata: unknown) {
   return {
     discountPrice: normalizeString(raw.discountPrice ?? raw.discount_price)
   };
+}
+
+function trimToTitle(input: string) {
+  return input.trim().replace(/\s+/g, ' ').slice(0, 64) || 'Nova conversa';
 }
 
 export function parseScriptMetadata(storyboard: unknown): ScriptMetadata {
@@ -238,6 +263,26 @@ export function toRecordingCard(row: ScriptRow): RecordingCard | null {
   };
 }
 
+export function toAiConversationItem(row: AiConversationRow): AiConversation {
+  return {
+    id: row.id,
+    title: row.title,
+    lastMessageAt: row.last_message_at,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at
+  };
+}
+
+export function toAiMessageItem(row: AiMessageRow): AiMessage {
+  return {
+    id: row.id,
+    conversationId: row.conversation_id,
+    role: row.role === 'assistant' ? 'assistant' : 'user',
+    content: row.content,
+    createdAt: row.created_at
+  };
+}
+
 export async function resolveWorkspaceDataAccess(workspaceSlug: string) {
   const context = await getWorkspaceContextForSlug(workspaceSlug);
 
@@ -357,6 +402,76 @@ export async function getWorkspaceDashboardData(workspaceSlug: string) {
     recordings,
     postsCount
   };
+}
+
+export async function getWorkspaceAiConversations(workspaceSlug: string) {
+  const access = await resolveWorkspaceDataAccess(workspaceSlug);
+
+  if (!access) {
+    return [];
+  }
+
+  const { admin, context } = access;
+  const { data, error } = await admin
+    .from('ai_conversations')
+    .select('id,company_id,title,created_by_user_id,last_message_at,created_at,updated_at')
+    .eq('company_id', context.companyId)
+    .order('last_message_at', { ascending: false });
+
+  if (error) {
+    throw new Error(error.message);
+  }
+
+  return (data ?? []).map((row) => toAiConversationItem(row as AiConversationRow));
+}
+
+export async function getWorkspaceAiMessages(workspaceSlug: string, conversationId: string) {
+  const access = await resolveWorkspaceDataAccess(workspaceSlug);
+
+  if (!access) {
+    return [];
+  }
+
+  const { admin, context } = access;
+  const { data, error } = await admin
+    .from('ai_messages')
+    .select('id,conversation_id,company_id,role,content,created_at')
+    .eq('company_id', context.companyId)
+    .eq('conversation_id', conversationId)
+    .order('created_at', { ascending: true });
+
+  if (error) {
+    throw new Error(error.message);
+  }
+
+  return (data ?? []).map((row) => toAiMessageItem(row as AiMessageRow));
+}
+
+export async function createWorkspaceAiConversation(workspaceSlug: string, title = 'Nova conversa') {
+  const access = await resolveWorkspaceDataAccess(workspaceSlug);
+
+  if (!access) {
+    return null;
+  }
+
+  const user = await getAuthenticatedUser();
+  const { admin, context } = access;
+  const { data, error } = await admin
+    .from('ai_conversations')
+    .insert({
+      company_id: context.companyId,
+      created_by_user_id: user?.id ?? null,
+      title: trimToTitle(title),
+      last_message_at: new Date().toISOString()
+    })
+    .select('id,company_id,title,created_by_user_id,last_message_at,created_at,updated_at')
+    .single();
+
+  if (error || !data) {
+    throw new Error(error?.message ?? 'Nao foi possivel criar a conversa.');
+  }
+
+  return toAiConversationItem(data as AiConversationRow);
 }
 
 async function getWorkspacePostsCount(context: WorkspaceContext) {

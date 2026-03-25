@@ -53,6 +53,7 @@ type ChatInput = {
   prompt: string;
   workspace?: string;
   context?: string;
+  history?: Array<{ role: 'user' | 'assistant'; content: string }>;
 };
 
 type Provider = 'anthropic' | 'gemini';
@@ -177,6 +178,95 @@ async function callProvider(prompt: string) {
   return null;
 }
 
+function shouldUseWebSearch(prompt: string) {
+  const text = prompt.toLowerCase();
+
+  return [
+    'tendenc',
+    'trend',
+    'recent',
+    'última semana',
+    'ultima semana',
+    'hoje',
+    'agora',
+    'atual',
+    'internet',
+    'notícia',
+    'noticia',
+    'pesquise',
+    'web',
+    'google trends'
+  ].some((term) => text.includes(term));
+}
+
+async function searchWeb(query: string) {
+  try {
+    const response = await fetch(`https://html.duckduckgo.com/html/?q=${encodeURIComponent(query)}`, {
+      headers: {
+        'user-agent': 'Mozilla/5.0 (CreatorAI; +https://creator-ia.vercel.app)'
+      }
+    });
+
+    if (!response.ok) {
+      return [];
+    }
+
+    const html = await response.text();
+    const results: Array<{ title: string; url: string; snippet: string }> = [];
+    const pattern = /<a[^>]*class="result__a"[^>]*href="([^"]+)"[^>]*>([\s\S]*?)<\/a>[\s\S]*?<a[^>]*class="result__snippet"[^>]*>([\s\S]*?)<\/a>/gi;
+    let match: RegExpExecArray | null;
+
+    while ((match = pattern.exec(html)) && results.length < 5) {
+      const title = match[2].replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
+      const snippet = match[3].replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
+      const url = match[1].startsWith('//') ? `https:${match[1]}` : match[1];
+      results.push({ title, url, snippet });
+    }
+
+    return results;
+  } catch {
+    return [];
+  }
+}
+
+async function buildWebContext(prompt: string) {
+  if (!shouldUseWebSearch(prompt)) {
+    return '';
+  }
+
+  const results = await searchWeb(prompt);
+
+  if (!results.length) {
+    return '';
+  }
+
+  return [
+    'Contexto web atual coletado para apoiar a resposta. Use apenas como suporte, sem inventar além do que estiver aqui.',
+    ...results.map((result, index) => `${index + 1}. ${result.title} — ${result.snippet} — Fonte: ${result.url}`)
+  ].join('\n');
+}
+
+const creatorAiBaseRules = [
+  'Voce e o Creator AI, o assistente oficial de conteudo, estrategia e operacao da plataforma Creator AI.',
+  'Responda sempre de forma objetiva, organizada e util para pessoas que trabalham com conteudo.',
+  'Evite respostas genericas, velhas ou pouco acionaveis. Quando o pedido envolver conteudo, use referencias atuais, tendencia e repertorio recente quando possivel.',
+  'Quando houver contexto web, priorize-o. Se nao houver contexto suficiente, diga isso com honestidade e siga com a melhor alternativa segura.',
+  'Quando fizer sentido, use listas, subtitulos curtos e proximos passos acionaveis.',
+  'Mantenha a linguagem humana, direta e pratica.'
+];
+
+async function buildCreatorAiPrompt(lines: Array<string | null | undefined>, webQuery?: string) {
+  const webContext = webQuery ? await buildWebContext(webQuery) : '';
+
+  return [
+    ...creatorAiBaseRules,
+    webContext ? `Contexto web:\n${webContext}` : null,
+    ...lines
+  ]
+    .filter(Boolean)
+    .join('\n\n');
+}
+
 function extractJsonFragment(input: string) {
   const fencedMatch = input.match(/```json\s*([\s\S]*?)```/i) ?? input.match(/```\s*([\s\S]*?)```/i);
   if (fencedMatch?.[1]) {
@@ -224,28 +314,26 @@ function fallbackIdea(topic: string, index: number) {
 
 export async function generateIdeas(input: IdeaInput) {
   const fallback = Array.from({ length: input.count ?? 5 }, (_, index) => fallbackIdea(input.topic, index));
-  const prompt = [
+  const prompt = await buildCreatorAiPrompt([
     'Voce e um estrategista de conteudo.',
     'Responda somente JSON valido.',
     `Retorne um array com ${fallback.length} objetos no formato [{"title":"", "hook":"", "format":"", "angle":""}].`,
     `Tema: ${input.topic}`,
     input.product ? `Produto: ${input.product}` : null,
     input.audience ? `Publico: ${input.audience}` : null
-  ]
-    .filter(Boolean)
-    .join('\n');
+  ], `${input.topic} instagram reels tiktok trends`);
 
   return parseStructuredResponse(await callProvider(prompt), fallback);
 }
 
 export async function generateHooks(input: { topic: string; count?: number }) {
   const fallback = Array.from({ length: input.count ?? 7 }, (_, index) => `Gancho ${index + 1} sobre ${input.topic}`);
-  const prompt = [
+  const prompt = await buildCreatorAiPrompt([
     'Voce e um copywriter de videos curtos.',
     'Responda somente JSON valido.',
     `Retorne um array com ${fallback.length} strings curtas e fortes.`,
     `Tema: ${input.topic}`
-  ].join('\n');
+  ], `${input.topic} instagram reels tiktok trends`);
 
   return parseStructuredResponse(await callProvider(prompt), fallback);
 }
@@ -259,16 +347,14 @@ export async function generateScript(input: ScriptInput) {
     cta: 'Comente "quero" para receber o material.',
     caption: `Legenda pronta sobre ${input.topic}`
   };
-  const prompt = [
+  const prompt = await buildCreatorAiPrompt([
     'Voce cria roteiros de conteudo em portugues do Brasil.',
     'Responda somente JSON valido.',
     'Formato esperado: {"title":"","hook":"","spoken":"","takes":["","",""],"cta":"","caption":""}.',
     `Tema: ${input.topic}`,
     input.goal ? `Objetivo: ${input.goal}` : null,
     input.tone ? `Tom: ${input.tone}` : null
-  ]
-    .filter(Boolean)
-    .join('\n');
+  ], `${input.topic} instagram reels tiktok trends`);
 
   return parseStructuredResponse(await callProvider(prompt), fallback);
 }
@@ -299,7 +385,7 @@ export async function generateScriptVariants(input: ScriptVariantInput) {
     caption: `Legenda enxuta sobre ${input.prompt}, conectando contexto atual, beneficio pratico e CTA.`
   }));
 
-  const prompt = [
+  const prompt = await buildCreatorAiPrompt([
     'Voce cria roteiros de Instagram e videos curtos em portugues do Brasil.',
     'Responda somente JSON valido.',
     'Retorne exatamente um array com 3 objetos.',
@@ -309,9 +395,7 @@ export async function generateScriptVariants(input: ScriptVariantInput) {
     input.productContext ? `Contexto do produto: ${input.productContext}` : null,
     input.referenceContext ? `Contexto e referencias para aproveitar: ${input.referenceContext}` : null,
     'Cada roteiro deve ter um angulo diferente, parecer pronto para gravacao e evitar frases genericas.'
-  ]
-    .filter(Boolean)
-    .join('\n');
+  ], `${input.prompt} ${input.referenceContext ?? ''} ${input.productContext ?? ''} instagram reels tiktok trends`);
 
   return parseStructuredResponse(await callProvider(prompt), fallback);
 }
@@ -325,12 +409,12 @@ export async function generateStoryboard(input: ScriptInput) {
       'Fechamento com CTA'
     ]
   };
-  const prompt = [
+  const prompt = await buildCreatorAiPrompt([
     'Voce cria storyboards simples para videos curtos.',
     'Responda somente JSON valido.',
     'Formato esperado: {"frames":["","","",""]}.',
     `Tema: ${input.topic}`
-  ].join('\n');
+  ], `${input.topic} instagram reels tiktok trends`);
 
   return parseStructuredResponse(await callProvider(prompt), fallback);
 }
@@ -344,26 +428,26 @@ export async function generateStories(input: StoryInput) {
       time: `${String(8 + index).padStart(2, '0')}:00`
     }))
   };
-  const prompt = [
+  const prompt = await buildCreatorAiPrompt([
     'Voce cria sequencias de stories para Instagram.',
     'Responda somente JSON valido.',
     'Formato esperado: {"sequence":[{"title":"","hook":"","cta":"","time":""}]}.',
     `Tema: ${input.theme}`,
     `Quantidade: ${input.count ?? 5}`
-  ].join('\n');
+  ], `${input.theme} instagram reels tiktok trends`);
 
   return parseStructuredResponse(await callProvider(prompt), fallback);
 }
 
 export async function generateCaption(input: { topic: string; tone?: string }) {
   const fallback = { caption: `Legenda humana sobre ${input.topic}.` };
-  const prompt = [
+  const prompt = await buildCreatorAiPrompt([
     'Voce escreve legendas em portugues do Brasil.',
     'Responda somente JSON valido.',
     'Formato esperado: {"caption":""}.',
     `Tema: ${input.topic}`,
     `Tom: ${input.tone ?? 'natural'}`
-  ].join('\n');
+  ], `${input.topic} instagram reels tiktok trends`);
 
   const parsed = parseStructuredResponse(await callProvider(prompt), fallback);
   return parsed.caption;
@@ -385,7 +469,7 @@ export async function rewriteHumanTone(input: { text: string }) {
 export async function extractProductsFromSource(input: ProductImportInput) {
   const maxItems = input.maxItems ?? 20;
   const fallback = { products: [] as Array<Record<string, string>> };
-  const prompt = [
+  const prompt = await buildCreatorAiPrompt([
     'Voce organiza catalogos de produtos para um SaaS de operacao de conteudo.',
     'Responda somente JSON valido.',
     `Formato esperado: {"products":[{"name":"","benefits":"","audience":"","price":"","discountPrice":"","restrictions":""}]}.`,
@@ -394,9 +478,7 @@ export async function extractProductsFromSource(input: ProductImportInput) {
     input.prompt ? `Pedido do usuario: ${input.prompt}` : null,
     input.sourceText ? `Texto base: ${input.sourceText}` : null,
     input.file?.name ? `Arquivo analisado: ${input.file.name}` : null
-  ]
-    .filter(Boolean)
-    .join('\n');
+  ], input.sourceText ?? input.prompt ?? input.file?.name);
 
   if (input.file?.base64 && process.env.GEMINI_API_KEY) {
     const response = await callGeminiWithParts([
@@ -423,15 +505,13 @@ export async function analyzeMetrics(input: MetricsInput) {
     insights: ['Aumentar reels', 'Postar mais stories interativos', 'Refinar CTA'],
     risks: ['Muito conteudo generico', 'Pouca repeticao de formatos vencedores']
   };
-  const prompt = [
+  const prompt = await buildCreatorAiPrompt([
     'Voce analisa metricas de conteudo.',
     'Responda somente JSON valido.',
     'Formato esperado: {"summary":"","insights":[""],"risks":[""]}.',
     `Resumo: ${input.summary}`,
     input.series ? `Series: ${JSON.stringify(input.series)}` : null
-  ]
-    .filter(Boolean)
-    .join('\n');
+  ], `${input.summary} instagram reels tiktok trends`);
 
   return parseStructuredResponse(await callProvider(prompt), fallback);
 }
@@ -442,13 +522,13 @@ export async function analyzeCompetitors(input: CompetitorInput) {
     opportunities: ['Reels de bastidor', 'Stories com enquete', 'Carrosseis educacionais'],
     watchouts: ['Postar muito institucional', 'Ignorar comentarios e respostas']
   };
-  const prompt = [
+  const prompt = await buildCreatorAiPrompt([
     'Voce analisa concorrentes digitais.',
     'Responda somente JSON valido.',
     'Formato esperado: {"summary":"","opportunities":[""],"watchouts":[""]}.',
     `Concorrentes: ${input.competitors.join(', ')}`,
     `Nicho: ${input.niche ?? 'geral'}`
-  ].join('\n');
+  ], `${input.competitors.join(' ')} ${input.niche ?? ''} instagram reels tiktok trends`);
 
   return parseStructuredResponse(await callProvider(prompt), fallback);
 }
@@ -462,26 +542,30 @@ export async function suggestCalendar(input: CalendarInput) {
       { date: `${input.month}-11`, title: 'Carrossel educativo', channel: 'Feed' }
     ]
   };
-  const prompt = [
+  const prompt = await buildCreatorAiPrompt([
     'Voce planeja calendarios editoriais.',
     'Responda somente JSON valido.',
     'Formato esperado: {"month":"","items":[{"date":"","title":"","channel":""}]}.',
     `Mes: ${input.month}`,
     `Produto: ${input.product ?? 'crescimento de marca'}`
-  ].join('\n');
+  ], `${input.month} ${input.product ?? ''} instagram reels tiktok trends`);
 
   return parseStructuredResponse(await callProvider(prompt), fallback);
 }
 
 export async function chatWithAi(input: ChatInput) {
-  const prompt = [
-    `Voce e a IA do workspace ${input.workspace ?? 'ContentOS'}.`,
-    'Responda em portugues brasileiro, de forma pratica, curta e clara.',
+  const prompt = await buildCreatorAiPrompt([
+    input.workspace ? `Workspace atual: ${input.workspace}` : null,
     input.context ? `Contexto: ${input.context}` : null,
-    `Pedido do usuario: ${input.prompt}`
-  ]
-    .filter(Boolean)
-    .join('\n\n');
+    input.history?.length
+      ? `Historico recente da conversa:\n${input.history
+          .slice(-12)
+          .map((message) => `${message.role === 'user' ? 'Usuario' : 'Creator AI'}: ${message.content}`)
+          .join('\n')}`
+      : null,
+    `Pedido do usuario: ${input.prompt}`,
+    'Objetivo: ajudar a criar conteudo, organizar operacao, revisar ideias e sugerir proximos passos acionaveis.'
+  ], `${input.prompt} instagram reels tiktok trends`);
 
   const response = await callProvider(prompt);
 

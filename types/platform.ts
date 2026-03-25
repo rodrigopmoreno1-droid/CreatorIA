@@ -101,9 +101,18 @@ export type CompetitorItem = {
 
 export type AiMessage = {
   id: string;
+  conversationId: string;
   role: 'user' | 'assistant';
   content: string;
   createdAt: string;
+};
+
+export type AiConversation = {
+  id: string;
+  title: string;
+  lastMessageAt: string;
+  createdAt: string;
+  updatedAt: string;
 };
 
 export type WorkspacePlatformState = {
@@ -115,5 +124,6 @@ export type WorkspacePlatformState = {
   posts: PostItem[];
   creators: CreatorItem[];
   competitors: CompetitorItem[];
+  aiConversations: AiConversation[];
   aiMessages: AiMessage[];
 };
