@@ -18,6 +18,17 @@ type ScriptVariantInput = {
   referenceContext?: string;
 };
 
+type ProductImportInput = {
+  prompt?: string;
+  sourceText?: string;
+  file?: {
+    mimeType: string;
+    base64: string;
+    name?: string;
+  };
+  maxItems?: number;
+};
+
 type StoryInput = {
   theme: string;
   count?: number;
@@ -91,7 +102,7 @@ async function callAnthropic(prompt: string) {
 
 async function callGemini(prompt: string) {
   const response = await fetch(
-    `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${process.env.GEMINI_API_KEY}`,
+    `https://generativelanguage.googleapis.com/v1beta/models/${process.env.GEMINI_MODEL ?? 'gemini-2.0-flash'}:generateContent?key=${process.env.GEMINI_API_KEY}`,
     {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
@@ -108,6 +119,34 @@ async function callGemini(prompt: string) {
         generationConfig: {
           temperature: 0.5,
           maxOutputTokens: 1400
+        }
+      })
+    }
+  );
+
+  if (!response.ok) {
+    throw new Error(`Gemini error ${response.status}`);
+  }
+
+  const payload = await response.json();
+  return payload?.candidates?.[0]?.content?.parts?.[0]?.text ?? null;
+}
+
+async function callGeminiWithParts(parts: Array<{ text?: string; inline_data?: { mime_type: string; data: string } }>) {
+  const response = await fetch(
+    `https://generativelanguage.googleapis.com/v1beta/models/${process.env.GEMINI_MODEL ?? 'gemini-2.0-flash'}:generateContent?key=${process.env.GEMINI_API_KEY}`,
+    {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        contents: [
+          {
+            parts
+          }
+        ],
+        generationConfig: {
+          temperature: 0.3,
+          maxOutputTokens: 1800
         }
       })
     }
@@ -341,6 +380,41 @@ export async function rewriteHumanTone(input: { text: string }) {
 
   const parsed = parseStructuredResponse(await callProvider(prompt), fallback);
   return parsed.text;
+}
+
+export async function extractProductsFromSource(input: ProductImportInput) {
+  const maxItems = input.maxItems ?? 20;
+  const fallback = { products: [] as Array<Record<string, string>> };
+  const prompt = [
+    'Voce organiza catalogos de produtos para um SaaS de operacao de conteudo.',
+    'Responda somente JSON valido.',
+    `Formato esperado: {"products":[{"name":"","benefits":"","audience":"","price":"","discountPrice":"","restrictions":""}]}.`,
+    `Retorne no maximo ${maxItems} produtos.`,
+    'Se algum campo nao aparecer com clareza, deixe a string vazia.',
+    input.prompt ? `Pedido do usuario: ${input.prompt}` : null,
+    input.sourceText ? `Texto base: ${input.sourceText}` : null,
+    input.file?.name ? `Arquivo analisado: ${input.file.name}` : null
+  ]
+    .filter(Boolean)
+    .join('\n');
+
+  if (input.file?.base64 && process.env.GEMINI_API_KEY) {
+    const response = await callGeminiWithParts([
+      {
+        text: prompt
+      },
+      {
+        inline_data: {
+          mime_type: input.file.mimeType,
+          data: input.file.base64
+        }
+      }
+    ]);
+
+    return parseStructuredResponse(response, fallback);
+  }
+
+  return parseStructuredResponse(await callProvider(prompt), fallback);
 }
 
 export async function analyzeMetrics(input: MetricsInput) {

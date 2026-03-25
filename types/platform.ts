@@ -15,8 +15,18 @@ export type ProductItem = {
   benefits: string;
   audience: string;
   price: string;
+  discountPrice: string;
   restrictions: string;
   createdAt: string;
+};
+
+export type ProductDraft = {
+  name: string;
+  benefits: string;
+  audience: string;
+  price: string;
+  discountPrice: string;
+  restrictions: string;
 };
 
 export type ScriptStatus = 'draft' | 'approved' | 'recording' | 'drive' | 'edited';

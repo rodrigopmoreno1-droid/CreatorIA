@@ -4,6 +4,7 @@ import {
   analyzeCompetitors,
   analyzeMetrics,
   chatWithAi,
+  extractProductsFromSource,
   generateCaption,
   generateHooks,
   generateIdeas,
@@ -48,6 +49,8 @@ export async function POST(request: Request) {
       return NextResponse.json({ content: await generateCaption((body.payload ?? {}) as never) });
     case 'rewriteHumanTone':
       return NextResponse.json({ content: await rewriteHumanTone((body.payload ?? {}) as never) });
+    case 'extractProducts':
+      return NextResponse.json({ content: await extractProductsFromSource((body.payload ?? {}) as never) });
     case 'analyzeMetrics':
       return NextResponse.json({ content: await analyzeMetrics((body.payload ?? {}) as never) });
     case 'analyzeCompetitors':

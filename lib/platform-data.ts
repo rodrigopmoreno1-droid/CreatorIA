@@ -15,6 +15,7 @@ type ProductRow = {
   audience: string | null;
   price: number | string | null;
   restrictions: string | null;
+  metadata: unknown;
   created_at: string;
 };
 
@@ -87,6 +88,18 @@ function normalizeRecordingFields(value: unknown): RecordingField[] {
     .filter((item): item is RecordingField => Boolean(item));
 }
 
+function parseProductMetadata(metadata: unknown) {
+  if (!metadata || typeof metadata !== 'object') {
+    return {};
+  }
+
+  const raw = metadata as Record<string, unknown>;
+
+  return {
+    discountPrice: normalizeString(raw.discountPrice ?? raw.discount_price)
+  };
+}
+
 export function parseScriptMetadata(storyboard: unknown): ScriptMetadata {
   if (!storyboard) {
     return {};
@@ -154,12 +167,15 @@ export function buildScriptMetadata(input: {
 }
 
 export function toProductItem(row: ProductRow): ProductItem {
+  const metadata = parseProductMetadata(row.metadata);
+
   return {
     id: row.id,
     name: row.name,
     benefits: row.benefits ?? '',
     audience: row.audience ?? '',
     price: row.price == null ? '' : String(row.price),
+    discountPrice: metadata.discountPrice ?? '',
     restrictions: row.restrictions ?? '',
     createdAt: row.created_at
   };
@@ -251,7 +267,7 @@ export async function getWorkspaceProducts(workspaceSlug: string) {
   const { admin, context } = access;
   const { data, error } = await admin
     .from('products')
-    .select('id,name,benefits,audience,price,restrictions,created_at')
+    .select('id,name,benefits,audience,price,restrictions,metadata,created_at')
     .eq('company_id', context.companyId)
     .order('created_at', { ascending: false });
 
