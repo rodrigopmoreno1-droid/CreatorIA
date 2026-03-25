@@ -82,6 +82,17 @@ export default function LoginPage() {
         <section className="flex items-center justify-center">
           <div className="w-full max-w-xl">
             <LoginForm />
+            <div className="mt-5 flex flex-wrap items-center justify-center gap-4 text-[12px] text-muted-foreground">
+              <Link href="/privacy" className="transition hover:text-foreground">
+                Privacy
+              </Link>
+              <Link href="/terms" className="transition hover:text-foreground">
+                Terms
+              </Link>
+              <Link href="/data-deletion" className="transition hover:text-foreground">
+                Data Deletion
+              </Link>
+            </div>
           </div>
         </section>
       </div>
