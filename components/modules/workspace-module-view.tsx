@@ -1,7 +1,6 @@
 "use client";
 
 import { useDeferredValue, useEffect, useMemo, useState } from 'react';
-import Link from 'next/link';
 import { DayPicker } from 'react-day-picker';
 import { motion } from 'framer-motion';
 import {
@@ -82,6 +81,7 @@ import { Separator } from '@/components/ui/separator';
 import { Textarea } from '@/components/ui/textarea';
 import { saasPlans, navigationItems } from '@/lib/constants';
 import { WorkspaceSnapshot } from '@/lib/demo-data';
+import { useInstagramConnection } from '@/hooks/use-instagram-connection';
 import {
   type ApprovalStatus,
   type WorkspaceMember,
@@ -91,6 +91,11 @@ import {
 import { cn } from '@/lib/utils';
 import type { ModuleKey } from '@/types';
 import { toast } from 'sonner';
+import {
+  InstagramConnectionPanel,
+  InstagramMediaGrid,
+  InstagramStoryRail
+} from '@/components/modules/instagram-connection-panel';
 
 type WidgetKey = 'stats' | 'agenda' | 'stories' | 'pipeline' | 'ideas';
 
@@ -342,11 +347,11 @@ function SectionHeader({
   return (
     <div className="flex flex-col gap-3 border-b border-border pb-4 md:flex-row md:items-end md:justify-between">
       <div>
-        <div className="mb-2 inline-flex items-center gap-2 rounded-lg border border-border bg-white px-2.5 py-1 text-[10px] font-medium tracking-[0.08em] text-muted-foreground">
+        <div className="mb-2 inline-flex items-center gap-2 rounded-lg border border-border bg-white px-2 py-1 text-[10px] font-medium tracking-[0.08em] text-muted-foreground">
           Workspace
         </div>
-        <h1 className="font-display text-[22px] font-semibold tracking-tight text-balance md:text-[26px]">{title}</h1>
-        <p className="mt-2 max-w-3xl text-[13px] leading-6 text-muted-foreground">{description}</p>
+        <h1 className="font-display text-[20px] font-semibold tracking-tight text-balance md:text-[24px]">{title}</h1>
+        <p className="mt-1.5 max-w-3xl text-[12px] leading-5 text-muted-foreground">{description}</p>
       </div>
       {action ? <div className="flex shrink-0 items-center gap-2">{action}</div> : null}
     </div>
@@ -356,11 +361,11 @@ function SectionHeader({
 function StatCard({ label, value, trend }: { label: string; value: string; trend?: string }) {
   return (
     <Card className="surface-card">
-      <CardContent className="p-4">
+      <CardContent className="p-3.5">
         <p className="text-[11px] tracking-[0.08em] text-muted-foreground">{label}</p>
         <div className="mt-2 flex items-end justify-between gap-3">
-          <p className="font-display text-2xl font-semibold tracking-tight">{value}</p>
-          {trend ? <Badge variant="success">{trend}</Badge> : null}
+          <p className="font-display text-xl font-semibold tracking-tight">{value}</p>
+          {trend ? <Badge variant="outline">{trend}</Badge> : null}
         </div>
       </CardContent>
     </Card>
@@ -369,7 +374,7 @@ function StatCard({ label, value, trend }: { label: string; value: string; trend
 
 function Pill({ children }: { children: React.ReactNode }) {
   return (
-    <span className="inline-flex items-center rounded-lg border border-border bg-muted px-2.5 py-1 text-[11px] font-medium text-muted-foreground">
+    <span className="inline-flex items-center rounded-lg border border-border bg-background px-2.5 py-1 text-[11px] font-medium text-muted-foreground">
       {children}
     </span>
   );
@@ -414,13 +419,10 @@ function ViewScopeBanner({
   const scopedCount = workspace.pipelineCards.length + workspace.posts.length + workspace.agenda.length;
 
   return (
-    <div className="flex flex-col gap-3 rounded-2xl border border-border bg-white p-4 lg:flex-row lg:items-center lg:justify-between">
-      <div>
-        <p className="text-[10px] font-medium tracking-[0.08em] text-muted-foreground">Visão ativa</p>
-        <div className="mt-2 flex flex-wrap items-center gap-2">
-          <Badge variant="outline">{viewMode === 'general' ? 'Geral' : viewMode === 'production' ? 'Gravacao' : 'Social Media'}</Badge>
-          {activeMember ? <Badge variant="success">Operando como {activeMember.name}</Badge> : null}
-        </div>
+    <div className="flex flex-col gap-2 rounded-xl border border-border bg-white px-4 py-3 lg:flex-row lg:items-center lg:justify-between">
+      <div className="flex flex-wrap items-center gap-2">
+        <Badge variant="outline">{viewMode === 'general' ? 'Geral' : viewMode === 'production' ? 'Gravacao' : 'Social Media'}</Badge>
+        {activeMember ? <Badge variant="outline">Operando como {activeMember.name}</Badge> : null}
       </div>
       <div className="flex flex-wrap gap-2">
         <Pill>{workspace.posts.length} posts visiveis</Pill>
@@ -463,12 +465,12 @@ function SideBlockActions({
   label?: string;
 }) {
   return (
-    <div className="pointer-events-none absolute -left-3 top-5 z-10 flex -translate-x-2 flex-col gap-2 opacity-0 transition duration-200 group-hover:pointer-events-auto group-hover:translate-x-0 group-hover:opacity-100">
+    <div className="pointer-events-none absolute -left-2 top-4 z-10 flex -translate-x-2 flex-col gap-2 opacity-0 transition duration-200 group-hover:pointer-events-auto group-hover:translate-x-0 group-hover:opacity-100">
       <button
         type="button"
         aria-label={`Editar ${label}`}
         onClick={onEdit}
-        className="inline-flex h-9 w-9 items-center justify-center rounded-2xl border border-white/80 bg-white text-foreground shadow-soft transition hover:bg-accent"
+        className="inline-flex h-8 w-8 items-center justify-center rounded-xl border border-white/80 bg-white text-foreground shadow-soft transition hover:bg-accent"
       >
         <PencilLine className="h-4 w-4" />
       </button>
@@ -476,7 +478,7 @@ function SideBlockActions({
         type="button"
         aria-label={`Excluir ${label}`}
         onClick={onDelete}
-        className="inline-flex h-9 w-9 items-center justify-center rounded-2xl border border-white/80 bg-white text-foreground shadow-soft transition hover:bg-accent"
+        className="inline-flex h-8 w-8 items-center justify-center rounded-xl border border-white/80 bg-white text-foreground shadow-soft transition hover:bg-accent"
       >
         <Trash2 className="h-4 w-4" />
       </button>
@@ -492,9 +494,9 @@ function EmptyState({
   description: string;
 }) {
   return (
-    <div className="rounded-[1.75rem] border border-dashed border-border/80 bg-white/65 p-6 text-center">
+    <div className="rounded-xl border border-dashed border-border/80 bg-white p-5 text-center">
       <p className="font-medium text-foreground">{title}</p>
-      <p className="mt-2 text-sm leading-6 text-muted-foreground">{description}</p>
+      <p className="mt-2 text-[12px] leading-6 text-muted-foreground">{description}</p>
     </div>
   );
 }
@@ -919,7 +921,7 @@ function CalendarModule({ workspace }: { workspace: WorkspaceSnapshot }) {
           mode="single"
           selected={selected}
           onSelect={setSelected}
-          className="rounded-3xl border border-border bg-background p-4"
+          className="rounded-xl border border-border bg-background p-4"
         />
         <div className="mt-4 flex flex-wrap gap-2">
           {['todos', 'Feed', 'Reels', 'Stories', 'Campanha', 'Gravação'].map((type) => (
@@ -982,7 +984,7 @@ function CalendarModule({ workspace }: { workspace: WorkspaceSnapshot }) {
           {generatedPlan.length ? (
             <div className="space-y-3">
               {generatedPlan.map((item) => (
-                <div key={`${item.date}-${item.title}`} className="rounded-[1.5rem] border border-border bg-background p-4">
+                <div key={`${item.date}-${item.title}`} className="rounded-xl border border-border bg-background p-4">
                   <div className="flex items-center justify-between gap-3">
                     <div>
                       <p className="font-medium">{item.title}</p>
@@ -1065,7 +1067,7 @@ function IdeasModule({ workspace }: { workspace: WorkspaceSnapshot }) {
       <div className="grid gap-4 lg:grid-cols-[1.1fr_0.9fr]">
         <ModuleCard title="Gerador de ideias" subtitle="IA e banco de trends trabalhando juntos" badge="IA ativa">
           <div className="space-y-4">
-            <div className="rounded-3xl border border-border bg-background p-4">
+            <div className="rounded-xl border border-border bg-background p-4">
               <p className="text-xs uppercase tracking-[0.2em] text-muted-foreground">Trend da semana</p>
               <p className="mt-2 font-medium">Conteúdo prático, direto e com bastidor vende mais.</p>
               <p className="mt-2 text-sm text-muted-foreground">
@@ -1251,7 +1253,7 @@ function ScriptsModule({ workspace }: { workspace: WorkspaceSnapshot }) {
                   onEdit={() => setEditingId((current) => (current === script.id ? null : script.id))}
                   onDelete={() => setScripts((current) => current.filter((item) => item.id !== script.id))}
                 />
-                <div className="rounded-3xl border border-border bg-background p-5">
+                <div className="rounded-xl border border-border bg-background p-5">
                   <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
                     <div className="space-y-2">
                       {editing ? (
@@ -1345,6 +1347,7 @@ function StoriesModule({ workspace }: { workspace: WorkspaceSnapshot }) {
   );
   const [editingId, setEditingId] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const instagram = useInstagramConnection(workspace.slug, 'stories');
   const approvals = useWorkspaceStore((state) => state.approvalsByWorkspace[workspace.slug] ?? {});
   const setApprovalStatus = useWorkspaceStore((state) => state.setApprovalStatus);
 
@@ -1383,30 +1386,36 @@ function StoriesModule({ workspace }: { workspace: WorkspaceSnapshot }) {
   }
 
   return (
-    <div className="grid gap-6 xl:grid-cols-[1.1fr_0.9fr]">
-      <ModuleCard title="Sequência de stories" subtitle="Preview estilo Instagram" className="overflow-hidden">
-        <div className="mb-4 flex justify-end">
-          <Button onClick={handleGenerateStories} disabled={loading}>
-            {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
-            Gerar sequência
-          </Button>
-        </div>
-        <div className="space-y-6">
-          <div className="flex gap-4 overflow-x-auto pb-2">
-            {stories.map((story) => (
-              <div key={story.id} className="min-w-[92px] text-center">
-                <div className="mx-auto rounded-2xl border border-border bg-background p-3">
-                  <div className="flex h-14 w-14 items-center justify-center rounded-xl bg-muted text-base font-semibold text-foreground">
-                    {story.title.charAt(0)}
-                  </div>
-                </div>
-                <p className="mt-2 text-[12px] font-medium text-foreground">{story.title.split(' ').slice(0, 2).join(' ')}</p>
-                <p className="text-[11px] text-muted-foreground">{story.time}</p>
-              </div>
-            ))}
+    <div className="space-y-6">
+      <InstagramConnectionPanel
+        data={instagram.data}
+        connectUrl={instagram.data.connectUrl ?? `/api/integrations/meta/connect?workspace=${workspace.slug}&module=stories`}
+        loading={instagram.loading}
+        syncing={instagram.syncing}
+        disconnecting={instagram.disconnecting}
+        onRefresh={instagram.refresh}
+        onDisconnect={instagram.disconnect}
+      />
+
+      <div className="grid gap-6 xl:grid-cols-[1.02fr_0.98fr]">
+        <ModuleCard title="Sequência de stories" subtitle="Planejamento enxuto com preview e edição lateral" className="overflow-hidden">
+          <div className="mb-4 flex items-center justify-between gap-3">
+            <div className="min-w-0">
+              <p className="text-[11px] tracking-[0.08em] text-muted-foreground">Stories da conta</p>
+            </div>
+            <Button onClick={handleGenerateStories} disabled={loading}>
+              {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
+              Gerar sequência
+            </Button>
           </div>
 
-          <div className="grid gap-4 sm:grid-cols-2">
+          {instagram.data.stories.length ? (
+            <div className="mb-5">
+              <InstagramStoryRail stories={instagram.data.stories.slice(0, 8)} />
+            </div>
+          ) : null}
+
+          <div className="space-y-3">
             {stories.map((story, index) => {
               const editing = editingId === story.id;
 
@@ -1417,22 +1426,23 @@ function StoriesModule({ workspace }: { workspace: WorkspaceSnapshot }) {
                     onEdit={() => setEditingId((current) => (current === story.id ? null : story.id))}
                     onDelete={() => setStories((current) => current.filter((item) => item.id !== story.id))}
                   />
-                  <div className="overflow-hidden rounded-2xl border border-border bg-background p-4 shadow-soft">
+                  <div className="rounded-xl border border-border bg-background px-4 py-3">
                     <div className="flex items-start justify-between gap-3">
-                      <div className="flex items-center gap-3">
-                        <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-muted text-sm font-semibold text-foreground">
-                            {index + 1}
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-2">
+                          <Badge variant="outline">Tela {index + 1}</Badge>
+                          <Badge variant="outline">{story.time}</Badge>
                         </div>
-                        <div>
-                          <p className="text-[13px] font-semibold text-foreground">{story.title}</p>
-                          <p className="text-[11px] text-muted-foreground">{story.status}</p>
-                        </div>
+                        <p className="mt-2 text-[13px] font-medium text-foreground">{story.title}</p>
+                        <p className="text-[11px] text-muted-foreground">{story.status}</p>
                       </div>
-                      <Badge variant="outline">{story.time}</Badge>
+                      <ApprovalControls
+                        status={approvals[story.id]}
+                        onChange={(status) => setApprovalStatus(workspace.slug, story.id, status)}
+                      />
                     </div>
 
-                    <div className="mt-4 rounded-xl border border-border bg-muted/60 p-4">
-                      <p className="text-[10px] tracking-[0.08em] text-muted-foreground">Mensagem principal</p>
+                    <div className="mt-3">
                       {editing ? (
                         <Textarea
                           value={story.hook}
@@ -1441,52 +1451,50 @@ function StoriesModule({ workspace }: { workspace: WorkspaceSnapshot }) {
                               current.map((item) => (item.id === story.id ? { ...item, hook: event.target.value } : item))
                             )
                           }
-                          className="mt-2 min-h-[110px] border-border bg-white"
+                          className="min-h-[110px] border-border bg-white"
                         />
                       ) : (
-                        <p className="mt-2 text-[13px] leading-6 text-muted-foreground">{story.hook}</p>
+                        <p className="text-[12px] leading-6 text-muted-foreground">{story.hook}</p>
                       )}
                     </div>
 
-                    <div className="mt-4 flex flex-wrap items-center justify-between gap-3 text-muted-foreground">
+                    <div className="mt-3 flex items-center justify-between text-[12px] text-muted-foreground">
+                      <span>{story.cta ?? 'Responder DM'}</span>
                       <div className="flex items-center gap-3">
                         <Heart className="h-4 w-4" />
                         <MessageCircle className="h-4 w-4" />
                         <Send className="h-4 w-4" />
                       </div>
-                      <ApprovalControls
-                        status={approvals[story.id]}
-                        onChange={(status) => setApprovalStatus(workspace.slug, story.id, status)}
-                      />
                     </div>
                   </div>
                 </div>
               );
             })}
           </div>
-        </div>
-      </ModuleCard>
+        </ModuleCard>
 
-      <ModuleCard title="Sugestão IA" subtitle="Roteiro de 5 telas para aumentar resposta" className="surface-muted">
-        <div className="space-y-4">
-          {stories.map((story, index) => (
-            <div key={story.id} className="flex items-start gap-3 rounded-xl border border-border bg-white p-4">
-              <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-foreground text-[11px] font-semibold text-white">
-                {index + 1}
+        <ModuleCard title="Ritmo da sequência" subtitle="Copie a lógica que mais retém e conduz até a resposta">
+          <div className="space-y-3">
+            {stories.map((story, index) => (
+              <div key={story.id} className="rounded-xl border border-border bg-background px-4 py-3">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <p className="text-[13px] font-medium text-foreground">{index + 1}. {story.title}</p>
+                    <p className="mt-1 text-[12px] text-muted-foreground">{story.cta ?? 'Responder DM'}</p>
+                  </div>
+                  <Badge variant="outline">{story.time}</Badge>
+                </div>
               </div>
-              <div>
-                <p className="text-[13px] font-medium text-foreground">{story.title}</p>
-                <p className="mt-1 text-[12px] leading-6 text-muted-foreground">{story.cta ?? 'Responder DM'}</p>
-              </div>
+            ))}
+            <div className="rounded-xl border border-border bg-white p-4">
+              <p className="text-[11px] font-medium text-foreground">Regra simples</p>
+              <p className="mt-2 text-[12px] leading-6 text-muted-foreground">
+                Abra com contexto, entregue prova rápida em até duas telas e leve a pessoa para DM ou link só no fechamento.
+              </p>
             </div>
-          ))}
-          <div className="rounded-xl border border-border bg-white p-4">
-            <p className="text-[10px] tracking-[0.08em] text-muted-foreground">CTA sugerido</p>
-            <p className="mt-2 text-[14px] font-semibold text-foreground">Leve para DM ou link com contexto.</p>
-            <p className="mt-1 text-[12px] text-muted-foreground">A narrativa aquece antes do pedido para aumentar retenção e resposta.</p>
           </div>
-        </div>
-      </ModuleCard>
+        </ModuleCard>
+      </div>
     </div>
   );
 }
@@ -1508,19 +1516,19 @@ function PipelineLane({
     <Card
       ref={setNodeRef}
       className={cn(
-        'surface-card inner-stroke w-[320px] shrink-0 p-4 transition',
-        isOver && 'border-[#ff8b73] shadow-[0_20px_40px_rgba(255,123,84,0.14)]'
+        'surface-card w-[286px] shrink-0 p-3 transition',
+        isOver && 'border-foreground/30 shadow-[0_16px_30px_rgba(15,23,42,0.08)]'
       )}
     >
-      <div className="mb-4 flex items-center justify-between">
+      <div className="mb-3 flex items-center justify-between">
         <div className="flex items-center gap-3">
           <span className={cn('h-3 w-3 rounded-full', accent)} />
           <div>
-            <p className="font-medium">{column}</p>
-            <p className="text-xs text-muted-foreground">{count} cards</p>
+            <p className="text-[13px] font-medium">{column}</p>
+            <p className="text-[11px] text-muted-foreground">{count} cards</p>
           </div>
         </div>
-        <Button variant="outline" size="sm" className="h-8 rounded-2xl px-3">
+        <Button variant="outline" size="icon" aria-label={`Adicionar card em ${column}`}>
           <Plus className="h-3.5 w-3.5" />
         </Button>
       </div>
@@ -1533,7 +1541,7 @@ function PipelineModule({ workspace }: { workspace: WorkspaceSnapshot }) {
   const columns = ['Ideia', 'Roteiro', 'Aprovado', 'Gravar', 'Gravado', 'Editar', 'Pronto', 'Postar', 'Postado'];
   const [cards, setCards] = useState(workspace.pipelineCards);
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 8 } }));
-  const columnAccents = ['bg-amber-400', 'bg-sky-400', 'bg-violet-400', 'bg-emerald-400', 'bg-rose-400', 'bg-cyan-400', 'bg-lime-400', 'bg-fuchsia-400', 'bg-slate-400'];
+  const columnAccents = ['bg-foreground/60', 'bg-foreground/50', 'bg-foreground/40', 'bg-foreground/45', 'bg-foreground/35', 'bg-foreground/30', 'bg-foreground/40', 'bg-foreground/55', 'bg-foreground/60'];
   const approvals = useWorkspaceStore((state) => state.approvalsByWorkspace[workspace.slug] ?? {});
   const setApprovalStatus = useWorkspaceStore((state) => state.setApprovalStatus);
 
@@ -1576,19 +1584,13 @@ function PipelineModule({ workspace }: { workspace: WorkspaceSnapshot }) {
     <div className="space-y-6">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <h2 className="font-display text-2xl font-semibold tracking-tight">Pipeline visual</h2>
-          <p className="text-sm text-muted-foreground">Arraste os cards entre colunas e acompanhe o fluxo editorial.</p>
-        </div>
-        <div className="flex flex-wrap gap-2">
-          <Pill>Ideia</Pill>
-          <Pill>Roteiro</Pill>
-          <Pill>Gravar</Pill>
-          <Pill>Editar</Pill>
+          <h2 className="font-display text-xl font-semibold tracking-tight">Pipeline visual</h2>
+          <p className="text-[12px] text-muted-foreground">Uma linha única para acompanhar o conteúdo do insight à postagem.</p>
         </div>
       </div>
 
       <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={onDragEnd}>
-        <div className="flex gap-4 overflow-x-auto pb-3">
+        <div className="flex gap-3 overflow-x-auto pb-3">
           {columns.map((column, index) => (
             <PipelineLane
               key={column}
@@ -1606,49 +1608,26 @@ function PipelineModule({ workspace }: { workspace: WorkspaceSnapshot }) {
                           onEdit={() => toast.info(`Edicao lateral pronta para ${card.title}.`)}
                           onDelete={() => setCards((current) => current.filter((item) => item.id !== card.id))}
                         />
-                        <div className="surface-muted rounded-[1.5rem] p-4">
-                        <div className="flex items-start justify-between gap-3">
-                          <div className="flex items-start gap-3">
-                            <GripVertical className="mt-1 h-4 w-4 text-muted-foreground" />
-                            <div>
-                              <p className="font-medium">{card.title}</p>
-                              <p className="mt-1 text-sm text-muted-foreground">{card.assignee}</p>
+                        <div className="rounded-xl border border-border bg-background p-3">
+                          <div className="flex items-start justify-between gap-3">
+                            <div className="min-w-0">
+                              <div className="flex items-start gap-2">
+                                <GripVertical className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
+                                <div className="min-w-0">
+                                  <p className="truncate text-[13px] font-medium">{card.title}</p>
+                                  <p className="mt-1 text-[12px] text-muted-foreground">{card.assignee}</p>
+                                </div>
+                              </div>
                             </div>
+                            <Badge variant={card.priority === 'high' ? 'danger' : card.priority === 'medium' ? 'warning' : 'outline'}>
+                              {card.priority}
+                            </Badge>
                           </div>
-                          <Badge variant={card.priority === 'high' ? 'danger' : card.priority === 'medium' ? 'warning' : 'outline'}>
-                            {card.priority}
-                          </Badge>
-                        </div>
-                        <div className="mt-4 rounded-[1.2rem] bg-white/70 p-3">
-                          <div className="flex items-center justify-between text-xs text-muted-foreground">
-                            <span>Progresso</span>
-                            <span>{card.column}</span>
-                          </div>
-                          <div className="mt-2 h-2 rounded-full bg-foreground/8">
-                            <div
-                              className="h-2 rounded-full bg-foreground"
-                              style={{ width: `${card.priority === 'high' ? 78 : card.priority === 'medium' ? 58 : 34}%` }}
-                            />
-                          </div>
-                        </div>
-                        <div className="mt-3 flex flex-wrap gap-2">
-                          {card.tags.map((tag) => (
-                            <Pill key={tag}>{tag}</Pill>
-                          ))}
-                        </div>
-                        <div className="mt-4 flex items-center justify-between">
-                          <div className="flex -space-x-2">
-                            {[card.assignee.slice(0, 2).toUpperCase(), workspace.name.slice(0, 2).toUpperCase()].map((avatar) => (
-                              <span
-                                key={avatar}
-                                className="flex h-8 w-8 items-center justify-center rounded-full border border-white bg-white text-[10px] font-semibold text-[#17171b]"
-                              >
-                                {avatar}
-                              </span>
+                          <div className="mt-3 flex flex-wrap gap-2">
+                            {card.tags.map((tag) => (
+                              <Pill key={tag}>{tag}</Pill>
                             ))}
                           </div>
-                          <span className="text-xs text-muted-foreground">{card.tags.length} tags</span>
-                        </div>
                           <div className="mt-4">
                             <ApprovalControls
                               status={approvals[card.id]}
@@ -1660,7 +1639,7 @@ function PipelineModule({ workspace }: { workspace: WorkspaceSnapshot }) {
                     </SortableCard>
                   ))}
                   {byColumn[column]?.length ? null : (
-                    <div className="rounded-[1.5rem] border border-dashed border-border/80 bg-white/50 p-4 text-sm text-muted-foreground">
+                    <div className="rounded-xl border border-dashed border-border/80 bg-white p-4 text-[12px] text-muted-foreground">
                       Solte um card aqui.
                     </div>
                   )}
@@ -1725,6 +1704,7 @@ function LibraryModule({ workspace }: { workspace: WorkspaceSnapshot }) {
 function FeedModule({ workspace }: { workspace: WorkspaceSnapshot }) {
   const [posts, setPosts] = useState(workspace.posts);
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 8 } }));
+  const instagram = useInstagramConnection(workspace.slug, 'feed');
 
   function onDragEnd(event: DragEndEvent) {
     const { active, over } = event;
@@ -1738,85 +1718,89 @@ function FeedModule({ workspace }: { workspace: WorkspaceSnapshot }) {
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div>
-          <h2 className="font-display text-2xl font-semibold tracking-tight">Feed Preview</h2>
-          <p className="text-sm text-muted-foreground">Reorganize o grid do Instagram antes de publicar.</p>
-        </div>
-        <Badge variant="outline">
-          <LayoutGrid className="mr-1 h-3 w-3" />
-          3 colunas
-        </Badge>
-      </div>
+      <InstagramConnectionPanel
+        data={instagram.data}
+        connectUrl={instagram.data.connectUrl ?? `/api/integrations/meta/connect?workspace=${workspace.slug}&module=feed`}
+        loading={instagram.loading}
+        syncing={instagram.syncing}
+        disconnecting={instagram.disconnecting}
+        onRefresh={instagram.refresh}
+        onDisconnect={instagram.disconnect}
+      />
 
-      <div className="surface-card flex gap-4 overflow-x-auto rounded-2xl p-4">
-        {posts.map((post, index) => (
-          <div key={`${post.id}-story`} className="min-w-[88px] text-center">
-            <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-xl border border-border bg-muted text-sm font-semibold text-foreground">
-                {index + 1}
+      <div className="grid gap-6 xl:grid-cols-[0.95fr_1.05fr]">
+        <ModuleCard title="Preview do Instagram" subtitle="Veja o grid como ele vai aparecer antes de publicar">
+          {instagram.data.stories.length ? (
+            <div className="mb-4">
+              <InstagramStoryRail stories={instagram.data.stories.slice(0, 8)} />
             </div>
-            <p className="mt-2 truncate text-[12px] font-medium text-foreground">{post.channel}</p>
+          ) : null}
+
+          <div className="mx-auto max-w-[360px] rounded-[28px] border border-border bg-white p-4 shadow-soft">
+            <div className="flex items-center justify-between border-b border-border pb-3">
+              <div>
+                <p className="text-[13px] font-semibold text-foreground">
+                  @{instagram.data.account?.username ?? workspace.slug}
+                </p>
+                <p className="text-[11px] text-muted-foreground">Preview planejado</p>
+              </div>
+              <Badge variant="outline">
+                <LayoutGrid className="mr-1 h-3 w-3" />
+                3 colunas
+              </Badge>
+            </div>
+
+            <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={onDragEnd}>
+              <SortableContext items={posts.map((post) => post.id)} strategy={rectSortingStrategy}>
+                <div className="mt-4 grid grid-cols-3 gap-2">
+                  {posts.map((post, index) => (
+                    <SortableCard key={post.id} id={post.id}>
+                      <div className="group aspect-square overflow-hidden rounded-lg border border-border bg-muted p-3">
+                        <div className="flex items-center justify-between text-[10px] text-muted-foreground">
+                          <span>#{index + 1}</span>
+                          <GripVertical className="h-3.5 w-3.5" />
+                        </div>
+                        <div className="mt-6 space-y-2">
+                          <div className="h-2.5 w-10 rounded-full bg-foreground/10" />
+                          <p className="line-clamp-3 text-[12px] font-medium leading-5 text-foreground">{post.title}</p>
+                        </div>
+                      </div>
+                    </SortableCard>
+                  ))}
+                </div>
+              </SortableContext>
+            </DndContext>
           </div>
-        ))}
-      </div>
+        </ModuleCard>
 
-      <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={onDragEnd}>
-        <SortableContext items={posts.map((post) => post.id)} strategy={rectSortingStrategy}>
-          <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
-            {posts.map((post, index) => (
-              <SortableCard key={post.id} id={post.id}>
-                <Card className="surface-card overflow-hidden">
-                  <div className="p-4">
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-3">
-                        <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-muted text-sm font-semibold text-foreground">
-                            {index + 1}
-                        </div>
-                        <div>
-                          <p className="text-[13px] font-semibold text-foreground">{workspace.name}</p>
-                          <p className="text-[11px] text-muted-foreground">{post.channel}</p>
-                        </div>
-                      </div>
-                      <GripVertical className="h-4 w-4 text-muted-foreground" />
+        <ModuleCard title="Planejamento do grid" subtitle="Arraste a ordem e compare com o feed real conectado">
+          <div className="space-y-4">
+            <div>
+              <p className="mb-2 text-[11px] font-medium tracking-[0.08em] text-muted-foreground">Feed real</p>
+              <InstagramMediaGrid media={instagram.data.media} />
+            </div>
+
+            <div className="space-y-2">
+              {posts.map((post, index) => (
+                <div key={post.id} className="rounded-xl border border-border bg-background px-3 py-3">
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="min-w-0">
+                      <p className="truncate text-[13px] font-medium text-foreground">{post.title}</p>
+                      <p className="text-[11px] text-muted-foreground">
+                        {post.channel} · {post.scheduledAt}
+                      </p>
                     </div>
-
-                    <div className="mt-4 aspect-[4/5] rounded-2xl border border-border bg-muted p-4">
-                      <div className="flex items-center justify-between">
-                        <span className="rounded-lg border border-border bg-white px-2.5 py-1 text-[10px] font-medium tracking-[0.08em] text-muted-foreground">
-                          #{index + 1}
-                        </span>
-                        <Pin className="h-4 w-4 text-muted-foreground" />
-                      </div>
-                      <div className="mt-10 space-y-3">
-                        <p className="font-display text-lg font-semibold tracking-tight text-foreground">{post.title}</p>
-                        <p className="text-[12px] text-muted-foreground">{post.scheduledAt}</p>
-                      </div>
-                    </div>
-
-                    <div className="mt-4 flex items-center justify-between">
-                      <div className="flex items-center gap-3 text-foreground">
-                        <Heart className="h-4 w-4" />
-                        <MessageCircle className="h-4 w-4" />
-                        <Send className="h-4 w-4" />
-                      </div>
+                    <div className="flex items-center gap-2">
+                      <Badge variant="outline">#{index + 1}</Badge>
                       <Badge variant="outline">{post.status}</Badge>
                     </div>
-
-                    <p className="mt-3 text-[12px] leading-6 text-muted-foreground">
-                      <span className="font-semibold text-foreground">@{workspace.slug}</span> {post.title}
-                    </p>
-                    <div className="mt-4 flex flex-wrap gap-2">
-                      {post.tags.map((tag) => (
-                        <Pill key={tag}>{tag}</Pill>
-                      ))}
-                    </div>
                   </div>
-                </Card>
-              </SortableCard>
-            ))}
+                </div>
+              ))}
+            </div>
           </div>
-        </SortableContext>
-      </DndContext>
+        </ModuleCard>
+      </div>
     </div>
   );
 }
@@ -1832,6 +1816,7 @@ function PostsModule({ workspace }: { workspace: WorkspaceSnapshot }) {
   );
   const [channelFilter, setChannelFilter] = useState<'todos' | 'Feed' | 'Reels' | 'Stories'>('todos');
   const [publishingId, setPublishingId] = useState<string | null>(null);
+  const instagram = useInstagramConnection(workspace.slug, 'posts');
   const approvals = useWorkspaceStore((state) => state.approvalsByWorkspace[workspace.slug] ?? {});
   const setApprovalStatus = useWorkspaceStore((state) => state.setApprovalStatus);
 
@@ -1890,110 +1875,171 @@ function PostsModule({ workspace }: { workspace: WorkspaceSnapshot }) {
   }
 
   return (
-    <ModuleCard title="Posts agendados" subtitle="Status, legenda e desempenho por canal">
-      <div className="mb-5 flex flex-wrap items-center gap-2">
-        {['todos', 'Feed', 'Reels', 'Stories'].map((channel) => (
-          <Button
-            key={channel}
-            variant={channelFilter === channel ? 'default' : 'outline'}
-            size="sm"
-            className="h-8 rounded-full px-3"
-            onClick={() => setChannelFilter(channel as typeof channelFilter)}
-          >
-            {channel}
-          </Button>
-        ))}
-      </div>
-      <div className="grid gap-4 lg:grid-cols-2 xl:grid-cols-3">
-        {filteredPosts.map((post, index) => (
-          <div key={post.id} className="group relative">
-            <SideBlockActions
-              label="post"
-              onEdit={() => toast.info(`Edicao lateral pronta para ${post.title}.`)}
-              onDelete={() => setPosts((current) => current.filter((item) => item.id !== post.id))}
-            />
-            <div className="surface-muted rounded-[1.5rem] p-4">
-              <div className="flex items-center justify-between gap-3">
-                <div>
-                  <p className="text-[13px] font-medium text-foreground">{post.title}</p>
-                  <p className="mt-1 text-[12px] text-muted-foreground">{post.channel}</p>
+    <div className="space-y-6">
+      <InstagramConnectionPanel
+        data={instagram.data}
+        connectUrl={instagram.data.connectUrl ?? `/api/integrations/meta/connect?workspace=${workspace.slug}&module=posts`}
+        loading={instagram.loading}
+        syncing={instagram.syncing}
+        disconnecting={instagram.disconnecting}
+        onRefresh={instagram.refresh}
+        onDisconnect={instagram.disconnect}
+      />
+
+      <ModuleCard title="Posts agendados" subtitle="Legenda, mídia, aprovação e envio para Instagram">
+        <div className="mb-5 flex flex-wrap items-center gap-2">
+          {['todos', 'Feed', 'Reels', 'Stories'].map((channel) => (
+            <Button
+              key={channel}
+              variant={channelFilter === channel ? 'default' : 'outline'}
+              size="sm"
+              className="h-8"
+              onClick={() => setChannelFilter(channel as typeof channelFilter)}
+            >
+              {channel}
+            </Button>
+          ))}
+        </div>
+
+        <div className="space-y-4">
+          {filteredPosts.map((post, index) => (
+            <div key={post.id} className="group relative">
+              <SideBlockActions
+                label="post"
+                onEdit={() => toast.info(`Edicao lateral pronta para ${post.title}.`)}
+                onDelete={() => setPosts((current) => current.filter((item) => item.id !== post.id))}
+              />
+
+              <div className="grid gap-4 rounded-xl border border-border bg-background p-4 lg:grid-cols-[260px_1fr]">
+                <div className="rounded-[26px] border border-border bg-white p-3">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <p className="text-[12px] font-semibold text-foreground">
+                        @{instagram.data.account?.username ?? workspace.slug}
+                      </p>
+                      <p className="text-[11px] text-muted-foreground">{post.channel}</p>
+                    </div>
+                    <Badge variant="outline">#{index + 1}</Badge>
+                  </div>
+
+                  <div className="mt-3 aspect-[4/5] overflow-hidden rounded-xl border border-border bg-muted p-4">
+                    {post.mediaUrl ? (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img
+                        src={post.mediaUrl}
+                        alt={post.title}
+                        className="h-full w-full rounded-lg object-cover"
+                        loading="lazy"
+                      />
+                    ) : (
+                      <div className="flex h-full flex-col justify-between">
+                        <div className="flex items-center justify-between text-[10px] text-muted-foreground">
+                          <span>Preview</span>
+                          <Pin className="h-3.5 w-3.5" />
+                        </div>
+                        <p className="text-[13px] font-medium leading-6 text-foreground">{post.title}</p>
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="mt-3 flex items-center gap-3 text-muted-foreground">
+                    <Heart className="h-4 w-4" />
+                    <MessageCircle className="h-4 w-4" />
+                    <Send className="h-4 w-4" />
+                  </div>
+
+                  <p className="mt-3 text-[12px] leading-6 text-muted-foreground">
+                    <span className="font-semibold text-foreground">@{instagram.data.account?.username ?? workspace.slug}</span>{' '}
+                    {post.caption}
+                  </p>
                 </div>
-                <Badge variant={post.status === 'Publicado' ? 'success' : post.status === 'Agendado' ? 'warning' : 'outline'}>
-                  {post.status}
-                </Badge>
-              </div>
-              <div className="mt-4 rounded-xl border border-border bg-background p-4">
-                <p className="text-[10px] tracking-[0.08em] text-muted-foreground">Legenda base</p>
-                <Textarea
-                  value={post.caption}
-                  onChange={(event) =>
-                    setPosts((current) =>
-                      current.map((item) => (item.id === post.id ? { ...item, caption: event.target.value } : item))
-                    )
-                  }
-                  className="mt-2 min-h-[120px] border-border bg-white"
-                />
-              </div>
-              <div className="mt-4 grid gap-3">
-                <label className="space-y-1 text-sm">
-                  <span className="text-muted-foreground">Agendamento</span>
-                  <Input
-                    type="datetime-local"
-                    value={post.scheduledAt.replace(' ', 'T')}
-                    onChange={(event) =>
-                      setPosts((current) =>
-                        current.map((item) =>
-                          item.id === post.id ? { ...item, scheduledAt: event.target.value.replace('T', ' ') } : item
+
+                <div className="space-y-4">
+                  <div className="flex flex-wrap items-start justify-between gap-3">
+                    <div>
+                      <p className="text-[14px] font-medium text-foreground">{post.title}</p>
+                      <p className="mt-1 text-[12px] text-muted-foreground">
+                        {post.channel} · Engajamento atual {post.engagement}
+                      </p>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <Badge variant={post.status === 'Publicado' ? 'success' : post.status === 'Agendado' ? 'warning' : 'outline'}>
+                        {post.status}
+                      </Badge>
+                      <ApprovalControls
+                        status={approvals[post.id]}
+                        onChange={(status) => setApprovalStatus(workspace.slug, post.id, status)}
+                      />
+                    </div>
+                  </div>
+
+                  <div className="grid gap-3 lg:grid-cols-2">
+                    <label className="space-y-1 text-sm">
+                      <span className="text-[12px] text-muted-foreground">Agendamento</span>
+                      <Input
+                        type="datetime-local"
+                        value={post.scheduledAt.replace(' ', 'T')}
+                        onChange={(event) =>
+                          setPosts((current) =>
+                            current.map((item) =>
+                              item.id === post.id ? { ...item, scheduledAt: event.target.value.replace('T', ' ') } : item
+                            )
+                          )
+                        }
+                        className="bg-white"
+                      />
+                    </label>
+                    <label className="space-y-1 text-sm">
+                      <span className="text-[12px] text-muted-foreground">Media URL pública</span>
+                      <Input
+                        value={post.mediaUrl}
+                        onChange={(event) =>
+                          setPosts((current) =>
+                            current.map((item) => (item.id === post.id ? { ...item, mediaUrl: event.target.value } : item))
+                          )
+                        }
+                        placeholder="https://..."
+                        className="bg-white"
+                      />
+                    </label>
+                  </div>
+
+                  <div className="rounded-xl border border-border bg-white p-4">
+                    <p className="text-[10px] tracking-[0.08em] text-muted-foreground">Legenda</p>
+                    <Textarea
+                      value={post.caption}
+                      onChange={(event) =>
+                        setPosts((current) =>
+                          current.map((item) => (item.id === post.id ? { ...item, caption: event.target.value } : item))
                         )
-                      )
-                    }
-                    className="rounded-2xl border-white/80 bg-white"
-                  />
-                </label>
-                <label className="space-y-1 text-sm">
-                  <span className="text-muted-foreground">Media URL publica</span>
-                  <Input
-                    value={post.mediaUrl}
-                    onChange={(event) =>
-                      setPosts((current) =>
-                        current.map((item) => (item.id === post.id ? { ...item, mediaUrl: event.target.value } : item))
-                      )
-                    }
-                    placeholder="https://..."
-                    className="rounded-2xl border-white/80 bg-white"
-                  />
-                </label>
-              </div>
-              <div className="mt-4 flex items-center justify-between text-sm">
-                <div>
-                  <p className="text-muted-foreground">Engajamento</p>
-                  <p className="font-medium text-foreground">{post.engagement}</p>
+                      }
+                      className="mt-2 min-h-[120px] border-border bg-background"
+                    />
+                  </div>
+
+                  <div className="flex flex-wrap gap-2">
+                    {post.tags.map((tag) => (
+                      <Pill key={tag}>{tag}</Pill>
+                    ))}
+                  </div>
+
+                  <div className="flex flex-wrap gap-2">
+                    <Button variant="outline" size="sm" onClick={() => handleRewriteCaption(post)}>
+                      <Sparkles className="h-4 w-4" />
+                      Reescrever legenda
+                    </Button>
+                    <Button size="sm" onClick={() => handlePublish(post)} disabled={publishingId === post.id}>
+                      {publishingId === post.id ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
+                      Publicar no Instagram
+                    </Button>
+                  </div>
                 </div>
-                <ApprovalControls
-                  status={approvals[post.id]}
-                  onChange={(status) => setApprovalStatus(workspace.slug, post.id, status)}
-                />
-              </div>
-              <div className="mt-4 flex flex-wrap gap-2">
-                {post.tags.map((tag) => (
-                  <Pill key={tag}>{tag}</Pill>
-                ))}
-              </div>
-              <div className="mt-4 flex flex-wrap gap-2">
-                <Button variant="outline" size="sm" onClick={() => handleRewriteCaption(post)}>
-                  <Sparkles className="h-4 w-4" />
-                  Reescrever legenda
-                </Button>
-                <Button size="sm" onClick={() => handlePublish(post)} disabled={publishingId === post.id}>
-                  {publishingId === post.id ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
-                  Enviar para Meta
-                </Button>
               </div>
             </div>
-          </div>
-        ))}
-      </div>
-    </ModuleCard>
+          ))}
+        </div>
+      </ModuleCard>
+    </div>
   );
 }
 
@@ -2064,7 +2110,7 @@ function MetricsModule({ workspace }: { workspace: WorkspaceSnapshot }) {
               IA analisa
             </Button>
           </div>
-          <div className="h-[340px] rounded-3xl border border-border bg-background p-4">
+          <div className="h-[340px] rounded-xl border border-border bg-background p-4">
             <HydratedChart>
               <ResponsiveContainer width="100%" height="100%">
                 <LineChart data={chartData}>
@@ -2081,7 +2127,7 @@ function MetricsModule({ workspace }: { workspace: WorkspaceSnapshot }) {
 
         <ModuleCard title="Crescimento" subtitle="Comparativo de alcance e engajamento">
           <div className="space-y-4">
-            <div className="h-[180px] rounded-3xl border border-border bg-background p-3">
+            <div className="h-[180px] rounded-xl border border-border bg-background p-3">
               <HydratedChart>
                 <ResponsiveContainer width="100%" height="100%">
                   <AreaChart data={chartData}>
@@ -2099,7 +2145,7 @@ function MetricsModule({ workspace }: { workspace: WorkspaceSnapshot }) {
                 </ResponsiveContainer>
               </HydratedChart>
             </div>
-            <div className="h-[180px] rounded-3xl border border-border bg-background p-3">
+            <div className="h-[180px] rounded-xl border border-border bg-background p-3">
               <HydratedChart>
                 <ResponsiveContainer width="100%" height="100%">
                   <BarChart data={chartData}>
@@ -2112,7 +2158,7 @@ function MetricsModule({ workspace }: { workspace: WorkspaceSnapshot }) {
                 </ResponsiveContainer>
               </HydratedChart>
             </div>
-            <div className="rounded-[1.5rem] border border-border bg-background p-4">
+            <div className="rounded-xl border border-border bg-background p-4">
               {analysis ? (
                 <div className="space-y-3">
                   <p className="font-medium text-foreground">{analysis.summary}</p>
@@ -2183,7 +2229,7 @@ function CompetitorsModule({ workspace }: { workspace: WorkspaceSnapshot }) {
         <ModuleCard title="Monitoramento" subtitle="Sinais, posts e engajamento por concorrente">
           <div className="space-y-4">
             {workspace.competitors.map((competitor) => (
-              <div key={competitor.id} className="rounded-3xl border border-border bg-background p-5">
+              <div key={competitor.id} className="rounded-xl border border-border bg-background p-5">
                 <div className="flex flex-wrap items-start justify-between gap-3">
                   <div>
                     <p className="font-medium">{competitor.name}</p>
@@ -2419,7 +2465,7 @@ function AiChatModule({ workspace }: { workspace: WorkspaceSnapshot }) {
               ['analyzeCompetitors', 'Benchmark de concorrência'],
               ['suggestCalendar', 'Calendário sugerido']
             ].map(([key, label]) => (
-              <div key={key} className="flex items-center justify-between rounded-[1.35rem] border border-white/70 bg-white/88 p-4">
+              <div key={key} className="flex items-center justify-between rounded-lg border border-white/70 bg-white/88 p-4">
                 <div>
                   <p className="font-medium">{label}</p>
                   <p className="text-sm text-muted-foreground">{key}</p>
@@ -2565,19 +2611,19 @@ function AdminModule({ workspace }: { workspace: WorkspaceSnapshot }) {
 
         <ModuleCard title="SaaS settings" subtitle="Multiempresa e permissões">
           <div className="space-y-3">
-            <div className="rounded-3xl border border-border bg-background p-4">
+            <div className="rounded-xl border border-border bg-background p-4">
               <p className="text-xs uppercase tracking-[0.2em] text-muted-foreground">Workspace</p>
               <p className="mt-2 font-medium">{workspace.name}</p>
             </div>
-            <div className="rounded-3xl border border-border bg-background p-4">
+            <div className="rounded-xl border border-border bg-background p-4">
               <p className="text-xs uppercase tracking-[0.2em] text-muted-foreground">Plano atual</p>
               <p className="mt-2 font-medium">{workspace.plan}</p>
             </div>
-            <div className="rounded-3xl border border-border bg-background p-4">
+            <div className="rounded-xl border border-border bg-background p-4">
               <p className="text-xs uppercase tracking-[0.2em] text-muted-foreground">Permissões</p>
               <p className="mt-2 text-sm text-muted-foreground">Super Admin · Admin · Social Media · Filmmaker · Blogueira · Viewer</p>
             </div>
-            <div className="rounded-3xl border border-border bg-background p-4">
+            <div className="rounded-xl border border-border bg-background p-4">
               <p className="text-xs uppercase tracking-[0.2em] text-muted-foreground">Membros online</p>
               <p className="mt-2 font-medium">{members.length} / 5 membros ativos nesta versão</p>
             </div>
@@ -2587,7 +2633,7 @@ function AdminModule({ workspace }: { workspace: WorkspaceSnapshot }) {
 
       <ModuleCard title="Equipe do workspace" subtitle="Crie ate 5 membros e marque a hierarquia operacional">
         <div className="grid gap-6 xl:grid-cols-[0.8fr_1.2fr]">
-          <div className="space-y-3 rounded-[1.75rem] border border-border bg-background p-4">
+          <div className="space-y-3 rounded-xl border border-border bg-background p-4">
             <Input
               value={memberName}
               onChange={(event) => setMemberName(event.target.value)}
@@ -2628,7 +2674,7 @@ function AdminModule({ workspace }: { workspace: WorkspaceSnapshot }) {
 
           <div className="space-y-3">
             {members.map((member) => (
-              <div key={member.id} className="rounded-[1.75rem] border border-border bg-background p-4">
+              <div key={member.id} className="rounded-xl border border-border bg-background p-4">
                 <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
                   <div className="flex items-center gap-4">
                     <span
@@ -2682,7 +2728,7 @@ function AdminModule({ workspace }: { workspace: WorkspaceSnapshot }) {
       <ModuleCard title="Notas internas" subtitle="Backoffice e decisões do time">
         <div className="grid gap-3 md:grid-cols-2">
           {workspace.notes.map((note) => (
-            <div key={note.id} className="rounded-3xl border border-border bg-background p-4">
+            <div key={note.id} className="rounded-xl border border-border bg-background p-4">
               <div className="flex items-center justify-between gap-3">
                 <p className="font-medium">{note.title}</p>
                 <Badge variant="outline">{note.author}</Badge>
@@ -2757,23 +2803,6 @@ export function WorkspaceModuleView({ workspace, module }: WorkspaceModuleProps)
       {module === 'ai' ? <AiChatModule workspace={scopedWorkspace} /> : null}
       {module === 'billing' ? <BillingModule workspace={scopedWorkspace} /> : null}
       {module === 'admin' ? <AdminModule workspace={scopedWorkspace} /> : null}
-
-      <div className="rounded-3xl border border-border bg-white/70 p-4 text-sm text-muted-foreground shadow-soft">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <p>Workspace atual: {workspace.name}</p>
-          <div className="flex flex-wrap gap-2">
-            {navigationItems.slice(0, 5).map((item) => (
-              <Link
-                key={item.key}
-                href={item.href(workspace.slug) as any}
-                className="rounded-full border border-border bg-background px-3 py-1.5"
-              >
-                {item.label}
-              </Link>
-            ))}
-          </div>
-        </div>
-      </div>
     </div>
   );
 }

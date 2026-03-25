@@ -3,7 +3,7 @@
 import { ChevronDown, Grid2x2 } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 
-import { Button } from '@/components/ui/button';
+import { buttonVariants } from '@/components/ui/button';
 import { listWorkspaceSnapshots } from '@/lib/demo-data';
 import { cn } from '@/lib/utils';
 
@@ -14,13 +14,13 @@ export function WorkspaceSwitcher({ currentWorkspace }: { currentWorkspace: stri
   return (
     <details className="group relative">
       <summary className="list-none">
-        <Button variant="outline" size="sm" className="w-full justify-between border-white/80 bg-white px-3 text-[#17171b] hover:bg-white">
+        <div className={cn(buttonVariants({ variant: 'outline', size: 'sm' }), 'w-full justify-between border-white/80 bg-white px-3 text-[#17171b] hover:bg-white')}>
           <span className="flex min-w-0 items-center gap-2 text-left">
             <Grid2x2 className="h-4 w-4 shrink-0" />
             <span className="truncate">{workspaces.find((w) => w.slug === currentWorkspace)?.name ?? 'Workspace'}</span>
           </span>
           <ChevronDown className="h-4 w-4 transition group-open:rotate-180" />
-        </Button>
+        </div>
       </summary>
       <div className="surface-shell absolute left-0 top-[calc(100%+0.5rem)] z-30 w-72 rounded-3xl p-2">
         {workspaces.map((workspace) => (
@@ -29,7 +29,7 @@ export function WorkspaceSwitcher({ currentWorkspace }: { currentWorkspace: stri
             type="button"
             className={cn(
               'flex w-full items-center justify-between rounded-2xl px-4 py-3 text-left text-sm transition hover:bg-accent hover:text-accent-foreground',
-              workspace.slug === currentWorkspace && 'gradient-sunset text-white hover:text-white'
+              workspace.slug === currentWorkspace && 'bg-[#17171b] text-white hover:bg-[#17171b] hover:text-white'
             )}
             onClick={() => {
               router.push(`/${workspace.slug}/dashboard`);
