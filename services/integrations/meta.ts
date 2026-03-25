@@ -401,12 +401,19 @@ export async function getInstagramConnectionSnapshot(accessToken?: string): Prom
       stories
     };
   } catch (error) {
+    const message = error instanceof Error ? error.message : 'Falha ao consultar a Meta Graph API.';
+    const shouldSoftFail =
+      !usingWorkspaceToken &&
+      /malformed access token|invalid oauth|session has expired|invalid access token/i.test(message);
+
     return {
-      ok: false,
+      ok: shouldSoftFail ? true : false,
       connected: false,
       usingWorkspaceToken,
       provider: 'meta-graph',
-      message: error instanceof Error ? error.message : 'Falha ao consultar a Meta Graph API.',
+      message: shouldSoftFail
+        ? 'O token padrão do workspace expirou. Conecte sua própria conta do Instagram para puxar feed, stories e métricas reais.'
+        : message,
       connectUrl,
       insights: [],
       media: [],
