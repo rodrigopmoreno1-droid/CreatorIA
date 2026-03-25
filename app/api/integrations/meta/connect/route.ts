@@ -3,7 +3,7 @@ import { randomUUID } from 'crypto';
 import { NextResponse } from 'next/server';
 
 import {
-  buildMetaConnectUrl,
+  getMetaConnectRequest,
   getMetaStateCookieName,
   serializeMetaOAuthState
 } from '@/services/integrations/meta';
@@ -22,10 +22,24 @@ export async function GET(request: Request) {
     nonce,
     pageId
   });
-  const connectUrl = buildMetaConnectUrl(state);
+  const connectRequest = getMetaConnectRequest(state);
+  const connectUrl = connectRequest.url;
 
   if (!connectUrl) {
-    return NextResponse.redirect(new URL(`/${workspace}/${module}?instagram=missing-config`, url.origin));
+    const redirectUrl = new URL(`/${workspace}/${module}`, url.origin);
+    const status = connectRequest.errorCode === 'missing-config-id' ? 'missing-business-config' : 'missing-config';
+    redirectUrl.searchParams.set('instagram', status);
+
+    if (connectRequest.errorCode) {
+      console.warn('[meta.connect] unable to start Meta OAuth flow', {
+        workspace,
+        module,
+        mode: connectRequest.mode,
+        reason: connectRequest.errorCode
+      });
+    }
+
+    return NextResponse.redirect(redirectUrl);
   }
 
   const response = NextResponse.redirect(connectUrl);

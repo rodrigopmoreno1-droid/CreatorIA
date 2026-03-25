@@ -22,6 +22,15 @@ export type MetaAuthTokenResult = {
   expiresIn?: number;
 };
 
+export type MetaOAuthMode = 'standard' | 'business';
+
+export type MetaConnectRequest = {
+  url: string;
+  mode: MetaOAuthMode;
+  errorCode?: 'missing-app-id' | 'missing-config-id';
+  errorMessage?: string;
+};
+
 type MetaAuthTokenPayload = {
   access_token?: string;
   token_type?: string;
@@ -68,6 +77,7 @@ type MetaResolvedConnection = {
 const META_GRAPH_VERSION = 'v23.0';
 const DEFAULT_META_REDIRECT_URI = 'https://creator-ia.vercel.app/api/integrations/meta/callback';
 const META_STATE_COOKIE = 'contentos-meta-oauth-state';
+const META_CONFIG_ID_ENV_KEY = 'META_CONFIG_ID';
 
 const META_SCOPES = [
   'pages_show_list',
@@ -79,6 +89,14 @@ const META_SCOPES = [
 
 function getMetaRedirectUri() {
   return process.env.META_REDIRECT_URI ?? DEFAULT_META_REDIRECT_URI;
+}
+
+function getMetaConfigId() {
+  return process.env.META_CONFIG_ID?.trim() ?? '';
+}
+
+function shouldUseMetaBusinessLogin() {
+  return Object.prototype.hasOwnProperty.call(process.env, META_CONFIG_ID_ENV_KEY);
 }
 
 function getConfiguredMetaAccessToken() {
@@ -100,6 +118,10 @@ export function getMetaRequestedScopes() {
 
 export function getMetaStateCookieName() {
   return META_STATE_COOKIE;
+}
+
+export function getMetaOAuthMode(): MetaOAuthMode {
+  return shouldUseMetaBusinessLogin() ? 'business' : 'standard';
 }
 
 function sanitizeMetaMessage(message: string) {
@@ -470,17 +492,55 @@ async function resolveStoredConnectionSnapshot(
 }
 
 export function buildMetaConnectUrl(state: string) {
-  if (!process.env.META_APP_ID) {
-    return '';
+  return getMetaConnectRequest(state).url;
+}
+
+export function getMetaConnectRequest(state: string): MetaConnectRequest {
+  const appId = process.env.META_APP_ID?.trim();
+
+  if (!appId) {
+    return {
+      url: '',
+      mode: getMetaOAuthMode(),
+      errorCode: 'missing-app-id',
+      errorMessage: 'O META_APP_ID ainda nao foi configurado.'
+    };
   }
 
   const url = new URL(`https://www.facebook.com/${META_GRAPH_VERSION}/dialog/oauth`);
-  url.searchParams.set('client_id', process.env.META_APP_ID);
+  url.searchParams.set('client_id', appId);
   url.searchParams.set('redirect_uri', getMetaRedirectUri());
-  url.searchParams.set('scope', META_SCOPES.join(','));
   url.searchParams.set('response_type', 'code');
   url.searchParams.set('state', state);
-  return url.toString();
+
+  if (shouldUseMetaBusinessLogin()) {
+    const configId = getMetaConfigId();
+
+    if (!configId) {
+      return {
+        url: '',
+        mode: 'business',
+        errorCode: 'missing-config-id',
+        errorMessage: 'O app da Meta esta em modo Facebook Login for Business, mas META_CONFIG_ID nao foi configurado.'
+      };
+    }
+
+    // Business Login configurations own the permission set, so scopes must not be sent manually.
+    url.searchParams.set('config_id', configId);
+    url.searchParams.set('override_default_response_type', 'true');
+
+    return {
+      url: url.toString(),
+      mode: 'business'
+    };
+  }
+
+  url.searchParams.set('scope', META_SCOPES.join(','));
+
+  return {
+    url: url.toString(),
+    mode: 'standard'
+  };
 }
 
 export function serializeMetaOAuthState(state: MetaOAuthStatePayload) {
@@ -671,6 +731,21 @@ export async function fetchInstagramConnectionSnapshot(params?: {
   connectState?: string;
 }): Promise<InstagramConnectionSnapshot> {
   const connectState = params?.connectState ?? 'demo:posts';
+  const connectRequest = getMetaConnectRequest(connectState);
+
+  if (connectRequest.errorCode === 'missing-config-id') {
+    return {
+      ok: false,
+      connected: false,
+      usingWorkspaceToken: false,
+      provider: 'meta-graph',
+      message: connectRequest.errorMessage ?? 'O META_CONFIG_ID ainda nao foi configurado.',
+      connectUrl: connectRequest.url,
+      insights: [],
+      media: [],
+      stories: []
+    };
+  }
 
   if (!process.env.META_APP_ID || !process.env.META_APP_SECRET) {
     return {
@@ -679,7 +754,7 @@ export async function fetchInstagramConnectionSnapshot(params?: {
       usingWorkspaceToken: false,
       provider: 'meta-graph',
       message: 'As credenciais base da Meta ainda nao estao configuradas.',
-      connectUrl: buildMetaConnectUrl(connectState),
+      connectUrl: connectRequest.url,
       insights: [],
       media: [],
       stories: []
@@ -726,7 +801,7 @@ export async function fetchInstagramConnectionSnapshot(params?: {
       message: shouldSoftFail
         ? 'A conexao salva expirou. Conecte novamente sua conta do Instagram para puxar feed, stories e metricas reais.'
         : message,
-      connectUrl: buildMetaConnectUrl(connectState),
+      connectUrl: connectRequest.url,
       insights: [],
       media: [],
       stories: []

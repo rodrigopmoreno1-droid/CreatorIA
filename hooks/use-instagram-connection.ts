@@ -90,6 +90,11 @@ export function useInstagramConnection(workspaceSlug: string, module: ModuleKey)
       return;
     }
 
+    if (status === 'missing-business-config') {
+      toast.error('O Facebook Login for Business está ativo, mas o META_CONFIG_ID ainda não foi configurado.');
+      return;
+    }
+
     if (status === 'invalid-state') {
       toast.error('Nao foi possivel validar a sessao de conexao do Instagram. Tente novamente.');
       return;
