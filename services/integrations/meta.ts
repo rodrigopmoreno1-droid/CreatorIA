@@ -31,6 +31,14 @@ function getConfiguredInstagramAccountId() {
   );
 }
 
+function sanitizeMetaMessage(message: string) {
+  const accessToken = getMetaAccessToken();
+
+  const withoutRawToken = accessToken ? message.replaceAll(accessToken, '[REDACTED_ACCESS_TOKEN]') : message;
+
+  return withoutRawToken.replace(/EA[A-Za-z0-9]+/g, '[REDACTED_ACCESS_TOKEN]');
+}
+
 async function readGraph<T>(path: string, params: Record<string, string>) {
   const accessToken = getMetaAccessToken();
   const url = new URL(`https://graph.facebook.com/${META_GRAPH_VERSION}/${path}`);
@@ -51,7 +59,7 @@ async function readGraph<T>(path: string, params: Record<string, string>) {
   const payload = (await response.json().catch(() => null)) as T & MetaGraphError;
 
   if (!response.ok) {
-    throw new Error(payload?.error?.message ?? payload?.message ?? `Meta Graph error ${response.status}`);
+    throw new Error(sanitizeMetaMessage(payload?.error?.message ?? payload?.message ?? `Meta Graph error ${response.status}`));
   }
 
   return payload;
@@ -79,7 +87,7 @@ async function postGraph<T>(path: string, body: Record<string, string | boolean>
   const parsed = (await response.json().catch(() => null)) as T & MetaGraphError;
 
   if (!response.ok) {
-    throw new Error(parsed?.error?.message ?? parsed?.message ?? `Meta Graph error ${response.status}`);
+    throw new Error(sanitizeMetaMessage(parsed?.error?.message ?? parsed?.message ?? `Meta Graph error ${response.status}`));
   }
 
   return parsed;
