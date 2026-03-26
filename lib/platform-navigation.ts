@@ -2,6 +2,7 @@ import {
   CalendarDays,
   Clapperboard,
   Bot,
+  CalendarRange,
   ChartColumn,
   LayoutDashboard,
   Package,
@@ -46,6 +47,13 @@ export const platformNavigation: Array<{
     description: 'Calendário e publicação',
     icon: CalendarDays,
     href: (workspace) => `/${workspace}/posts`
+  },
+  {
+    key: 'calendario',
+    label: 'Calendário',
+    description: 'Planejamento visual de conteúdo',
+    icon: CalendarRange,
+    href: (workspace) => `/${workspace}/calendario`
   },
   {
     key: 'creators',

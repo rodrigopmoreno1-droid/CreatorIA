@@ -3,6 +3,7 @@ export type PlatformModuleKey =
   | 'roteiros'
   | 'production'
   | 'posts'
+  | 'calendario'
   | 'creators'
   | 'metrics'
   | 'products'
