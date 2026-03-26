@@ -1305,7 +1305,7 @@ async function callAnthropicWithWebSearch(
   return extracted;
 }
 
-async function callGemini(prompt: string) {
+async function callGemini(prompt: string, options?: { maxTokens?: number }) {
   const response = await fetch(
     `https://generativelanguage.googleapis.com/v1beta/models/${process.env.GEMINI_MODEL ?? 'gemini-2.0-flash'}:generateContent?key=${process.env.GEMINI_API_KEY}`,
     {
@@ -1323,7 +1323,7 @@ async function callGemini(prompt: string) {
         ],
         generationConfig: {
           temperature: 0.5,
-          maxOutputTokens: 1400
+          maxOutputTokens: options?.maxTokens ?? 1400
         }
       })
     }
@@ -1337,7 +1337,7 @@ async function callGemini(prompt: string) {
   return payload?.candidates?.[0]?.content?.parts?.[0]?.text ?? null;
 }
 
-async function callGeminiWithParts(parts: Array<{ text?: string; inline_data?: { mime_type: string; data: string } }>) {
+async function callGeminiWithParts(parts: Array<{ text?: string; inline_data?: { mime_type: string; data: string } }>, options?: { maxTokens?: number }) {
   const response = await fetch(
     `https://generativelanguage.googleapis.com/v1beta/models/${process.env.GEMINI_MODEL ?? 'gemini-2.0-flash'}:generateContent?key=${process.env.GEMINI_API_KEY}`,
     {
@@ -1351,7 +1351,7 @@ async function callGeminiWithParts(parts: Array<{ text?: string; inline_data?: {
         ],
         generationConfig: {
           temperature: 0.3,
-          maxOutputTokens: 1800
+          maxOutputTokens: options?.maxTokens ?? 1800
         }
       })
     }
@@ -1365,12 +1365,20 @@ async function callGeminiWithParts(parts: Array<{ text?: string; inline_data?: {
   return payload?.candidates?.[0]?.content?.parts?.[0]?.text ?? null;
 }
 
-async function callProvider(prompt: string) {
+async function callProvider(prompt: string, options?: { maxTokens?: number }) {
   const providers = getProviderCandidates();
 
   for (const provider of providers) {
     try {
-      const response = provider === 'anthropic' ? await callAnthropic(prompt) : await callGemini(prompt);
+      let response: string | null;
+
+      if (provider === 'anthropic') {
+        const payload = await callAnthropicMessages(prompt, { maxTokens: options?.maxTokens });
+        response = extractAnthropicResponse(payload).text || null;
+      } else {
+        response = await callGemini(prompt, options);
+      }
+
       if (response) {
         return response;
       }
@@ -1563,6 +1571,41 @@ function parseStructuredResponse<T>(response: string | null, fallback: T): T {
   }
 }
 
+function repairTruncatedJson(text: string) {
+  let repaired = text.trim();
+
+  // Close any open strings
+  const quoteCount = (repaired.match(/(?<!\\)"/g) ?? []).length;
+  if (quoteCount % 2 !== 0) {
+    repaired += '"';
+  }
+
+  // Remove trailing commas before closing brackets
+  repaired = repaired.replace(/,\s*$/, '');
+
+  // Count open/close brackets and close any unclosed ones
+  const opens = { '{': 0, '[': 0 };
+  const closes: Record<string, string> = { '{': '}', '[': ']' };
+  const closeOrder: string[] = [];
+
+  for (const char of repaired) {
+    if (char === '{' || char === '[') {
+      opens[char] += 1;
+      closeOrder.push(closes[char]);
+    } else if (char === '}' || char === ']') {
+      closeOrder.pop();
+      opens[char === '}' ? '{' : '['] -= 1;
+    }
+  }
+
+  // Close unclosed brackets in reverse order
+  while (closeOrder.length > 0) {
+    repaired += closeOrder.pop();
+  }
+
+  return repaired;
+}
+
 function tryParseJsonFragment(response: string | null) {
   if (!response) {
     return null;
@@ -1573,8 +1616,16 @@ function tryParseJsonFragment(response: string | null) {
     return null;
   }
 
+  // Try direct parse first
   try {
     return JSON.parse(fragment);
+  } catch {
+    // JSON might be truncated — try to repair it
+  }
+
+  // Try repairing truncated JSON
+  try {
+    return JSON.parse(repairTruncatedJson(fragment));
   } catch {
     return null;
   }
@@ -1790,6 +1841,11 @@ function extractProductImportRecordsFromText(text: string, maxItems: number) {
   return lineProducts.slice(0, maxItems);
 }
 
+function looksLikeJsonResponse(text: string) {
+  const trimmed = text.trim();
+  return trimmed.startsWith('{') || trimmed.startsWith('[') || /^```json/i.test(trimmed);
+}
+
 function extractProductImportRecordsFromResponse(response: string | null, maxItems: number) {
   if (!response) {
     return [];
@@ -1798,6 +1854,12 @@ function extractProductImportRecordsFromResponse(response: string | null, maxIte
   const structured = extractProductImportRecordsFromJsonLike(tryParseJsonFragment(response), maxItems);
   if (structured.length) {
     return structured;
+  }
+
+  // If the response looks like JSON but parsing failed, do NOT fall back to text parsing
+  // because the text parser will treat JSON fragments as product names/descriptions
+  if (looksLikeJsonResponse(response)) {
+    return [];
   }
 
   return extractProductImportRecordsFromText(response, maxItems);
@@ -2158,10 +2220,13 @@ export async function extractProductsFromSource(input: ProductImportInput) {
     uploadedFile && !uploadedFile.pageTexts?.length && !uploadedFile.text ? buildAnthropicImportContent(uploadedFile, prompt) : null;
   const candidates: Array<{ provider: string; products: ProductImportRecord[] }> = [];
 
+  // Token budget: ~300 tokens per product in JSON, so for maxItems products we need headroom
+  const importMaxTokens = Math.min(8000, Math.max(3200, maxItems * 300));
+
   // Strategy A: Text-based AI extraction (only if we have text content)
   if ((uploadedFile?.text || uploadedFile?.pageTexts?.length) && (process.env.ANTHROPIC_API_KEY || process.env.GEMINI_API_KEY)) {
     try {
-      const textResponse = await callProvider(prompt);
+      const textResponse = await callProvider(prompt, { maxTokens: importMaxTokens });
       if (textResponse) {
         candidates.push({
           provider: 'ai-text',
@@ -2178,7 +2243,7 @@ export async function extractProductsFromSource(input: ProductImportInput) {
     try {
       const payload = await callAnthropicMessages(anthropicContent, {
         temperature: 0.1,
-        maxTokens: 2600
+        maxTokens: importMaxTokens
       });
 
       candidates.push({
@@ -2203,7 +2268,7 @@ export async function extractProductsFromSource(input: ProductImportInput) {
             data: uploadedFile.base64
           }
         }
-      ]);
+      ], { maxTokens: importMaxTokens });
 
       candidates.push({
         provider: 'gemini',
@@ -2218,7 +2283,7 @@ export async function extractProductsFromSource(input: ProductImportInput) {
   const hasAnyCandidateProducts = candidates.some((c) => c.products.length > 0);
   if (!hasAnyCandidateProducts) {
     try {
-      const response = await callProvider(prompt);
+      const response = await callProvider(prompt, { maxTokens: importMaxTokens });
       candidates.push({
         provider: 'fallback',
         products: extractProductImportRecordsFromResponse(response, maxItems)
