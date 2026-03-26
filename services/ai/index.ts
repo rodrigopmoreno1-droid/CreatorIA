@@ -1,4 +1,5 @@
 import { createSupabaseAdminClient } from '@/lib/supabase/admin';
+import { buildGenerationPlan, formatGenerationPlanForPrompt } from '@/lib/content-engine/planner';
 import { PRODUCT_IMPORT_BUCKET } from '@/lib/product-import-storage';
 
 type IdeaInput = {
@@ -123,6 +124,18 @@ type WebContextResult = {
   sources: WebSource[];
 };
 
+type TrendResearchResult = {
+  windowLabel: string;
+  summary: string;
+  viralFormats: string[];
+  hookPatterns: string[];
+  storytellingPatterns: string[];
+  executionNotes: string[];
+};
+
+const TREND_RESEARCH_TTL_MS = 1000 * 60 * 60 * 6;
+const trendResearchCache = new Map<string, { expiresAt: number; result: TrendResearchResult }>();
+
 type ChatIntent = 'hooks' | 'trend' | 'script' | 'stories' | 'metrics' | 'competitors' | 'calendar' | 'products' | 'general';
 
 type ResolvedProductImportFile = {
@@ -135,6 +148,7 @@ type ResolvedProductImportFile = {
 };
 
 import type { CarrosselSlide, PostFields, StorySlide } from '@/types/platform';
+import type { GenerationPlan as ContentGenerationPlan } from '@/lib/content-engine/types';
 
 type ScriptDraftResponse = {
   title: string;
@@ -478,6 +492,26 @@ function clipWords(value: string, maxWords: number, maxLength = 80) {
   return words.join(' ').slice(0, maxLength).trim();
 }
 
+function tightenHookLine(value: string, fallback: string, maxWords = 12, maxLength = 100) {
+  const cleaned = cleanSingleLineText(value, maxLength).replace(/[?]+/g, '').trim();
+  if (!cleaned) {
+    return fallback;
+  }
+
+  const stopwords = new Set(['de', 'da', 'do', 'das', 'dos', 'e', 'ou', 'com', 'sem', 'em', 'no', 'na', 'nos', 'nas', 'para', 'por', 'sobre']);
+  const words = cleaned
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, maxWords);
+
+  while (words.length > 3 && stopwords.has(normalizeMatchText(words[words.length - 1]))) {
+    words.pop();
+  }
+
+  const tightened = words.join(' ').replace(/[,:;.-]+$/g, '').trim();
+  return tightened || fallback;
+}
+
 function lowerFirst(value: string) {
   const text = cleanTextValue(value);
   return text ? `${text.charAt(0).toLowerCase()}${text.slice(1)}` : '';
@@ -584,6 +618,24 @@ function buildBriefSeed(input: ScriptVariantInput) {
   };
 }
 
+function getScriptStyleFlags(input: ScriptVariantInput) {
+  const tones = resolveActiveTones(input.tones, input.tone);
+  const objectives = resolveActiveObjectives(input.objectives, input.objective);
+
+  return {
+    tones,
+    objectives,
+    storytelling: tones.includes('storytelling'),
+    trend: tones.includes('trend'),
+    authority: tones.includes('autoridade'),
+    educational: tones.includes('educativo'),
+    natural: tones.includes('natural'),
+    relationship: objectives.includes('relacionamento'),
+    reach: objectives.includes('alcance'),
+    sell: objectives.includes('vender')
+  };
+}
+
 function buildHashtags(...parts: Array<string | null | undefined>) {
   const stopwords = new Set(['com', 'para', 'sem', 'por', 'nao', 'mais', 'muito', 'muita', 'uma', 'umas', 'uns', 'seu', 'sua', 'isso', 'esse', 'essa', 'de', 'da', 'do']);
   const tags = uniqueNonEmptyStrings(parts)
@@ -600,6 +652,26 @@ function buildHashtags(...parts: Array<string | null | undefined>) {
     .map((item) => `#${item}`);
 
   return [...new Set(['#creatorai', '#conteudostrategico', ...tags])].slice(0, 5).join(' ');
+}
+
+function applyFormulaTemplate(
+  template: string,
+  values: {
+    dor?: string;
+    beneficio?: string;
+    tema?: string;
+    produto?: string;
+    palavra?: string;
+  }
+) {
+  return template
+    .replace(/\[dor\]/gi, values.dor ?? '')
+    .replace(/\[beneficio\]/gi, values.beneficio ?? '')
+    .replace(/\[tema\]/gi, values.tema ?? '')
+    .replace(/\[produto\]/gi, values.produto ?? '')
+    .replace(/\[palavra\]/gi, values.palavra ?? 'quero')
+    .replace(/\s{2,}/g, ' ')
+    .trim();
 }
 
 function buildSocialTrendQuery(...parts: Array<string | null | undefined>) {
@@ -1436,6 +1508,19 @@ function getProviderCandidates(): Provider[] {
   return providers;
 }
 
+function orderProviders(providers: Provider[], mode?: 'balanced' | 'cost') {
+  if (mode !== 'cost') {
+    return providers;
+  }
+
+  const rank: Record<Provider, number> = {
+    gemini: 0,
+    anthropic: 1
+  };
+
+  return [...providers].sort((left, right) => rank[left] - rank[right]);
+}
+
 async function callAnthropic(prompt: string) {
   const payload = await callAnthropicMessages(prompt);
   return extractAnthropicResponse(payload).text || null;
@@ -1522,8 +1607,8 @@ async function callGeminiWithParts(parts: Array<{ text?: string; inline_data?: {
   return payload?.candidates?.[0]?.content?.parts?.[0]?.text ?? null;
 }
 
-async function callProvider(prompt: string, options?: { maxTokens?: number }) {
-  const providers = getProviderCandidates();
+async function callProvider(prompt: string, options?: { maxTokens?: number; providerMode?: 'balanced' | 'cost' }) {
+  const providers = orderProviders(getProviderCandidates(), options?.providerMode);
 
   for (const provider of providers) {
     try {
@@ -1606,6 +1691,21 @@ async function buildWebContextResult(prompt: string): Promise<WebContextResult |
     return null;
   }
 
+  const directResults = await searchWeb(prompt);
+
+  if (directResults.length) {
+    return {
+      summary: directResults
+        .slice(0, 4)
+        .map((result) => `- ${result.title}: ${result.snippet}`)
+        .join('\n'),
+      sources: directResults.map((result) => ({
+        title: result.title,
+        url: result.url
+      }))
+    };
+  }
+
   if (process.env.ANTHROPIC_API_KEY) {
     try {
       const currentDate = getCurrentDateLabel();
@@ -1631,26 +1731,11 @@ async function buildWebContextResult(prompt: string): Promise<WebContextResult |
         };
       }
     } catch {
-      // Fallback to the light web search scraper below.
+      // Fall back to no context below.
     }
   }
 
-  const results = await searchWeb(prompt);
-
-  if (!results.length) {
-    return null;
-  }
-
-  return {
-    summary: results
-      .slice(0, 4)
-      .map((result) => `- ${result.title}: ${result.snippet}`)
-      .join('\n'),
-    sources: results.map((result) => ({
-      title: result.title,
-      url: result.url
-    }))
-  };
+  return null;
 }
 
 async function buildWebContext(prompt: string) {
@@ -1664,6 +1749,215 @@ async function buildWebContext(prompt: string) {
     'Contexto web atual coletado para apoiar a resposta. Use apenas como suporte, sem inventar alem do que estiver aqui.',
     context.summary
   ].join('\n\n');
+}
+
+function buildTrendResearchQuery(input: ScriptVariantInput) {
+  return buildSocialTrendQuery(
+    input.productName ?? '',
+    input.pain ?? '',
+    input.benefit ?? '',
+    input.targetAudience ?? '',
+    input.contentType ?? 'reels',
+    resolveActiveObjectives(input.objectives, input.objective).join(' '),
+    resolveActiveTones(input.tones, input.tone).join(' '),
+    'instagram tiktok reels hooks storytelling formato viral conteudo que performa agora'
+  );
+}
+
+function buildTrendResearchFallback(input: ScriptVariantInput): TrendResearchResult {
+  const contentType = input.contentType ?? 'reels';
+
+  const byFormat: Record<string, TrendResearchResult> = {
+    reels: {
+      windowLabel: 'Sem pesquisa web disponivel, usando heuristicas atuais de creator',
+      summary: 'Videos curtos seguem performando melhor quando abrem com quebra de expectativa, situacao real ou erro comum em linguagem de creator.',
+      viralFormats: ['POV com virada rapida', 'Erro comum + descoberta', 'Antes e depois com prova visual', '3 coisas que quase ninguem percebe'],
+      hookPatterns: ['Tem um erro que esta travando isso', 'Ninguem fala disso sobre esse problema', 'Eu achei que era normal viver assim', 'Se voce faz isso, talvez esteja piorando tudo'],
+      storytellingPatterns: ['situacao -> frustacao -> descoberta -> virada -> CTA', 'rotina real -> erro invisivel -> ajuste -> resultado', 'mini-historia em primeira pessoa com revelacao no meio'],
+      executionNotes: ['Abrir com frase curta em tom humano', 'Entrar no problema em ate 2 frases', 'Virada antes da metade do video', 'CTA curto, acionavel e sem cara de anuncio']
+    },
+    video_curto: {
+      windowLabel: 'Sem pesquisa web disponivel, usando heuristicas atuais de creator',
+      summary: 'Video curto precisa ter progressao rapida, cortes claros e uma unica promessa central, sem texto institucional.',
+      viralFormats: ['POV + texto na tela', 'Lista curta com 3 pontos', 'Expectativa vs realidade', 'Erro comum narrado em primeira pessoa'],
+      hookPatterns: ['A maioria tenta resolver isso errado', 'Isso aqui me fez perceber um erro', 'Se voce anda assim, presta atencao nisso', 'Eu demorei para entender isso'],
+      storytellingPatterns: ['abertura em primeira pessoa -> problema -> virada -> solucao', 'situacao real -> contraste -> descoberta -> CTA'],
+      executionNotes: ['Hook nos primeiros 2 segundos', 'Frases ainda mais curtas que em reels', 'Cada bloco precisa servir a retencao', 'Produto entra so depois da descoberta']
+    },
+    stories: {
+      windowLabel: 'Sem pesquisa web disponivel, usando heuristicas atuais de creator',
+      summary: 'Stories performam quando parecem bastidor real, com selfie, texto curto na tela e progressao de curiosidade ate o CTA.',
+      viralFormats: ['Selfie + texto forte', 'Sequencia tipo bastidor', 'Pergunta + revelacao + CTA', 'POV rapido em 3 telas'],
+      hookPatterns: ['O erro que trava seu resultado', 'Eu achei que era normal sentir isso', 'Ninguem me falou essa parte', 'Foi aqui que eu percebi o problema'],
+      storytellingPatterns: ['gancho -> problema -> revelacao', 'situacao do dia a dia -> descoberta -> CTA', 'quebra de crenca -> ajuste -> convite para responder'],
+      executionNotes: ['Texto na tela com poucas palavras', 'Fala oral, simples e cortada', 'Cada story precisa dar motivo para ver o proximo', 'CTA no final com resposta facil']
+    },
+    carrossel: {
+      windowLabel: 'Sem pesquisa web disponivel, usando heuristicas atuais de creator',
+      summary: 'Carrosseis continuam performando quando a capa promete um erro, mito ou virada e cada slide entrega um passo claro.',
+      viralFormats: ['Erro comum em sequencia', 'Lista de mitos e correcoes', 'Passo a passo curto', 'Antes vs depois com contraste'],
+      hookPatterns: ['O erro que trava seu resultado', 'Ninguem te conta isso sobre esse tema', '3 sinais de que voce esta fazendo errado', 'Se voce quer melhorar isso, leia ate o fim'],
+      storytellingPatterns: ['capa -> problema -> descoberta -> solucao -> CTA', 'mito -> correcao -> prova -> CTA'],
+      executionNotes: ['Capa precisa forcar o swipe', 'Um insight por slide', 'Texto enxuto e facil de salvar', 'Ultimo slide sempre com CTA claro']
+    },
+    post: {
+      windowLabel: 'Sem pesquisa web disponivel, usando heuristicas atuais de creator',
+      summary: 'Post estatico performa quando a frase principal para o scroll e a legenda continua a tensao com linguagem humana.',
+      viralFormats: ['Frase forte na arte', 'Crenca quebrada', 'Dado curto + contexto', 'Mini-lista visual'],
+      hookPatterns: ['Nao e falta de disciplina', 'O problema pode estar aqui', 'Tem uma parte que ninguem fala', 'Voce nao precisa de mais, precisa disso'],
+      storytellingPatterns: ['frase principal -> contexto -> virada na legenda -> CTA', 'crenca comum -> quebra -> direcionamento'],
+      executionNotes: ['Titulo da peca em ate 7 palavras', 'Legenda com abertura forte e curta', 'Tom de creator, nao de anuncio', 'CTA para salvar, comentar ou chamar']
+    }
+  };
+
+  return byFormat[contentType] ?? byFormat.reels;
+}
+
+function normalizeTrendResearch(payload: unknown, fallback: TrendResearchResult): TrendResearchResult {
+  if (!payload || typeof payload !== 'object') {
+    return fallback;
+  }
+
+  const raw = payload as Record<string, unknown>;
+
+  const normalizeList = (value: unknown, backup: string[], maxItems = backup.length) => {
+    if (!Array.isArray(value)) {
+      return backup;
+    }
+
+    const list = value
+      .map((item) => cleanSingleLineText(item, 180))
+      .filter((item) => item && !isPlaceholderText(item))
+      .slice(0, maxItems);
+
+    return list.length ? list : backup;
+  };
+
+  return {
+    windowLabel: chooseSingleLine(raw.windowLabel ?? raw.window ?? raw.timeWindow, fallback.windowLabel, 120, 8),
+    summary: chooseParagraph(raw.summary, fallback.summary, 420, 20),
+    viralFormats: normalizeList(raw.viralFormats ?? raw.formats, fallback.viralFormats, 4),
+    hookPatterns: normalizeList(raw.hookPatterns ?? raw.hooks, fallback.hookPatterns, 4),
+    storytellingPatterns: normalizeList(raw.storytellingPatterns ?? raw.storyPatterns, fallback.storytellingPatterns, 4),
+    executionNotes: normalizeList(raw.executionNotes ?? raw.notes, fallback.executionNotes, 4)
+  };
+}
+
+function getTrendResearchCacheKey(plan: ContentGenerationPlan) {
+  return [plan.brief.contentType, plan.brief.seed, plan.brief.tones.join(','), plan.brief.objectives.join(',')].join(':');
+}
+
+function readTrendResearchCache(key: string) {
+  const cached = trendResearchCache.get(key);
+
+  if (!cached) {
+    return null;
+  }
+
+  if (cached.expiresAt <= Date.now()) {
+    trendResearchCache.delete(key);
+    return null;
+  }
+
+  return cached.result;
+}
+
+function writeTrendResearchCache(key: string, result: TrendResearchResult) {
+  trendResearchCache.set(key, {
+    expiresAt: Date.now() + TREND_RESEARCH_TTL_MS,
+    result
+  });
+}
+
+function resolveGenerationMaxTokens(plan: ContentGenerationPlan, contentType: string) {
+  if (contentType === 'carrossel') {
+    const units = Math.max(2, plan.brief.unitCount);
+    return plan.costProfile === 'trend'
+      ? Math.min(4200, 2400 + units * 220)
+      : Math.min(3200, 1800 + units * 170);
+  }
+
+  if (contentType === 'stories') {
+    return plan.costProfile === 'trend' ? 2600 : 2100;
+  }
+
+  if (contentType === 'post') {
+    return plan.costProfile === 'trend' ? 2200 : 1800;
+  }
+
+  return plan.costProfile === 'trend' ? 3000 : 2400;
+}
+
+function resolvePolishMaxTokens(plan: ContentGenerationPlan, contentType: string) {
+  if (contentType === 'carrossel') {
+    return plan.costProfile === 'trend' ? 3000 : 2200;
+  }
+
+  return plan.costProfile === 'trend' ? 2400 : 1800;
+}
+
+async function researchContentTrends(input: ScriptVariantInput, plan: ContentGenerationPlan): Promise<TrendResearchResult> {
+  const fallback = buildTrendResearchFallback(input);
+
+  if (!plan.useTrendResearch) {
+    return {
+      ...fallback,
+      windowLabel: 'Pesquisa externa nao acionada; usando biblioteca interna e heuristicas do produto'
+    };
+  }
+
+  const cacheKey = getTrendResearchCacheKey(plan);
+  const cached = readTrendResearchCache(cacheKey);
+
+  if (cached) {
+    return cached;
+  }
+
+  const webContext = await buildWebContextResult(buildTrendResearchQuery(input));
+
+  if (!webContext?.summary || !getProviderCandidates().length) {
+    return fallback;
+  }
+
+  const prompt = [
+    'Voce e uma IA de pesquisa de tendencias para criacao de conteudo.',
+    'Sua funcao aqui NAO e escrever o roteiro. Sua funcao e resumir o que esta performando agora para esse briefing.',
+    'Foque em Instagram, TikTok, Reels, Stories, carrossel e formatos de creator.',
+    'Responda somente JSON valido.',
+    'Formato esperado: {"windowLabel":"","summary":"","viralFormats":["","",""],"hookPatterns":["","",""],"storytellingPatterns":["","",""],"executionNotes":["","",""]}.',
+    'Procure formatos, hooks e estruturas que realmente ajudem a gerar um roteiro mais gravavel e mais nativo.',
+    'Nao liste links na resposta final. Nao escreva o roteiro.',
+    '',
+    '=== BRIEFING ===',
+    `Formato alvo: ${resolveContentTypeLabel(input.contentType)}`,
+    formatGenerationPlanForPrompt(plan),
+    ...buildBriefingLines(input),
+    '',
+    '=== PESQUISA WEB RESUMIDA ===',
+    webContext.summary
+  ]
+    .filter(Boolean)
+    .join('\n\n');
+
+  const parsed = parseStructuredResponse(await callProvider(prompt, { maxTokens: 1400, providerMode: 'cost' }), fallback);
+  const normalized = normalizeTrendResearch(parsed, fallback);
+  writeTrendResearchCache(cacheKey, normalized);
+  return normalized;
+}
+
+function formatTrendResearchForPrompt(research: TrendResearchResult) {
+  return [
+    `Janela observada: ${research.windowLabel}`,
+    `Leitura geral: ${research.summary}`,
+    'Formatos em alta:',
+    ...research.viralFormats.map((item) => `- ${item}`),
+    'Hooks que estao funcionando:',
+    ...research.hookPatterns.map((item) => `- ${item}`),
+    'Estruturas de storytelling observadas:',
+    ...research.storytellingPatterns.map((item) => `- ${item}`),
+    'Notas de execucao:',
+    ...research.executionNotes.map((item) => `- ${item}`)
+  ].join('\n');
 }
 
 function getCreatorAiBaseRules() {
@@ -2334,67 +2628,107 @@ function buildBriefingLines(input: ScriptVariantInput, extras: string[] = []): (
   ];
 }
 
-function buildVideoFallback(input: ScriptVariantInput): ScriptDraftResponse {
-  const brief = buildBriefSeed(input);
-  const theme = lowerFirst(brief.topic || brief.problem || brief.benefit || 'esse tema');
-  const productMention = brief.product || 'a solucao certa';
-  const audienceMention = lowerFirst(brief.audience || 'quem vive isso');
-
+function buildPlanSeedValues(brief: ReturnType<typeof buildBriefSeed>) {
   return {
-    title: `${input.contentType === 'video_curto' ? 'Video curto' : 'Reels'} - ${brief.product || brief.shortBenefit}`,
-    hook: chooseSingleLine(
-      `Se voce quer ${brief.shortBenefit}, talvez esteja insistindo no caminho errado.`,
-      `Se voce quer ${theme}, talvez esteja insistindo no caminho errado.`,
-      120,
-      10
-    ),
-    spoken: `Se ${lowerFirst(brief.problem)}, o ponto nao costuma ser falta de esforco. Normalmente o bloqueio esta em repetir uma estrategia que nao conversa com a sua rotina. Quando voce entende isso, fica mais facil buscar ${lowerFirst(brief.benefit)} com mais clareza e menos excesso. Foi exatamente por isso que ${productMention} entrou como apoio real para ${audienceMention}.`,
-    takes: [
-      'Close no rosto, olhando direto para a camera com expressao de alerta',
-      `Texto na tela destacando o erro mais comum sobre ${theme}`,
-      `Corte mostrando o momento em que ${productMention} entra na rotina`,
-      `B-roll com prova visual ligada a ${brief.shortBenefit}`,
-      'Fechamento com CTA direto, olho na camera e gesto chamando para a acao'
-    ],
-    cta: `Se isso fez sentido para voce, me chama no direct e eu te mostro como aplicar isso com ${productMention}.`,
-    caption: `O problema quase nunca e querer demais. O problema e repetir uma estrategia que nao conversa com a sua rotina.\n\nSe ${lowerFirst(brief.problem)}, vale ajustar a base antes de desistir.\n\nMe chama no direct se quiser entender como ${productMention} entra nisso de forma pratica.\n\n${buildHashtags(brief.product, brief.benefit, brief.problem)}`
+    dor: lowerFirst(brief.problem || 'esse problema'),
+    beneficio: lowerFirst(brief.benefit || 'esse resultado'),
+    tema: lowerFirst(brief.topic || brief.problem || brief.benefit || 'esse tema'),
+    produto: brief.product || 'essa solucao',
+    palavra: 'quero'
   };
 }
 
-function buildStoriesFallback(input: ScriptVariantInput, count: number): ScriptDraftResponse {
+function resolvePlannedHook(plan: ContentGenerationPlan, brief: ReturnType<typeof buildBriefSeed>) {
+  const values = buildPlanSeedValues(brief);
+  const template = plan.hookPatterns[0]?.formula;
+
+  return tightenHookLine(
+    template ? applyFormulaTemplate(template, values) : '',
+    `Se voce quer ${brief.shortBenefit}, talvez esteja insistindo no caminho errado.`,
+    12,
+    100
+  );
+}
+
+function resolvePlannedCta(plan: ContentGenerationPlan, brief: ReturnType<typeof buildBriefSeed>) {
+  const values = buildPlanSeedValues(brief);
+  const template = plan.ctaPattern?.formula;
+
+  return chooseSingleLine(
+    template ? applyFormulaTemplate(template, values) : '',
+    `Me chama no direct e eu te mostro como aplicar isso com ${brief.product || 'essa solucao'}.`,
+    180,
+    8
+  );
+}
+
+function buildVideoFallback(input: ScriptVariantInput, plan: ContentGenerationPlan): ScriptDraftResponse {
+  const brief = buildBriefSeed(input);
+  const theme = lowerFirst(brief.topic || brief.problem || brief.benefit || 'esse tema');
+  const productMention = brief.product || 'a solucao certa';
+  const hook = resolvePlannedHook(plan, brief);
+  const cta = resolvePlannedCta(plan, brief);
+  const arc = plan.storytellingPattern.stages;
+  const trendLabel = plan.trendPatterns[0]?.label ?? 'creator-first';
+  const nicheAngle = plan.nichePatterns[0]?.contentAngles[0] ?? 'erro comum';
+  const proofPoint = lowerFirst(plan.nichePatterns[0]?.proofPoints[0] ?? brief.shortBenefit);
+  const styleDirection = plan.communicationStyles[0]?.notes[0] ?? 'Fala como creator, nao como marca';
+  const objectiveDirection = lowerFirst(plan.objectiveStrategies[0]?.ctaDirection ?? 'levar para o proximo passo');
+
+  return {
+    title: `${input.contentType === 'video_curto' ? 'Video curto' : 'Reels'} - ${brief.product || brief.shortBenefit}`,
+    hook,
+    spoken: `Se ${lowerFirst(brief.problem)}, comeca por ${nicheAngle}, nao por prometer milagre. Eu achei que era so uma fase, mas percebi que o problema estava em repetir o mesmo caminho sem notar a causa real. Quando entrou ${arc[2] ?? 'a descoberta certa'}, ${productMention} virou apoio para buscar ${lowerFirst(brief.benefit)} com mais ${proofPoint}. ${styleDirection}.`,
+    takes: [
+      `Abrir em close com expressao de alerta, usando o hook "${hook}" na tela`,
+      `Mostrar a situacao real de ${theme} em linguagem visual simples e nativa do formato ${trendLabel}`,
+      `Inserir a virada quando ${productMention} aparece como apoio ligado a ${proofPoint}`,
+      `B-roll com prova visual do antes e depois percebido em ${brief.shortBenefit}`,
+      `Fechamento com CTA direto, olho na camera e gesto chamando para a acao (${objectiveDirection})`
+    ],
+    cta,
+    caption: `Tem uma diferenca enorme entre insistir mais e ajustar o que realmente trava ${lowerFirst(brief.problem)}.\n\nSe esse tema bateu em voce, olha para ${nicheAngle} antes de achar que o problema e falta de esforco.\n\n${cta}\n\n${buildHashtags(brief.product, brief.benefit, brief.problem)}`
+  };
+}
+
+function buildStoriesFallback(input: ScriptVariantInput, count: number, plan: ContentGenerationPlan): ScriptDraftResponse {
   const brief = buildBriefSeed(input);
   const productMention = brief.product || 'essa solucao';
+  const hook = resolvePlannedHook(plan, brief);
+  const cta = resolvePlannedCta(plan, brief);
+  const nicheAngle = plan.nichePatterns[0]?.contentAngles[0] ?? 'erro comum';
+  const proofPoint = lowerFirst(plan.nichePatterns[0]?.proofPoints[0] ?? brief.shortBenefit);
   const slides: StorySlide[] = [];
 
   const templates: StorySlide[] = [
     {
       objetivo: 'gancho',
-      textoTela: 'O erro que trava seu resultado',
-      falado: `Se ${lowerFirst(brief.problem)}, tem um ponto que quase sempre passa batido e trava seu resultado.`,
+      textoTela: clipWords(hook, 7, 42) || 'O erro que trava seu resultado',
+      falado: `Se ${lowerFirst(brief.problem)}, presta atencao porque esse e o ponto que quase sempre trava seu resultado.`,
       visual: 'Selfie olhando direto para a camera, com texto forte ocupando o centro da tela'
     },
     {
       objetivo: 'contexto',
       textoTela: 'Nao e falta de esforco',
-      falado: `Na maioria das vezes, o problema nao e disciplina. E insistir em um caminho que nao conversa com a sua rotina.`,
+      falado: `Na maioria das vezes, o problema nao e disciplina. E insistir em ${nicheAngle} sem perceber o que realmente trava a sua rotina.`,
       visual: 'Plano medio, corte limpo, com apoio de texto curto reforcando a quebra de crenca'
     },
     {
       objetivo: 'revelacao',
-      textoTela: clipWords(`${brief.shortProduct} entra aqui`, 5, 34) || 'A solucao entra aqui',
-      falado: `Quando voce organiza a base e usa ${productMention} com intencao, fica muito mais facil buscar ${lowerFirst(brief.benefit)} sem complicar tudo.`,
+      textoTela: 'Foi aqui que virou o jogo',
+      falado: `Foi aqui que ${productMention} entrou como apoio para eu buscar ${lowerFirst(brief.benefit)} sem cair no mesmo ciclo de sempre.`,
       visual: `B-roll do produto ${brief.product ? 'em uso' : 'ou da rotina'} com detalhes bem proximos`
     },
     {
       objetivo: 'prova',
-      textoTela: clipWords(`Mais clareza para ${brief.shortBenefit}`, 6, 40) || 'Mais clareza no processo',
-      falado: `O ganho aqui e ter mais consistencia, mais clareza e um processo que voce realmente consegue manter.`,
+      textoTela: clipWords(`Mais ${proofPoint} no processo`, 6, 40) || 'Mais clareza no processo',
+      falado: `O ganho aqui e sentir mais ${proofPoint}, com consistencia e um processo que voce realmente consegue manter.`,
       visual: 'Mistura de selfie com apoio visual simples mostrando rotina, resultado ou anotacoes'
     },
     {
       objetivo: 'cta',
       textoTela: 'Me chama no direct',
-      falado: `Se quiser, me chama e eu te explico como aplicar isso no seu caso com ${productMention}.`,
+      falado: cta,
       visual: 'Tela final limpa, dedo apontando para o direct ou para a caixa de resposta'
     }
   ];
@@ -2425,23 +2759,27 @@ function buildStoriesFallback(input: ScriptVariantInput, count: number): ScriptD
 
   return {
     title: `Stories - ${brief.product || brief.shortBenefit}`,
-    hook: slides[0]?.textoTela || 'Story com gancho forte',
+    hook: hook || slides[0]?.textoTela || 'Story com gancho forte',
     spoken: '',
     takes: [],
-    cta: `Responde "quero" que eu te explico como ${productMention} entra nisso.`,
+    cta,
     caption: '',
     storySlides: slides
   };
 }
 
-function buildCarrosselFallback(input: ScriptVariantInput, count: number): ScriptDraftResponse {
+function buildCarrosselFallback(input: ScriptVariantInput, count: number, plan: ContentGenerationPlan): ScriptDraftResponse {
   const brief = buildBriefSeed(input);
   const productMention = brief.product || 'essa solucao';
+  const hook = resolvePlannedHook(plan, brief);
+  const cta = resolvePlannedCta(plan, brief);
+  const nicheAngle = plan.nichePatterns[0]?.contentAngles[0] ?? 'erro comum';
+  const proofPoint = lowerFirst(plan.nichePatterns[0]?.proofPoints[0] ?? brief.shortBenefit);
   const slides = Array.from({ length: count }, (_, index): CarrosselSlide => {
     if (index === 0) {
       return {
         numero: 1,
-        titulo: 'O erro que trava seu resultado',
+        titulo: clipWords(hook, 6, 40) || 'O erro que trava seu resultado',
         subtitulo: 'E o ajuste que muda o jogo',
         conteudo: `Se ${lowerFirst(brief.problem)}, este carrossel vai direto ao ponto.`,
         visual: 'Capa limpa com tipografia grande, contraste forte e um elemento visual de tensao'
@@ -2453,7 +2791,7 @@ function buildCarrosselFallback(input: ScriptVariantInput, count: number): Scrip
         numero: index + 1,
         titulo: 'Agora faz o seguinte',
         subtitulo: 'Salva e me chama',
-        conteudo: `Salva este carrossel e me chama se quiser aplicar isso com ${productMention} de forma pratica.`,
+        conteudo: cta,
         visual: 'Slide final com CTA visivel, destaque para salvar, compartilhar ou chamar no direct'
       };
     }
@@ -2462,19 +2800,19 @@ function buildCarrosselFallback(input: ScriptVariantInput, count: number): Scrip
       {
         titulo: 'O problema real',
         subtitulo: 'Nao e o que parece',
-        conteudo: `Na maior parte dos casos, o bloqueio vem de insistir em um caminho que nao conversa com a sua rotina.`,
+        conteudo: `Na maior parte dos casos, o bloqueio vem de insistir em ${nicheAngle} sem ajustar a base da rotina.`,
         visual: 'Layout limpo com um contraste entre erro comum e causa real'
       },
       {
         titulo: 'A virada pratica',
         subtitulo: `${clipWords(productMention, 4, 28)} entra aqui`,
-        conteudo: `Quando voce ajusta a base e usa ${productMention}, fica mais facil buscar ${lowerFirst(brief.benefit)} com consistencia.`,
+        conteudo: `Quando voce muda o ponto certo e usa ${productMention}, fica mais facil buscar ${lowerFirst(brief.benefit)} com mais ${proofPoint}.`,
         visual: 'Foto ou detalhe do produto apoiando a explicacao, com destaque visual para a mudanca'
       },
       {
         titulo: 'O que isso destrava',
         subtitulo: brief.shortBenefit,
-        conteudo: `O ganho real e ter mais clareza, menos excesso e um processo que voce consegue sustentar no dia a dia.`,
+        conteudo: `O ganho real e ter mais ${proofPoint}, menos excesso e um processo que voce consegue sustentar no dia a dia.`,
         visual: 'Slide com poucos elementos, numero em destaque e apoio visual de rotina ou resultado'
       },
       {
@@ -2495,30 +2833,33 @@ function buildCarrosselFallback(input: ScriptVariantInput, count: number): Scrip
 
   return {
     title: `Carrossel - ${brief.product || brief.shortBenefit}`,
-    hook: slides[0]?.titulo || 'Carrossel com capa forte',
+    hook: hook || slides[0]?.titulo || 'Carrossel com capa forte',
     spoken: '',
     takes: [],
-    cta: `Salva esse carrossel e me chama para entender como ${productMention} entra na estrategia.`,
-    caption: `Tem coisa que parece falta de disciplina, mas na pratica e estrategia errada repetida por tempo demais.\n\nEste carrossel mostra onde costuma estar o travamento e como ajustar isso com mais clareza.\n\nSalva e manda para quem precisa ver isso hoje.\n\n${buildHashtags(brief.product, brief.problem, brief.benefit)}`,
+    cta,
+    caption: `Esse carrossel nasceu para transformar um erro comum em ajuste claro.\n\nSe ${lowerFirst(brief.problem)}, usa essas paginas como mapa rapido antes de repetir o mesmo ciclo.\n\n${cta}\n\n${buildHashtags(brief.product, brief.problem, brief.benefit)}`,
     carrosselSlides: slides
   };
 }
 
-function buildPostFallback(input: ScriptVariantInput): ScriptDraftResponse {
+function buildPostFallback(input: ScriptVariantInput, plan: ContentGenerationPlan): ScriptDraftResponse {
   const brief = buildBriefSeed(input);
-  const productMention = brief.product || 'essa solucao';
+  const hook = resolvePlannedHook(plan, brief);
+  const cta = resolvePlannedCta(plan, brief);
+  const nicheFocus = plan.nichePatterns[0]?.focus[0] ?? 'gancho claro';
+  const nicheAngle = plan.nichePatterns[0]?.contentAngles[0] ?? 'erro comum';
 
   return {
     title: `Post - ${brief.product || brief.shortBenefit}`,
-    hook: clipWords(`Nao e falta de disciplina`, 5, 36) || 'Nao e falta de disciplina',
+    hook: tightenHookLine(hook, 'Nao e falta de disciplina', 7, 60),
     spoken: '',
     takes: [],
-    cta: `Salva esse post e me chama se quiser aplicar isso com ${productMention}.`,
-    caption: `O ponto nem sempre e fazer mais. Muitas vezes e ajustar o caminho para buscar ${lowerFirst(brief.benefit)} com mais estrategia.\n\nSe ${lowerFirst(brief.problem)}, talvez o travamento esteja na abordagem, nao na sua vontade.\n\nSalva e me chama se quiser destravar isso com mais clareza.\n\n${buildHashtags(brief.product, brief.problem, brief.benefit)}`,
+    cta,
+    caption: `Esse post nao existe para soar bonito. Existe para te fazer parar no feed e enxergar o erro com clareza.\n\nSe ${lowerFirst(brief.problem)}, talvez o travamento esteja no metodo, nao em voce.\n\n${cta}\n\n${buildHashtags(brief.product, brief.problem, brief.benefit)}`,
     postFields: {
-      conceito: `Quebra de crenca mostrando que ${lowerFirst(brief.problem)} nao se resolve com excesso, e sim com ajuste inteligente.`,
-      tituloPeca: 'Nao e falta de disciplina',
-      textoApoio: `O travamento pode estar no metodo, nao em voce.`,
+      conceito: `Quebra de crenca mostrando que ${lowerFirst(brief.problem)} nao se resolve com excesso, e sim com ${nicheFocus}.`,
+      tituloPeca: tightenHookLine(hook, 'Nao e falta de disciplina', 7, 60),
+      textoApoio: `Talvez o problema esteja em ${nicheAngle}, nao em voce.`,
       direcaoVisual: 'Post minimalista com tipografia forte, contraste elegante e um elemento visual que transmita pausa, clareza e reposicionamento'
     }
   };
@@ -2595,6 +2936,210 @@ function assertDraftUsability(draft: ScriptDraftResponse, contentType: string) {
   }
 }
 
+function sanitizeVariantDraft(raw: unknown, fallback: ScriptDraftResponse, contentType: string) {
+  if (!raw || typeof raw !== 'object') {
+    assertDraftUsability(fallback, contentType);
+    return fallback;
+  }
+
+  const record = raw as Record<string, unknown>;
+
+  if (contentType === 'stories') {
+    const storySlides = sanitizeStorySlides(
+      parseStoriesArray(record.stories ?? record.storySlides),
+      fallback.storySlides ?? []
+    );
+
+    const draft = {
+      ...fallback,
+      title: chooseSingleLine(record.title, fallback.title, 80, 4),
+      hook: chooseSingleLine(record.hook ?? storySlides[0]?.textoTela, fallback.hook, 120, 4),
+      cta: chooseSingleLine(record.cta, fallback.cta, 180, 8),
+      storySlides
+    };
+
+    assertDraftUsability(draft, contentType);
+    return draft;
+  }
+
+  if (contentType === 'carrossel') {
+    const carrosselSlides = sanitizeCarrosselSlides(
+      parseCarrosselArray(record.slides ?? record.carrosselSlides),
+      fallback.carrosselSlides ?? []
+    );
+
+    const draft = {
+      ...fallback,
+      title: chooseSingleLine(record.title, fallback.title, 80, 4),
+      hook: chooseSingleLine(record.hook ?? carrosselSlides[0]?.titulo, fallback.hook, 120, 4),
+      cta: chooseSingleLine(record.cta, fallback.cta, 180, 8),
+      caption: chooseCaption(record.caption, fallback.caption),
+      carrosselSlides
+    };
+
+    assertDraftUsability(draft, contentType);
+    return draft;
+  }
+
+  if (contentType === 'post') {
+    const postFields = sanitizePostFields(
+      record.postFields && typeof record.postFields === 'object'
+        ? (record.postFields as PostFields)
+        : {
+            conceito: typeof record.conceito === 'string' ? record.conceito : '',
+            tituloPeca: typeof record.tituloPeca === 'string' ? record.tituloPeca : '',
+            textoApoio: typeof record.textoApoio === 'string' ? record.textoApoio : '',
+            direcaoVisual: typeof record.direcaoVisual === 'string' ? record.direcaoVisual : ''
+          },
+      fallback.postFields!
+    );
+
+    const draft = {
+      ...fallback,
+      title: chooseSingleLine(record.title, fallback.title, 80, 4),
+      hook: chooseSingleLine(postFields.tituloPeca, fallback.hook, 80, 4),
+      cta: chooseSingleLine(record.cta, fallback.cta, 180, 8),
+      caption: chooseCaption(record.caption, fallback.caption),
+      postFields
+    };
+
+    assertDraftUsability(draft, contentType);
+    return draft;
+  }
+
+  const draft = normalizeScriptOutput(record, fallback);
+  assertDraftUsability(draft, contentType);
+  return draft;
+}
+
+function buildRewriteSchema(contentType: string, fallback: ScriptDraftResponse) {
+  if (contentType === 'stories') {
+    const slides = Array.from({ length: fallback.storySlides?.length ?? 3 }, () => `{"objetivo":"","textoTela":"","falado":"","visual":""}`).join(',');
+    return `{"title":"","hook":"","stories":[${slides}],"cta":""}`;
+  }
+
+  if (contentType === 'carrossel') {
+    const slides = Array.from({ length: fallback.carrosselSlides?.length ?? 5 }, (_, index) => `{"numero":${index + 1},"titulo":"","subtitulo":"","conteudo":"","visual":""}`).join(',');
+    return `{"title":"","hook":"","slides":[${slides}],"cta":"","caption":""}`;
+  }
+
+  if (contentType === 'post') {
+    return `{"title":"","conceito":"","tituloPeca":"","textoApoio":"","direcaoVisual":"","cta":"","caption":""}`;
+  }
+
+  return `{"title":"","hook":"","spoken":"","takes":["","","","",""],"cta":"","caption":""}`;
+}
+
+const roboticPhrasePatterns = [
+  /organiza a base/i,
+  /com intencao/i,
+  /sem complicar/i,
+  /de forma pratica/i,
+  /solucao natural/i,
+  /fica muito mais facil/i,
+  /entra na rotina/i,
+  /apoio concreto/i
+];
+
+function shouldPolishDraft(draft: ScriptDraftResponse, plan: ContentGenerationPlan) {
+  let risk = 0;
+
+  const fields = [
+    draft.hook,
+    draft.spoken,
+    draft.cta,
+    draft.caption,
+    ...(draft.storySlides?.flatMap((slide) => [slide.textoTela, slide.falado]) ?? []),
+    ...(draft.carrosselSlides?.flatMap((slide) => [slide.titulo, slide.conteudo]) ?? []),
+    ...(draft.postFields ? [draft.postFields.conceito, draft.postFields.tituloPeca, draft.postFields.textoApoio] : [])
+  ];
+
+  if (fields.some((field) => roboticPhrasePatterns.some((pattern) => pattern.test(field)))) {
+    risk += 2;
+  }
+
+  if ((draft.hook?.length ?? 0) > 100) {
+    risk += 1;
+  }
+
+  if ((draft.spoken?.length ?? 0) > 600) {
+    risk += 1;
+  }
+
+  if (plan.brief.tones.includes('storytelling') && !/(ate|quando|foi ai|foi aqui|eu achei|eu achava)/i.test(draft.spoken || draft.storySlides?.map((slide) => slide.falado).join(' ') || '')) {
+    risk += 1;
+  }
+
+  if (plan.brief.tones.includes('trend') && !plan.trendPatterns.some((pattern) => draft.hook.toLowerCase().includes(pattern.label.toLowerCase()) || (draft.storySlides?.[0]?.textoTela ?? '').toLowerCase().includes(pattern.label.toLowerCase()))) {
+    risk += 1;
+  }
+
+  return risk >= 2;
+}
+
+async function polishScriptVariantDraft(
+  input: ScriptVariantInput,
+  draft: ScriptDraftResponse,
+  research: TrendResearchResult,
+  plan: ContentGenerationPlan
+) {
+  if (!getProviderCandidates().length || !shouldPolishDraft(draft, plan)) {
+    return draft;
+  }
+
+  const contentType = input.contentType ?? 'reels';
+  const isTrend = resolveActiveTones(input.tones, input.tone).includes('trend');
+  const isStorytelling = resolveActiveTones(input.tones, input.tone).includes('storytelling');
+  const schema = buildRewriteSchema(contentType, draft);
+
+  const prompt = [
+    'Voce e um head writer brasileiro de Reels, Stories, TikTok, carrossel e copy de creator.',
+    'Seu trabalho aqui nao e corrigir gramatica. Seu trabalho e transformar um rascunho em conteudo que da vontade de gravar e postar.',
+    'Reescreva o material abaixo para soar como creator de verdade, nao como texto institucional ou propaganda antiga.',
+    'Pense em retencao, curiosidade, ritmo, identificacao e potencial real de postagem.',
+    'Se uma frase parecer escrita demais, reescreva em linguagem falada.',
+    'Use frases curtas, cortes naturais, palavras simples e ritmo de video curto.',
+    'O gancho precisa fazer a pessoa pensar "isso e comigo" ou "quero entender isso".',
+    'Evite qualquer frase generica de IA, corporativa ou engessada.',
+    'PROIBIDO usar expressoes como: "organiza a base", "com intencao", "sem complicar tudo", "de forma pratica", "solucao natural", "fica muito mais facil buscar", "entra na rotina".',
+    isStorytelling
+      ? 'Storytelling e obrigatorio: comece em uma situacao especifica, mostre o problema, revele a descoberta, crie uma virada clara, encaixe a solucao e feche com CTA.'
+      : 'Mesmo sem storytelling explicito, mantenha micro-narrativa e progressao real de tensao.',
+    isTrend
+      ? `Trend e obrigatorio: escolha um formato nativo que mude de verdade a execucao do conteudo em ${resolveContentTypeLabel(contentType)}. Opcoes: POV, expectativa vs realidade, antes e depois, texto na tela + expressao, lista rapida, 3 coisas que..., ninguem fala isso sobre..., rotina revelada.`
+      : 'Nao transforme em texto institucional. Mesmo fora de trend, precisa soar nativo de Instagram e TikTok.',
+    'O produto entra como parte da virada ou da solucao, nunca como abertura de venda fria.',
+    'Mantenha o conteudo gravavel, falavel e postavel.',
+    'Nao use placeholders. Nao deixe campos vazios. Nao mude a quantidade de blocos/slides.',
+    'Responda somente JSON valido.',
+    `Formato de saida: ${schema}.`,
+    '',
+    '=== PESQUISA DE TENDENCIAS ===',
+    formatTrendResearchForPrompt(research),
+    '',
+    '=== PLANO E BIBLIOTECAS ===',
+    formatGenerationPlanForPrompt(plan),
+    '',
+    '=== BRIEFING ===',
+    `Tipo de conteudo: ${resolveContentTypeLabel(contentType)}`,
+    input.subOption ? `Subopcao: ${input.subOption}` : null,
+    resolveTonesLabel(input.tones, input.tone),
+    resolveObjectivesLabel(input.objectives, input.objective),
+    ...buildBriefingLines(input),
+    '',
+    '=== RASCUNHO ATUAL PARA MELHORAR ===',
+    JSON.stringify(draft, null, 2)
+  ]
+    .filter(Boolean)
+    .join('\n\n');
+
+  const refined = parseStructuredResponse(
+    await callProvider(prompt, { maxTokens: resolvePolishMaxTokens(plan, contentType), providerMode: 'balanced' }),
+    draft
+  );
+  return sanitizeVariantDraft(refined, draft, contentType);
+}
+
 function parseStoriesArray(raw: unknown): StorySlide[] {
   if (!Array.isArray(raw)) return [];
   return raw
@@ -2621,205 +3166,117 @@ function parseCarrosselArray(raw: unknown): CarrosselSlide[] {
 }
 
 async function generateStoriesVariants(input: ScriptVariantInput): Promise<ScriptDraftResponse[]> {
+  const plan = buildGenerationPlan(input);
   const n = Math.max(1, Math.min(10, parseInt(input.subOption ?? '3', 10) || 3));
-  const toneLabel = resolveTonesLabel(input.tones, input.tone);
-  const objectiveLabel = resolveObjectivesLabel(input.objectives, input.objective);
   const slidesTemplate = Array.from({ length: n }, () => `{"objetivo":"","textoTela":"","falado":"","visual":""}`).join(',');
-  const fallback = buildStoriesFallback(input, n);
+  const fallback = buildStoriesFallback(input, n, plan);
+  const research = await researchContentTrends(input, plan);
 
-  const webQuery = buildSocialTrendQuery(input.productName ?? input.prompt, input.pain ?? '', input.benefit ?? '', 'stories instagram viral');
-
-  const prompt = await buildCreatorAiPrompt([
-    '=== PAPEL ===',
-    'Voce e um creator especialista em Stories do Instagram com altissimo engajamento.',
-    'Stories sao slides curtos, diretos, com progressao narrativa que prende o usuario.',
-    '',
-    '=== FORMATO DE RESPOSTA ===',
+  const prompt = [
+    'Voce finaliza roteiros de Stories como creator brasileiro com foco em retencao e resposta.',
+    'Escreva como story maker e social media, nao como anuncio ou texto institucional.',
+    'Use linguagem falada, direta e nativa de Instagram.',
     'Responda somente JSON valido. Array com exatamente 1 sequencia de stories.',
     `Cada sequencia: {"title":"","stories":[${slidesTemplate}],"cta":""}`,
     `A sequencia deve ter exatamente ${n} story(ies).`,
     'Preencha todos os campos com conteudo final. Nunca use placeholders, colchetes, instrucoes ou textos genericos como "frase de gancho", "texto falado" ou "CTA aqui".',
+    'Texto na tela com no maximo 8 palavras e impacto real.',
+    'Falado em ate 2 frases por slide, com ritmo de selfie e cortes naturais.',
+    `Story 1 precisa prender. Story ${n} precisa preparar a resposta ou direct.`,
+    'Stories nao tem legenda. CTA vai no campo "cta".',
     '',
-    '=== REGRAS DOS STORIES ===',
-    'textoTela: texto escrito na tela do story. Max 8 palavras. Deve ser MUITO impactante. Sem pontuacao excessiva.',
-    'falado: o que o creator fala nesse slide. Max 2 frases curtas. Linguagem oral, conversa real.',
-    'objetivo: papel do slide (opcoes: gancho, contexto, tensao, revelacao, prova, solucao, CTA).',
-    'visual: instrucao para o editor (ex: "selfie falando", "fundo escuro texto branco", "video de produto em uso").',
-    `Story 1: gancho visual forte que faz a pessoa querer ver o proximo.`,
-    `Stories 2 a ${n - 1}: progressao com valor real. Cada slide = 1 ideia.`,
-    `Story ${n}: CTA especifico e alinhado ao objetivo.`,
-    'Stories NAO tem legenda. CTA vai no campo "cta", nao no ultimo slide.',
+    '=== PLANO DA APLICACAO ===',
+    formatGenerationPlanForPrompt(plan),
     '',
-    `=== ESTILO E OBJETIVO ===`,
-    `${toneLabel}`,
-    `${objectiveLabel}`,
+    '=== PESQUISA EXTERNA ===',
+    formatTrendResearchForPrompt(research),
     '',
     '=== BRIEFING ===',
-    ...buildBriefingLines(input),
-    '',
-    '=== ANGULO DA SEQUENCIA ===',
-    'Escolha o angulo mais forte para o briefing dado: REVELACAO (primeiro story faz promessa ou dado surpreendente), POV/HISTORIA (começa com POV que o publico se identifica) ou LISTA/ENSINO (entrega valor direto em passos).',
-    'Use o angulo que melhor serve o objetivo e o publico descrito no briefing.'
-  ], webQuery);
+    ...buildBriefingLines(input)
+  ].filter(Boolean).join('\n\n');
 
-  const parsed = parseStructuredResponse<unknown[]>(await callProvider(prompt, { maxTokens: 3200 }), []);
-  return [0].map((i) => {
-    const fb = fallback;
-    const raw = parsed[i];
-    if (!raw || typeof raw !== 'object') {
-      assertDraftUsability(fb, 'stories');
-      return fb;
-    }
-    const r = raw as Record<string, unknown>;
-    const storySlides = sanitizeStorySlides(parseStoriesArray(r.stories), fb.storySlides ?? []);
-    const draft = {
-      ...fb,
-      title: chooseSingleLine(r.title, fb.title, 80, 4),
-      hook: chooseSingleLine(storySlides[0]?.textoTela || r.hook, fb.hook, 120, 4),
-      cta: chooseSingleLine(r.cta, fb.cta, 180, 8),
-      storySlides
-    };
-
-    assertDraftUsability(draft, 'stories');
-    return draft;
-  });
+  const parsed = parseStructuredResponse<unknown[]>(
+    await callProvider(prompt, { maxTokens: resolveGenerationMaxTokens(plan, 'stories'), providerMode: 'cost' }),
+    []
+  );
+  const initialDraft = sanitizeVariantDraft(parsed[0], fallback, 'stories');
+  return [await polishScriptVariantDraft(input, initialDraft, research, plan)];
 }
 
 async function generateCarrosselVariants(input: ScriptVariantInput): Promise<ScriptDraftResponse[]> {
+  const plan = buildGenerationPlan(input);
   const n = Math.max(2, Math.min(15, parseInt(input.subOption ?? '5', 10) || 5));
-  const toneLabel = resolveTonesLabel(input.tones, input.tone);
-  const objectiveLabel = resolveObjectivesLabel(input.objectives, input.objective);
   const slideTemplate = Array.from({ length: n }, (_, i) => `{"numero":${i + 1},"titulo":"","subtitulo":"","conteudo":"","visual":""}`).join(',');
-  const fallback = buildCarrosselFallback(input, n);
+  const fallback = buildCarrosselFallback(input, n, plan);
+  const research = await researchContentTrends(input, plan);
 
-  const webQuery = buildSocialTrendQuery(input.productName ?? input.prompt, input.pain ?? '', input.benefit ?? '', 'carrossel instagram viral');
-
-  const maxTokens = n > 6 ? 5000 : 3200;
-
-  const prompt = await buildCreatorAiPrompt([
-    '=== PAPEL ===',
-    'Voce e um especialista em carrosseis de alta performance para Instagram.',
-    'Seus carrosseis tem altissimo rate de salvamento e compartilhamento.',
-    '',
-    '=== FORMATO DE RESPOSTA ===',
+  const prompt = [
+    'Voce finaliza carrosseis como social media e copywriter de feed.',
+    'Escreva carrosseis com cara de conteudo que gera swipe, salvamento e compartilhamento.',
+    'Nada de texto institucional ou generico.',
     'Responda somente JSON valido. Array com exatamente 1 carrossel.',
     `Cada carrossel: {"title":"","hook":"","slides":[${slideTemplate}],"cta":"","caption":""}`,
     `O carrossel deve ter exatamente ${n} slides.`,
     'Preencha todos os campos com conteudo final. Nunca use placeholders, colchetes ou textos genericos como "titulo da capa", "subtitulo 2", "conteudo da pagina" ou "CTA aqui".',
+    'Titulo com no maximo 6 palavras. Subtitulo com no maximo 10. Conteudo em 2 ou 3 linhas por pagina.',
+    `Slide 1 precisa forcar o swipe. Slide ${n} precisa fechar com CTA claro.`,
     '',
-    '=== REGRAS DO CARROSSEL ===',
-    'titulo: texto curto da pagina. Max 6 palavras. Impacto imediato.',
-    'subtitulo: complemento do titulo. Max 10 palavras. Promessa ou contexto.',
-    'conteudo: texto principal da pagina. 2 a 3 linhas diretas. Valor concreto.',
-    'visual: instrucao para o designer (ex: "fundo azul, icone de check", "foto de resultado", "numero em destaque").',
-    `Slide 1 (capa): titulo que FORCA o swipe. Hook que cria curiosidade irresistivel.`,
-    `Slides 2 a ${n - 1}: cada slide entrega 1 insight ou passo especifico. Sem repeticao.`,
-    `Slide ${n}: CTA especifico — salvar, compartilhar, DM, link.`,
-    'caption: legenda da publicacao com abertura forte (diferente do hook), valor resumido, CTA e hashtags.',
+    '=== PLANO DA APLICACAO ===',
+    formatGenerationPlanForPrompt(plan),
     '',
-    `=== ESTILO E OBJETIVO ===`,
-    `${toneLabel}`,
-    `${objectiveLabel}`,
+    '=== PESQUISA EXTERNA ===',
+    formatTrendResearchForPrompt(research),
     '',
     '=== BRIEFING ===',
-    ...buildBriefingLines(input),
-    '',
-    '=== ANGULO DO CARROSSEL ===',
-    'Escolha o angulo mais forte para o briefing dado: LISTA DE ERROS/MITOS (desmonta crencas erradas, cada slide = 1 mito + correcao), PASSO A PASSO (guia pratico do problema a solucao) ou COMPARATIVO (antes vs depois, contraste visual).',
-    'Use o angulo que melhor serve o objetivo e o publico descrito no briefing.'
-  ], webQuery);
+    ...buildBriefingLines(input)
+  ].filter(Boolean).join('\n\n');
 
-  const parsed = parseStructuredResponse<unknown[]>(await callProvider(prompt, { maxTokens }), []);
-  return [0].map((i) => {
-    const fb = fallback;
-    const raw = parsed[i];
-    if (!raw || typeof raw !== 'object') {
-      assertDraftUsability(fb, 'carrossel');
-      return fb;
-    }
-    const r = raw as Record<string, unknown>;
-    const carrosselSlides = sanitizeCarrosselSlides(parseCarrosselArray(r.slides), fb.carrosselSlides ?? []);
-    const draft = {
-      ...fb,
-      title: chooseSingleLine(r.title, fb.title, 80, 4),
-      hook: chooseSingleLine(r.hook ?? carrosselSlides[0]?.titulo, fb.hook, 120, 4),
-      cta: chooseSingleLine(r.cta, fb.cta, 180, 8),
-      caption: chooseCaption(r.caption, fb.caption),
-      carrosselSlides
-    };
-
-    assertDraftUsability(draft, 'carrossel');
-    return draft;
-  });
+  const parsed = parseStructuredResponse<unknown[]>(
+    await callProvider(prompt, { maxTokens: resolveGenerationMaxTokens(plan, 'carrossel'), providerMode: 'cost' }),
+    []
+  );
+  const initialDraft = sanitizeVariantDraft(parsed[0], fallback, 'carrossel');
+  return [await polishScriptVariantDraft(input, initialDraft, research, plan)];
 }
 
 async function generatePostVariants(input: ScriptVariantInput): Promise<ScriptDraftResponse[]> {
-  const toneLabel = resolveTonesLabel(input.tones, input.tone);
-  const objectiveLabel = resolveObjectivesLabel(input.objectives, input.objective);
-  const fallback = buildPostFallback(input);
+  const plan = buildGenerationPlan(input);
+  const fallback = buildPostFallback(input, plan);
+  const research = await researchContentTrends(input, plan);
 
-  const webQuery = buildSocialTrendQuery(input.productName ?? input.prompt, input.pain ?? '', input.benefit ?? '', 'post estatico instagram viral');
-
-  const prompt = await buildCreatorAiPrompt([
-    '=== PAPEL ===',
-    'Voce e um especialista em posts estaticos de alto impacto para Instagram.',
-    'Seus posts param o scroll e geram salvamentos.',
-    '',
-    '=== FORMATO DE RESPOSTA ===',
-    'Responda somente JSON valido. Array com exatamente 1 conceito de post.',
+  const prompt = [
+    'Voce finaliza posts estaticos de Instagram como social media e copywriter de creator.',
+    'Seu trabalho e transformar uma estrutura pronta da aplicacao em uma peca que para o scroll e uma legenda que sustenta a tensao.',
+    'Escreva com cara de conteudo atual, nao de campanha institucional.',
+    'Responda somente JSON valido. Array com exatamente 1 post.',
     'Cada post: {"title":"","conceito":"","tituloPeca":"","textoApoio":"","direcaoVisual":"","cta":"","caption":""}',
-    'Preencha todos os campos com conteudo final. Nunca use placeholders, colchetes ou textos genericos como "titulo impactante", "legenda aqui" ou "conceito do post".',
+    'Preencha todos os campos com conteudo final. Nunca use placeholders, colchetes ou textos genericos.',
+    'tituloPeca: maximo 7 palavras e impacto imediato.',
+    'textoApoio: maximo 12 palavras, complementa o titulo sem repetir.',
+    'direcaoVisual: orientar o designer com composicao, tipografia, foto/ilustracao e mood.',
+    'caption: abertura forte, 2 a 4 linhas curtas de valor, CTA e hashtags quando ajudarem.',
+    'Se storytelling estiver ativo, o conceito nasce de uma situacao ou virada percebida.',
+    'Se trend estiver ativo, adapte a linguagem visual e verbal para um formato que pareca nativo do feed agora.',
     '',
-    '=== REGRAS DO POST ESTATICO ===',
-    'conceito: a ideia central em 1 frase. Para briefing do designer.',
-    'tituloPeca: texto principal da imagem. Max 7 palavras. MUITO impactante. Deve parar o scroll.',
-    'textoApoio: texto secundario da peca. Max 12 palavras. Complementa o titulo, nao repete.',
-    'direcaoVisual: instrucao detalhada para o designer. Inclui: paleta, composicao, foto ou ilustracao, mood.',
-    'cta: chamada para acao na legenda (salvar, compartilhar, comentar, etc).',
-    'caption: legenda completa. Abertura forte (diferente do tituloPeca), 2-4 linhas de valor, CTA, hashtags.',
+    '=== PLANO DA APLICACAO ===',
+    formatGenerationPlanForPrompt(plan),
     '',
-    `=== ESTILO E OBJETIVO ===`,
-    `${toneLabel}`,
-    `${objectiveLabel}`,
+    '=== PESQUISA EXTERNA ===',
+    formatTrendResearchForPrompt(research),
     '',
     '=== BRIEFING ===',
     ...buildBriefingLines(input),
     '',
     '=== ANGULO DO POST ===',
-    'Escolha o angulo mais forte para o briefing dado: DADO/ESTATISTICA (numero ou fato surpreendente como titulo), FRASE/CRENCA (frase que quebra uma crenca ou valida uma experiencia) ou LISTA VISUAL (mini-ranking ou lista com valor imediato).',
-    'Use o angulo que melhor serve o objetivo e o publico descrito no briefing.'
-  ], webQuery);
+    'Escolha o angulo que melhor serve o briefing: crenca quebrada, frase de identificacao, dado curto ou mini-lista visual.'
+  ].filter(Boolean).join('\n\n');
 
-  const parsed = parseStructuredResponse<unknown[]>(await callProvider(prompt, { maxTokens: 2500 }), []);
-  return [0].map((i) => {
-    const fb = fallback;
-    const raw = parsed[i];
-    if (!raw || typeof raw !== 'object') {
-      assertDraftUsability(fb, 'post');
-      return fb;
-    }
-    const r = raw as Record<string, unknown>;
-    const postFields = sanitizePostFields(
-      {
-        conceito: typeof r.conceito === 'string' ? r.conceito : '',
-        tituloPeca: typeof r.tituloPeca === 'string' ? r.tituloPeca : '',
-        textoApoio: typeof r.textoApoio === 'string' ? r.textoApoio : '',
-        direcaoVisual: typeof r.direcaoVisual === 'string' ? r.direcaoVisual : ''
-      },
-      fb.postFields!
-    );
-    const draft = {
-      ...fb,
-      title: chooseSingleLine(r.title, fb.title, 80, 4),
-      hook: chooseSingleLine(postFields.tituloPeca, fb.hook, 80, 4),
-      cta: chooseSingleLine(r.cta, fb.cta, 180, 8),
-      caption: chooseCaption(r.caption, fb.caption),
-      postFields
-    };
-
-    assertDraftUsability(draft, 'post');
-    return draft;
-  });
+  const parsed = parseStructuredResponse<unknown[]>(
+    await callProvider(prompt, { maxTokens: resolveGenerationMaxTokens(plan, 'post'), providerMode: 'cost' }),
+    []
+  );
+  const initialDraft = sanitizeVariantDraft(parsed[0], fallback, 'post');
+  return [await polishScriptVariantDraft(input, initialDraft, research, plan)];
 }
 
 export async function generateScriptVariants(input: ScriptVariantInput) {
@@ -2834,101 +3291,47 @@ export async function generateScriptVariants(input: ScriptVariantInput) {
 }
 
 async function generateReelsVariants(input: ScriptVariantInput) {
+  const plan = buildGenerationPlan(input);
   const contentTypeLabel = resolveContentTypeLabel(input.contentType);
   const durationLabel = resolveDurationLabel(input.duration ?? input.subOption);
-  const toneLabel = resolveTonesLabel(input.tones, input.tone);
-  const objectiveLabel = resolveObjectivesLabel(input.objectives, input.objective);
-  const isTrend = input.tones?.includes('trend') || input.tone === 'trend';
+  const fallback = [buildVideoFallback(input, plan)];
+  const research = await researchContentTrends(input, plan);
 
-  const fallback = [buildVideoFallback(input)];
-
-  const webQuery = buildSocialTrendQuery(
-    input.productName ?? input.prompt,
-    input.pain ?? '',
-    input.benefit ?? '',
-    isTrend ? 'formato viral trend reels tiktok POV antes depois expectativa realidade rotina' : 'reels virais tiktok tendencias conteudo'
-  );
-
-  const prompt = await buildCreatorAiPrompt([
-    '=== PAPEL ===',
-    'Voce e um creator brasileiro com mais de 1 milhao de seguidores.',
-    'Voce sabe fazer videos que as pessoas assistem ate o final, salvam e compartilham.',
-    'Voce NUNCA escreve propaganda. Voce cria conteudo que as pessoas querem ver.',
-    'Voce pensa como creator, storyteller e social media — nao como redator de publicidade.',
-    '',
-    '=== FORMATO DE RESPOSTA ===',
+  const prompt = [
+    'Voce finaliza roteiros de Reels e video curto como creator, social media e copywriter de video curto.',
+    'Seu trabalho e transformar a estrutura pronta da aplicacao em um roteiro gravavel, falavel e com cara de conteudo nativo.',
+    'Nao escreva propaganda. Nao escreva texto institucional. Escreva para retencao, curiosidade e ritmo.',
     'Responda somente JSON valido. Array com exatamente 1 objeto.',
     'Formato: [{"title":"","hook":"","spoken":"","takes":["","","","",""],"cta":"","caption":""}]',
-    'Preencha tudo com conteudo final. Nunca use placeholders, colchetes ou marcadores como "gancho aqui", "[X]", "texto falado" ou "CTA aqui".',
+    'Preencha tudo com conteudo final. Nunca use placeholders, colchetes ou marcadores genericos.',
+    'hook: maximo 12 palavras, sem saudacao, sem pergunta generica e sem abertura morna.',
+    'spoken: linguagem oral pura, frases curtas, cortes naturais e ritmo de video curto.',
+    'takes: instrucoes visuais para camera e edicao, nao texto falado.',
+    'caption: abertura forte, 2 a 4 linhas curtas, CTA alinhado ao objetivo e hashtags especificas.',
+    `Duracao alvo: ${durationLabel}.`,
+    `Formato alvo: ${contentTypeLabel}.`,
     '',
-    '=== MENTALIDADE AO ESCREVER ===',
-    'Antes de escrever, pergunte: "Uma pessoa real assistiria esse video ate o final?" Se a resposta nao for SIM imediato, reescreva.',
-    'O produto e a solucao natural da historia — nunca o centro dela.',
-    'A historia vem primeiro. O produto entra como revelacao, nao como apresentacao.',
-    'Seja especifico. "Perdi 6kg em 8 semanas sem cortar carboidrato" e melhor que "emagreci".',
-    'Crie tensao. Use "mas entao aconteceu algo que eu nao esperava" ou equivalente.',
+    '=== PLANO DA APLICACAO ===',
+    formatGenerationPlanForPrompt(plan),
     '',
-    '=== REGRAS DO HOOK (PRIMEIROS 3 SEGUNDOS) ===',
-    'O hook e a unica frase que decide se a pessoa fica ou vai embora.',
-    'NUNCA comece com: pergunta ("Voce ja tentou?"), "Ola", "Hoje vou falar", saudacao ou apresentacao.',
-    'Formatos que funcionam (escolha um diferente por variacao):',
-    '  - Statement contrariante curto: "A maioria das pessoas faz isso errado."',
-    '  - Inicio de historia especifica: "Fiz [X] por [tempo] sem resultado. Ate descobrir [Y]."',
-    '  - Curiosity gap: "O que ninguem te conta sobre [tema]."',
-    '  - Dado surpreendente: "[numero ou fato inesperado] — e isso muda tudo."',
-    '  - Contraste/virada: "Parei de fazer [coisa obvia]. Resultado: [resultado inesperado]."',
-    '  - POV especifico: "POV: [situacao exata que o publico vive]"',
-    'Maximo 12 palavras. Sem ponto de interrogacao.',
-    '',
-    '=== REGRAS DO SPOKEN ===',
-    'Linguagem oral pura. Virgulas para pausas naturais. Ponto para parada completa.',
-    'Zero bullets, headers ou linguagem escrita.',
-    'PROIBIDO usar: "eu sei como e", "ja passei por isso", "o que mudou tudo foi quando", "produto incrivel".',
-    'Frases curtas. Ritmo de conversa. Como se estivesse contando para um amigo, nao gravando.',
-    'Respeite o limite de palavras da duracao.',
-    '',
-    '=== REGRAS DOS TAKES ===',
-    'Takes sao instrucoes VISUAIS para o editor, nao texto falado.',
-    'Cada take descreve o que a camera ve ou o que aparece na tela.',
-    'Exemplos: "Close no rosto, expressao de surpresa", "Corte para tela do celular com resultado", "Texto na tela: [frase]", "B-roll: produto em uso no dia a dia".',
-    '',
-    '=== REGRAS DA CAPTION ===',
-    'Abertura forte que complementa (nao repete) o hook.',
-    '2 a 4 linhas curtas de valor real.',
-    'CTA alinhado ao objetivo.',
-    'Hashtags relevantes ao nicho — especificas, nao genericas.',
+    '=== PESQUISA EXTERNA ===',
+    formatTrendResearchForPrompt(research),
     '',
     '=== BRIEFING ===',
-    `Tipo de conteudo: ${contentTypeLabel}`,
-    input.subOption ? `Especificacao: ${input.subOption}` : null,
-    `Duracao alvo: ${durationLabel}`,
-    `Estilo e tom: ${toneLabel}`,
-    `Objetivo: ${objectiveLabel}`,
-    isTrend
-      ? 'MODO TREND ATIVO: identifique 3 formatos virais diferentes do momento (POV, antes/depois filmado, rotina revelada, expectativa vs realidade, ranking ironico, dueto imaginario, etc). Cada variacao usa um formato trend diferente. O formato define a ESTRUTURA — o produto entra naturalmente dentro dele. Priorize alcance e compartilhamento.'
-      : null,
-    input.pain ? `Dor central do publico: ${input.pain}` : null,
-    input.benefit ? `Transformacao que o produto entrega: ${input.benefit}` : null,
-    input.targetAudience ? `Publico-alvo: ${input.targetAudience}` : null,
-    input.productName ? `Produto: ${input.productName}` : null,
-    input.productContext ? `Contexto do produto: ${input.productContext}` : null,
-    input.referenceContext ? `Referencias adicionais: ${input.referenceContext}` : null,
-    input.prompt ? `Instrucao extra: ${input.prompt}` : null,
+    ...buildBriefingLines(input),
     '',
     '=== ANGULO DO ROTEIRO ===',
-    isTrend
-      ? 'MODO TREND: escolha o formato viral mais relevante para o briefing (ex: POV, antes/depois filmado, rotina revelada, expectativa vs realidade, ranking ironico). O formato define a estrutura — o produto entra naturalmente dentro dele.'
-      : 'Escolha o angulo mais forte para o briefing: HISTORIA PESSOAL (situacao especifica e real, produto como revelacao no meio), DADO E CONTRASTE (fato surpreendente ou contraste inesperado, produto como prova) ou CURIOSIDADE E EDUCACAO (curiosity gap, ensina algo util, produto como ferramenta).',
-    'Use dados e formatos virais captados na busca web quando fortalecerem o gancho.',
-    'Se nao houver dados reais disponiveis, invente uma historia verossimil especifica — nao generica.'
-  ], webQuery);
+    plan.brief.tones.includes('trend')
+      ? 'MODO TREND: escolha um formato nativo do momento e deixe esse formato mudar de verdade a estrutura do video.'
+      : 'Escolha o melhor angulo entre historia real, contraste forte, erro comum ou curiosidade educativa.'
+  ].filter(Boolean).join('\n\n');
 
-  const parsed = parseStructuredResponse(await callProvider(prompt, { maxTokens: 3200 }), fallback);
-  return fallback.map((item, index) => {
-    const draft = normalizeScriptOutput(parsed[index], item);
-    assertDraftUsability(draft, input.contentType ?? 'reels');
-    return draft;
-  });
+  const parsed = parseStructuredResponse(
+    await callProvider(prompt, { maxTokens: resolveGenerationMaxTokens(plan, input.contentType ?? 'reels'), providerMode: 'cost' }),
+    fallback
+  );
+  const initialDraft = sanitizeVariantDraft(parsed[0], fallback[0], input.contentType ?? 'reels');
+  return [await polishScriptVariantDraft(input, initialDraft, research, plan)];
 }
 
 export async function generateStoryboard(input: ScriptInput) {
