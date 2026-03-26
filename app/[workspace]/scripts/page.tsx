@@ -6,5 +6,5 @@ export default async function ScriptsPage({
   params: Promise<{ workspace: string }>;
 }) {
   const { workspace } = await params;
-  redirect(`/${workspace}/conteudos?view=drafts`);
+  redirect(`/${workspace}/roteiros`);
 }

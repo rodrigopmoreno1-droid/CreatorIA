@@ -1,6 +1,7 @@
 export type PlatformModuleKey =
   | 'dashboard'
   | 'contents'
+  | 'roteiros'
   | 'creators'
   | 'metrics'
   | 'products'

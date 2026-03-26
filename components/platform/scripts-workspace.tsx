@@ -485,7 +485,7 @@ export function ScriptsWorkspace({
   return (
     <div className="space-y-4">
       <PageIntro
-        eyebrow="Conteúdo"
+        eyebrow="Roteiros"
         title="Briefing, geração e aprovação"
         actions={
           <Button

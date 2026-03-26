@@ -52,7 +52,7 @@ export function DashboardOverview({
                 <p className="max-w-xl text-[13px] leading-6 text-white/62">Uma leitura curta do que esta pronto para seguir.</p>
               </div>
               <Link
-                href={`/${workspace}/conteudos?view=drafts`}
+                href={`/${workspace}/roteiros`}
                 className="inline-flex h-9 items-center gap-2 rounded-full border border-white/10 bg-white px-3.5 text-[13px] font-medium text-[#17171b]"
               >
                 Criar roteiro
@@ -105,7 +105,7 @@ export function DashboardOverview({
             <div className="rounded-[20px] border border-border bg-white p-3.5">
               <div className="flex items-center justify-between">
                 <p className="text-sm font-semibold text-foreground">Ultimos roteiros</p>
-                <Link href={`/${workspace}/conteudos?view=drafts`} className="text-[13px] text-muted-foreground transition hover:text-foreground">
+                <Link href={`/${workspace}/roteiros`} className="text-[13px] text-muted-foreground transition hover:text-foreground">
                   Ver tudo
                 </Link>
               </div>
@@ -135,8 +135,8 @@ export function DashboardOverview({
 
       {(() => {
         const pipelineStages = [
-          { key: 'draft', label: 'Rascunho', count: scripts.filter(s => s.status === 'draft').length, color: 'bg-zinc-100 text-zinc-600 border-zinc-200', dot: 'bg-zinc-400', href: `/${workspace}/conteudos?view=drafts` },
-          { key: 'approved', label: 'Aprovado', count: scripts.filter(s => s.status === 'approved').length, color: 'bg-emerald-50 text-emerald-700 border-emerald-200', dot: 'bg-emerald-500', href: `/${workspace}/conteudos?view=drafts` },
+          { key: 'draft', label: 'Rascunho', count: scripts.filter(s => s.status === 'draft').length, color: 'bg-zinc-100 text-zinc-600 border-zinc-200', dot: 'bg-zinc-400', href: `/${workspace}/roteiros` },
+          { key: 'approved', label: 'Aprovado', count: scripts.filter(s => s.status === 'approved').length, color: 'bg-emerald-50 text-emerald-700 border-emerald-200', dot: 'bg-emerald-500', href: `/${workspace}/roteiros` },
           { key: 'production', label: 'Em produção', count: scripts.filter(s => s.status === 'production').length, color: 'bg-amber-50 text-amber-700 border-amber-200', dot: 'bg-amber-500', href: `/${workspace}/conteudos?view=production` },
           { key: 'recording', label: 'Gravando', count: scripts.filter(s => s.status === 'recording').length, color: 'bg-rose-50 text-rose-700 border-rose-200', dot: 'bg-rose-500', href: `/${workspace}/conteudos?view=production` },
           { key: 'drive', label: 'No Drive', count: scripts.filter(s => s.status === 'drive').length, color: 'bg-sky-50 text-sky-700 border-sky-200', dot: 'bg-sky-500', href: `/${workspace}/conteudos?view=production` },

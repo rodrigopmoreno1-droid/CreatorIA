@@ -3,6 +3,7 @@ import {
   ChartColumn,
   LayoutDashboard,
   Package,
+  PencilLine,
   TrendingUp,
   UserSquare2,
   Video
@@ -30,6 +31,13 @@ export const platformNavigation: Array<{
     description: 'Fluxo único de conteúdo',
     icon: Video,
     href: (workspace) => `/${workspace}/conteudos`
+  },
+  {
+    key: 'roteiros',
+    label: 'Roteiros',
+    description: 'Briefing e geração',
+    icon: PencilLine,
+    href: (workspace) => `/${workspace}/roteiros`
   },
   {
     key: 'creators',
