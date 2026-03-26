@@ -19,6 +19,7 @@ import type {
   CompetitorAnalysis,
   CompetitorAnalysisStatus,
   CompetitorRecord,
+  CompetitorSourceSnapshot,
   CompetitorType,
   ContentReferenceRecord
 } from '@/types/competitor-intelligence';
@@ -281,7 +282,7 @@ function toPlannerBatchItem(row: PlannerBatchRow): PlannerBatchItem {
   };
 }
 
-function normalizeCompetitorSourceSnapshot(value: unknown): CompetitorAnalysis['sourceSnapshot'] | null {
+function normalizeCompetitorSourceSnapshot(value: unknown): CompetitorSourceSnapshot | null {
   const snapshot = normalizeJsonObject<Record<string, unknown>>(value);
 
   if (!snapshot) {
@@ -292,13 +293,13 @@ function normalizeCompetitorSourceSnapshot(value: unknown): CompetitorAnalysis['
 
   return {
     fetchedAt: normalizeString(snapshot.fetchedAt),
-    instagram: normalizeJsonObject(snapshot.instagram) as CompetitorAnalysis['sourceSnapshot']['instagram'],
-    website: normalizeJsonObject(snapshot.website) as CompetitorAnalysis['sourceSnapshot']['website'],
+    instagram: normalizeJsonObject(snapshot.instagram) as CompetitorSourceSnapshot['instagram'],
+    website: normalizeJsonObject(snapshot.website) as CompetitorSourceSnapshot['website'],
     postsAnalyzed: typeof snapshot.postsAnalyzed === 'number' ? snapshot.postsAnalyzed : 0,
     reelsAnalyzed: typeof snapshot.reelsAnalyzed === 'number' ? snapshot.reelsAnalyzed : 0,
     feedAnalyzed: typeof snapshot.feedAnalyzed === 'number' ? snapshot.feedAnalyzed : 0,
     captureNotes: normalizeStringArray(snapshot.captureNotes),
-    topPosts: rawTopPosts as CompetitorAnalysis['sourceSnapshot']['topPosts']
+    topPosts: rawTopPosts as CompetitorSourceSnapshot['topPosts']
   };
 }
 
@@ -404,7 +405,14 @@ function normalizeCompetitorType(value: unknown): CompetitorType {
 }
 
 function normalizeCompetitorAnalysisStatus(value: unknown): CompetitorAnalysisStatus {
-  return value === 'running' || value === 'completed' || value === 'error' ? value : 'idle';
+  return value === 'capturing' ||
+    value === 'processing' ||
+    value === 'running' ||
+    value === 'completed' ||
+    value === 'insufficient_data' ||
+    value === 'error'
+    ? value
+    : 'idle';
 }
 
 function normalizeRecordingFields(value: unknown): RecordingField[] {
@@ -709,6 +717,7 @@ export function toCompetitorRecord(row: CompetitorRow): CompetitorRecord {
     analysisStatus: normalizeCompetitorAnalysisStatus(row.analysis_status),
     analysisError: row.analysis_error ?? '',
     analysis: normalizeCompetitorAnalysis(row.analysis),
+    sourceSnapshot: normalizeCompetitorSourceSnapshot(row.source_snapshot),
     lastAnalyzedAt: row.last_analyzed_at ?? '',
     createdAt: row.created_at,
     updatedAt: row.updated_at
@@ -734,7 +743,8 @@ export function toContentReferenceItem(row: ContentReferenceRow): ContentReferen
     category: row.category ?? '',
     source: row.source === 'analysis' ? 'analysis' : 'manual',
     sourceInsightId: row.source_insight_id ?? '',
-    sourceUrl: row.source_url ?? ''
+    sourceUrl: row.source_url ?? '',
+    metadata
   };
 }
 

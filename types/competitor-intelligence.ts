@@ -1,6 +1,17 @@
 export type CompetitorType = 'competitor' | 'reference' | 'inspiration';
 
-export type CompetitorAnalysisStatus = 'idle' | 'running' | 'completed' | 'error';
+export type CompetitorAnalysisStatus =
+  | 'idle'
+  | 'capturing'
+  | 'processing'
+  | 'running'
+  | 'insufficient_data'
+  | 'completed'
+  | 'error';
+
+export type CompetitorDataQuality = 'unknown' | 'insufficient' | 'partial' | 'ready';
+
+export type CompetitorCaptureSource = 'automatic' | 'manual_captions' | 'manual_script';
 
 export type CompetitorContentFormat =
   | 'reels'
@@ -73,6 +84,48 @@ export type CompetitorSourceSnapshot = {
   topPosts: CompetitorCapturedPost[];
 };
 
+export type CompetitorCaptureRecord = {
+  id: string;
+  competitorId: string;
+  source: CompetitorCaptureSource;
+  status: 'success' | 'partial' | 'error';
+  bio: string;
+  captions: string[];
+  hashtags: string[];
+  postTypes: string[];
+  hooksDetected: string[];
+  ctasDetected: string[];
+  transcriptText: string[];
+  captureNotes: string[];
+  postsCaptured: number;
+  reelsCaptured: number;
+  feedCaptured: number;
+  rawSnapshot: CompetitorSourceSnapshot | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type CompetitorPatternRecord = {
+  id: string;
+  competitorId: string;
+  captureId: string;
+  dataQuality: CompetitorDataQuality;
+  tone: string;
+  mostCommonCta: string;
+  mostCommonHookType: string;
+  mostCommonFormat: string;
+  narrativeStructure: string;
+  contentPillars: string[];
+  recurringThemes: string[];
+  topWords: string[];
+  formatMix: Array<{ format: string; count: number; share: number }>;
+  hookPatterns: string[];
+  ctaPatterns: string[];
+  patternSummary: Record<string, unknown>;
+  createdAt: string;
+  updatedAt: string;
+};
+
 export type CompetitorInsight = {
   id: string;
   kind: CompetitorInsightKind;
@@ -125,6 +178,7 @@ export type CompetitorRecord = {
   analysisStatus: CompetitorAnalysisStatus;
   analysisError: string;
   analysis: CompetitorAnalysis | null;
+  sourceSnapshot: CompetitorSourceSnapshot | null;
   lastAnalyzedAt: string;
   createdAt: string;
   updatedAt: string;
@@ -147,4 +201,5 @@ export type ContentReferenceRecord = {
   source: 'manual' | 'analysis';
   sourceInsightId: string;
   sourceUrl: string;
+  metadata?: Record<string, unknown>;
 };

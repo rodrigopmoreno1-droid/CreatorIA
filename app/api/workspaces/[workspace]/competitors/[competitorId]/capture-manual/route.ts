@@ -1,11 +1,16 @@
 import { NextResponse } from 'next/server';
 
 import { COMPETITOR_SELECT, runCompetitorAnalysisPipeline } from '@/lib/competitor-analysis-pipeline';
-import { captureCompetitorSources } from '@/lib/competitor-intelligence';
+import { buildManualCompetitorSnapshot } from '@/lib/competitor-intelligence';
 import { resolveWorkspaceDataAccess } from '@/lib/platform-data';
 
+type ManualCapturePayload = {
+  mode?: 'captions' | 'script';
+  content?: string;
+};
+
 export async function POST(
-  _request: Request,
+  request: Request,
   { params }: { params: Promise<{ workspace: string; competitorId: string }> }
 ) {
   const { workspace, competitorId } = await params;
@@ -13,6 +18,14 @@ export async function POST(
 
   if (!access) {
     return NextResponse.json({ error: 'Workspace nao encontrado.' }, { status: 404 });
+  }
+
+  const body = (await request.json().catch(() => null)) as ManualCapturePayload | null;
+  const mode = body?.mode === 'script' ? 'script' : 'captions';
+  const content = body?.content?.trim() ?? '';
+
+  if (!content) {
+    return NextResponse.json({ error: 'Cole ao menos duas legendas ou roteiros para continuar.' }, { status: 400 });
   }
 
   const { admin, context } = access;
@@ -25,10 +38,6 @@ export async function POST(
 
   if (existingError || !existing) {
     return NextResponse.json({ error: existingError?.message ?? 'Perfil nao encontrado.' }, { status: 404 });
-  }
-
-  if (!existing.handle && !existing.website) {
-    return NextResponse.json({ error: 'Informe ao menos o Instagram ou o website para gerar a analise.' }, { status: 400 });
   }
 
   await admin
@@ -53,7 +62,12 @@ export async function POST(
       tags: Array.isArray(existing.tags) ? existing.tags.filter((tag): tag is string => typeof tag === 'string') : []
     };
 
-    const { snapshot, suggestedLogoUrl } = await captureCompetitorSources(competitorInput);
+    const { snapshot, suggestedLogoUrl } = buildManualCompetitorSnapshot({
+      competitor: competitorInput,
+      content,
+      mode
+    });
+
     const result = await runCompetitorAnalysisPipeline({
       admin,
       companyId: context.companyId,
@@ -78,14 +92,12 @@ export async function POST(
       },
       snapshot,
       suggestedLogoUrl,
-      source: 'automatic'
+      source: mode === 'script' ? 'manual_script' : 'manual_captions'
     });
 
-    return NextResponse.json({
-      competitor: result.competitor
-    });
+    return NextResponse.json({ competitor: result.competitor });
   } catch (error) {
-    const message = error instanceof Error ? error.message : 'Nao foi possivel gerar a analise.';
+    const message = error instanceof Error ? error.message : 'Nao foi possivel processar o material manual.';
 
     await admin
       .from('competitors')

@@ -73,14 +73,20 @@ const TYPE_BADGE: Record<CompetitorType, string> = {
 
 const ANALYSIS_LABELS: Record<CompetitorAnalysisStatus, string> = {
   idle: 'Sem analise',
+  capturing: 'Capturando',
+  processing: 'Processando',
   running: 'Analisando',
+  insufficient_data: 'Dados insuficientes',
   completed: 'Analise pronta',
   error: 'Erro'
 };
 
 const ANALYSIS_BADGES: Record<CompetitorAnalysisStatus, string> = {
   idle: 'border-zinc-200 bg-zinc-50 text-zinc-500',
+  capturing: 'border-sky-200 bg-sky-50 text-sky-700',
+  processing: 'border-amber-200 bg-amber-50 text-amber-700',
   running: 'border-amber-200 bg-amber-50 text-amber-700',
+  insufficient_data: 'border-orange-200 bg-orange-50 text-orange-700',
   completed: 'border-emerald-200 bg-emerald-50 text-emerald-700',
   error: 'border-rose-200 bg-rose-50 text-rose-700'
 };
@@ -154,7 +160,7 @@ function formatDateLabel(value: string) {
 function AnalysisStatusBadge({ status }: { status: CompetitorAnalysisStatus }) {
   return (
     <span className={cn('inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-semibold', ANALYSIS_BADGES[status])}>
-      {status === 'running' ? <Loader2 className="mr-1 h-3 w-3 animate-spin" /> : null}
+      {status === 'running' || status === 'capturing' || status === 'processing' ? <Loader2 className="mr-1 h-3 w-3 animate-spin" /> : null}
       {ANALYSIS_LABELS[status]}
     </span>
   );
@@ -218,6 +224,8 @@ function CompetitorCard({
           <p className="text-[11px] leading-relaxed text-zinc-500 line-clamp-2">
             {competitor.analysis.overview.positioning}
           </p>
+        ) : competitor.analysisStatus === 'insufficient_data' && competitor.analysisError ? (
+          <p className="text-[11px] leading-relaxed text-orange-600 line-clamp-2">{competitor.analysisError}</p>
         ) : competitor.notes ? (
           <p className="text-[11px] leading-relaxed text-zinc-400 line-clamp-2">{competitor.notes}</p>
         ) : null}
@@ -627,6 +635,85 @@ function AddReferenceModal({
   );
 }
 
+function ManualCaptureModal({
+  mode,
+  competitorName,
+  onSubmit,
+  onClose
+}: {
+  mode: 'captions' | 'script';
+  competitorName: string;
+  onSubmit: (payload: { mode: 'captions' | 'script'; content: string }) => Promise<void>;
+  onClose: () => void;
+}) {
+  const [content, setContent] = useState('');
+  const [saving, setSaving] = useState(false);
+
+  async function handleSubmit(event: React.FormEvent) {
+    event.preventDefault();
+    if (!content.trim()) {
+      toast.error(mode === 'script' ? 'Cole ao menos dois roteiros curtos.' : 'Cole ao menos duas legendas ou aberturas.');
+      return;
+    }
+
+    setSaving(true);
+    try {
+      await onSubmit({ mode, content });
+      onClose();
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/55 p-4 backdrop-blur-sm">
+      <div className="max-h-[90vh] w-full max-w-2xl overflow-y-auto rounded-2xl bg-white shadow-2xl">
+        <div className="flex items-center justify-between border-b border-zinc-100 px-6 py-4">
+          <div>
+            <h2 className="text-base font-semibold text-zinc-900">
+              {mode === 'script' ? 'Colar roteiro manualmente' : 'Colar legendas manualmente'}
+            </h2>
+            <p className="mt-0.5 text-xs text-zinc-400">de {competitorName}</p>
+          </div>
+          <button onClick={onClose} className="text-zinc-400 transition hover:text-zinc-600">
+            <X className="h-5 w-5" />
+          </button>
+        </div>
+
+        <form onSubmit={handleSubmit} className="space-y-4 p-6">
+          <div className="rounded-2xl border border-zinc-200 bg-zinc-50 p-4 text-xs leading-relaxed text-zinc-500">
+            Separe cada {mode === 'script' ? 'roteiro' : 'legenda'} com uma linha em branco. O sistema vai transformar esse material em captura, padroes e analise utilizavel.
+          </div>
+
+          <div>
+            <label className="mb-1.5 block text-xs font-medium text-zinc-700">Material colado</label>
+            <Textarea
+              value={content}
+              onChange={(event) => setContent(event.target.value)}
+              rows={12}
+              placeholder={
+                mode === 'script'
+                  ? 'Roteiro 1...\n\nRoteiro 2...\n\nRoteiro 3...'
+                  : 'Legenda 1...\n\nLegenda 2...\n\nLegenda 3...'
+              }
+            />
+          </div>
+
+          <div className="flex justify-end gap-2 pt-2">
+            <Button type="button" variant="outline" onClick={onClose}>
+              Cancelar
+            </Button>
+            <Button type="submit" disabled={saving}>
+              {saving ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+              Processar material
+            </Button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+}
+
 function InsightCard({
   insight,
   saved,
@@ -721,6 +808,7 @@ function CompetitorDetailModal({
   const [activeTab, setActiveTab] = useState<'profile' | 'analysis' | 'references'>('analysis');
   const [editingProfile, setEditingProfile] = useState(false);
   const [addingReference, setAddingReference] = useState(false);
+  const [manualCaptureMode, setManualCaptureMode] = useState<'captions' | 'script' | null>(null);
   const [generatingAnalysis, setGeneratingAnalysis] = useState(false);
   const [referenceFilter, setReferenceFilter] = useState<'all' | 'liked'>('all');
 
@@ -750,9 +838,37 @@ function CompetitorDetailModal({
       }
 
       onUpdateCompetitor(payload.competitor);
-      toast.success('Analise concluida com dados reais do perfil.');
+      if (payload.competitor.analysisStatus === 'insufficient_data') {
+        toast.warning('Captura concluida, mas ainda faltam dados publicos suficientes para uma analise completa.');
+      } else {
+        toast.success('Analise concluida com dados reais do perfil.');
+      }
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Nao foi possivel gerar a analise.';
+      toast.error(message);
+    } finally {
+      setGeneratingAnalysis(false);
+    }
+  }
+
+  async function handleManualCapture(mode: 'captions' | 'script', content: string) {
+    setGeneratingAnalysis(true);
+    try {
+      const response = await fetch(`/api/workspaces/${workspace}/competitors/${competitor.id}/capture-manual`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ mode, content })
+      });
+      const payload = (await response.json().catch(() => null)) as { competitor?: CompetitorRecord; error?: string } | null;
+
+      if (!response.ok || !payload?.competitor) {
+        throw new Error(payload?.error ?? 'Nao foi possivel processar o material manual.');
+      }
+
+      onUpdateCompetitor(payload.competitor);
+      toast.success('Material manual processado e incorporado na analise.');
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Nao foi possivel processar o material manual.';
       toast.error(message);
     } finally {
       setGeneratingAnalysis(false);
@@ -787,6 +903,13 @@ function CompetitorDetailModal({
   ];
 
   const analysis = competitor.analysis && Array.isArray(competitor.analysis.sections) && competitor.analysis.sourceSnapshot ? competitor.analysis : null;
+  const sourceSnapshot = analysis?.sourceSnapshot ?? competitor.sourceSnapshot;
+  const insufficientData = competitor.analysisStatus === 'insufficient_data';
+  const isAnalyzing =
+    generatingAnalysis ||
+    competitor.analysisStatus === 'running' ||
+    competitor.analysisStatus === 'capturing' ||
+    competitor.analysisStatus === 'processing';
 
   return (
     <>
@@ -948,17 +1071,56 @@ function CompetitorDetailModal({
                   </div>
                 ) : null}
 
-                {generatingAnalysis || competitor.analysisStatus === 'running' ? (
+                {isAnalyzing ? (
                   <div className="flex flex-col items-center justify-center rounded-3xl border border-zinc-200 bg-zinc-50 py-16 text-center">
                     <Loader2 className="mb-4 h-10 w-10 animate-spin text-zinc-400" />
-                    <p className="text-sm font-medium text-zinc-700">Analisando perfil, posts, legendas e padroes...</p>
+                    <p className="text-sm font-medium text-zinc-700">Capturando fontes, processando padroes e organizando os insights...</p>
                     <p className="mt-2 max-w-md text-xs text-zinc-500">
-                      O sistema esta capturando dados publicos, organizando os sinais e transformando isso em repertorio acionavel.
+                      O sistema esta separando captura, leitura logica e analise final para evitar respostas genricas sem base real.
                     </p>
                   </div>
                 ) : null}
 
-                {!analysis && competitor.analysisStatus !== 'running' && !generatingAnalysis ? (
+                {insufficientData && !isAnalyzing ? (
+                  <div className="space-y-4 rounded-3xl border border-orange-200 bg-orange-50 p-5">
+                    <div className="flex items-start gap-3">
+                      <AlertCircle className="mt-0.5 h-5 w-5 flex-shrink-0 text-orange-600" />
+                      <div>
+                        <p className="text-sm font-semibold text-orange-900">Dados insuficientes para analise completa</p>
+                        <p className="mt-1 text-sm leading-relaxed text-orange-800">
+                          {competitor.analysisError || 'O sistema conseguiu capturar pouco material publico. Tente nova captura ou complemente com legendas/roteiros manuais.'}
+                        </p>
+                      </div>
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                      <Button type="button" variant="outline" onClick={handleGenerateAnalysis} className="border-orange-200 bg-white text-orange-800 hover:bg-orange-100">
+                        <RefreshCcw className="mr-2 h-4 w-4" />
+                        Tentar nova captura
+                      </Button>
+                      <Button type="button" variant="outline" onClick={() => setManualCaptureMode('captions')}>
+                        <BookOpen className="mr-2 h-4 w-4" />
+                        Colar legendas manualmente
+                      </Button>
+                      <Button type="button" variant="outline" onClick={() => setManualCaptureMode('script')}>
+                        <Pencil className="mr-2 h-4 w-4" />
+                        Colar roteiro manualmente
+                      </Button>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        onClick={() => {
+                          setActiveTab('references');
+                          setAddingReference(true);
+                        }}
+                      >
+                        <Plus className="mr-2 h-4 w-4" />
+                        Adicionar referencia manual
+                      </Button>
+                    </div>
+                  </div>
+                ) : null}
+
+                {!analysis && !insufficientData && !isAnalyzing ? (
                   <div className="flex flex-col items-center justify-center rounded-3xl border border-dashed border-zinc-200 bg-zinc-50 py-16 text-center">
                     <Sparkles className="mb-4 h-10 w-10 text-zinc-300" />
                     <p className="text-sm font-medium text-zinc-700">Nenhuma analise ainda</p>
@@ -968,35 +1130,49 @@ function CompetitorDetailModal({
                   </div>
                 ) : null}
 
-                {analysis && !generatingAnalysis ? (
+                {sourceSnapshot && !isAnalyzing ? (
                   <>
                     <div className="grid gap-4 xl:grid-cols-[1.1fr_0.9fr]">
-                      <Card className="rounded-2xl border-zinc-200">
-                        <CardContent className="space-y-4 p-5">
-                          <div className="flex flex-wrap items-center justify-between gap-2">
-                            <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-zinc-400">Visao geral</p>
-                            <span className="text-[11px] text-zinc-400">Atualizada em {formatDateLabel(analysis.generatedAt)}</span>
-                          </div>
-                          <div className="grid gap-4 sm:grid-cols-2">
-                            <div>
-                              <p className="text-[11px] text-zinc-400">Tom de voz</p>
-                              <p className="mt-1 text-sm text-zinc-900">{analysis.overview.toneOfVoice}</p>
+                      {analysis ? (
+                        <Card className="rounded-2xl border-zinc-200">
+                          <CardContent className="space-y-4 p-5">
+                            <div className="flex flex-wrap items-center justify-between gap-2">
+                              <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-zinc-400">Visao geral</p>
+                              <span className="text-[11px] text-zinc-400">Atualizada em {formatDateLabel(analysis.generatedAt)}</span>
                             </div>
-                            <div>
-                              <p className="text-[11px] text-zinc-400">Publico aparente</p>
-                              <p className="mt-1 text-sm text-zinc-900">{analysis.overview.apparentAudience}</p>
+                            <div className="grid gap-4 sm:grid-cols-2">
+                              <div>
+                                <p className="text-[11px] text-zinc-400">Tom de voz</p>
+                                <p className="mt-1 text-sm text-zinc-900">{analysis.overview.toneOfVoice}</p>
+                              </div>
+                              <div>
+                                <p className="text-[11px] text-zinc-400">Publico aparente</p>
+                                <p className="mt-1 text-sm text-zinc-900">{analysis.overview.apparentAudience}</p>
+                              </div>
+                              <div className="sm:col-span-2">
+                                <p className="text-[11px] text-zinc-400">Posicionamento</p>
+                                <p className="mt-1 text-sm text-zinc-900">{analysis.overview.positioning}</p>
+                              </div>
+                              <div className="sm:col-span-2">
+                                <p className="text-[11px] text-zinc-400">Estilo visual</p>
+                                <p className="mt-1 text-sm text-zinc-900">{analysis.overview.visualStyle}</p>
+                              </div>
                             </div>
-                            <div className="sm:col-span-2">
-                              <p className="text-[11px] text-zinc-400">Posicionamento</p>
-                              <p className="mt-1 text-sm text-zinc-900">{analysis.overview.positioning}</p>
+                          </CardContent>
+                        </Card>
+                      ) : (
+                        <Card className="rounded-2xl border-zinc-200">
+                          <CardContent className="space-y-4 p-5">
+                            <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-zinc-400">Leitura parcial</p>
+                            <p className="text-sm leading-relaxed text-zinc-700">
+                              A captura ja foi persistida e os sinais basicos foram processados, mas a analise final por IA ficou bloqueada porque o volume de posts/legendas ainda nao sustenta uma leitura confiavel.
+                            </p>
+                            <div className="rounded-2xl border border-zinc-200 bg-zinc-50 p-4 text-xs leading-relaxed text-zinc-500">
+                              Use os botoes acima para tentar nova captura ou complementar com legendas e roteiros reais desse perfil. Assim o sistema passa a trabalhar com base concreta em vez de inventar conclusoes.
                             </div>
-                            <div className="sm:col-span-2">
-                              <p className="text-[11px] text-zinc-400">Estilo visual</p>
-                              <p className="mt-1 text-sm text-zinc-900">{analysis.overview.visualStyle}</p>
-                            </div>
-                          </div>
-                        </CardContent>
-                      </Card>
+                          </CardContent>
+                        </Card>
+                      )}
 
                       <Card className="rounded-2xl border-zinc-200">
                         <CardContent className="space-y-4 p-5">
@@ -1004,27 +1180,27 @@ function CompetitorDetailModal({
                           <div className="grid gap-3 sm:grid-cols-3">
                             <div className="rounded-2xl border border-zinc-200 bg-zinc-50 p-3">
                               <p className="text-[11px] text-zinc-400">Posts analisados</p>
-                              <p className="mt-1 text-lg font-semibold text-zinc-900">{analysis.sourceSnapshot.postsAnalyzed}</p>
+                              <p className="mt-1 text-lg font-semibold text-zinc-900">{sourceSnapshot.postsAnalyzed}</p>
                             </div>
                             <div className="rounded-2xl border border-zinc-200 bg-zinc-50 p-3">
                               <p className="text-[11px] text-zinc-400">Reels / videos</p>
-                              <p className="mt-1 text-lg font-semibold text-zinc-900">{analysis.sourceSnapshot.reelsAnalyzed}</p>
+                              <p className="mt-1 text-lg font-semibold text-zinc-900">{sourceSnapshot.reelsAnalyzed}</p>
                             </div>
                             <div className="rounded-2xl border border-zinc-200 bg-zinc-50 p-3">
                               <p className="text-[11px] text-zinc-400">Feed</p>
-                              <p className="mt-1 text-lg font-semibold text-zinc-900">{analysis.sourceSnapshot.feedAnalyzed}</p>
+                              <p className="mt-1 text-lg font-semibold text-zinc-900">{sourceSnapshot.feedAnalyzed}</p>
                             </div>
                           </div>
-                          {analysis.sourceSnapshot.captureNotes.length ? (
+                          {sourceSnapshot.captureNotes.length ? (
                             <div className="rounded-2xl border border-amber-200 bg-amber-50 p-3 text-xs leading-relaxed text-amber-700">
-                              {analysis.sourceSnapshot.captureNotes.join(' ')}
+                              {sourceSnapshot.captureNotes.join(' ')}
                             </div>
                           ) : null}
                         </CardContent>
                       </Card>
                     </div>
 
-                    {analysis.practicalSuggestions.toContent.length || analysis.practicalSuggestions.toCreatorAi.length || analysis.practicalSuggestions.toReferenceBank.length ? (
+                    {analysis && (analysis.practicalSuggestions.toContent.length || analysis.practicalSuggestions.toCreatorAi.length || analysis.practicalSuggestions.toReferenceBank.length) ? (
                       <Card className="rounded-2xl border-zinc-200">
                         <CardContent className="grid gap-4 p-5 md:grid-cols-3">
                           <div>
@@ -1055,28 +1231,30 @@ function CompetitorDetailModal({
                       </Card>
                     ) : null}
 
-                    <div className="space-y-4">
-                      {analysis.sections.map((section) => (
-                        <Card key={section.id} className="rounded-2xl border-zinc-200">
-                          <CardContent className="space-y-4 p-5">
-                            <div>
-                              <p className="text-sm font-semibold text-zinc-900">{section.title}</p>
-                              <p className="mt-1 text-xs leading-relaxed text-zinc-500">{section.description}</p>
-                            </div>
-                            <div className="grid gap-3 xl:grid-cols-2">
-                              {section.items.map((insight) => (
-                                <InsightCard
-                                  key={insight.id}
-                                  insight={insight}
-                                  saved={savedInsightIds.has(insight.id)}
-                                  onToggleSave={() => handleInsightToggle(insight)}
-                                />
-                              ))}
-                            </div>
-                          </CardContent>
-                        </Card>
-                      ))}
-                    </div>
+                    {analysis ? (
+                      <div className="space-y-4">
+                        {analysis.sections.map((section) => (
+                          <Card key={section.id} className="rounded-2xl border-zinc-200">
+                            <CardContent className="space-y-4 p-5">
+                              <div>
+                                <p className="text-sm font-semibold text-zinc-900">{section.title}</p>
+                                <p className="mt-1 text-xs leading-relaxed text-zinc-500">{section.description}</p>
+                              </div>
+                              <div className="grid gap-3 xl:grid-cols-2">
+                                {section.items.map((insight) => (
+                                  <InsightCard
+                                    key={insight.id}
+                                    insight={insight}
+                                    saved={savedInsightIds.has(insight.id)}
+                                    onToggleSave={() => handleInsightToggle(insight)}
+                                  />
+                                ))}
+                              </div>
+                            </CardContent>
+                          </Card>
+                        ))}
+                      </div>
+                    ) : null}
                   </>
                 ) : null}
               </div>
@@ -1182,10 +1360,24 @@ function CompetitorDetailModal({
               category: 'manual',
               source: 'manual',
               sourceInsightId: '',
-              sourceUrl: ''
+              sourceUrl: '',
+              metadata: {
+                origin: 'manual-reference',
+                competitorType: competitor.type,
+                niche: competitor.niche
+              }
             });
           }}
           onClose={() => setAddingReference(false)}
+        />
+      ) : null}
+
+      {manualCaptureMode ? (
+        <ManualCaptureModal
+          mode={manualCaptureMode}
+          competitorName={competitor.name}
+          onSubmit={({ mode, content }) => handleManualCapture(mode, content)}
+          onClose={() => setManualCaptureMode(null)}
         />
       ) : null}
     </>

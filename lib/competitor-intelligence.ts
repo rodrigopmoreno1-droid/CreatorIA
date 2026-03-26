@@ -1,7 +1,9 @@
 import type {
   CompetitorAnalysis,
   CompetitorCapturedPost,
+  CompetitorCaptureSource,
   CompetitorContentFormat,
+  CompetitorDataQuality,
   CompetitorInsight,
   CompetitorRecord,
   CompetitorSourceSnapshot,
@@ -29,6 +31,19 @@ export type CompetitorAnalysisInput = {
   facts: CompetitorAnalysisFacts;
 };
 
+export type CompetitorDataQualityAssessment = {
+  quality: CompetitorDataQuality;
+  enoughForAi: boolean;
+  reason: string;
+  stats: {
+    posts: number;
+    captions: number;
+    reels: number;
+    feed: number;
+    characters: number;
+  };
+};
+
 const INSTAGRAM_APP_ID = '936619743392459';
 const WEBSITE_USER_AGENT = 'Mozilla/5.0 (CreatorAI; +https://creator-ia.vercel.app)';
 const WORD_STOPLIST = new Set([
@@ -37,6 +52,9 @@ const WORD_STOPLIST = new Set([
   'muita', 'sobre', 'como', 'quando', 'onde', 'porque', 'entre', 'pra', 'pro', 'se', 'ao', 'aos', 'ou', 'the',
   'and', 'for', 'with', 'your', 'you', 'this', 'that', 'from', 'are', 'our', 'their', 'its', 'just', 'into'
 ]);
+const MIN_COMPETITOR_POSTS_FOR_AI = 2;
+const MIN_COMPETITOR_CAPTIONS_FOR_AI = 2;
+const MIN_COMPETITOR_TEXT_LENGTH_FOR_AI = 280;
 
 function normalizeText(value: unknown) {
   return typeof value === 'string' ? value.trim() : '';
@@ -647,6 +665,128 @@ export function buildCompetitorFacts(snapshot: CompetitorSourceSnapshot, competi
   };
 }
 
+export function extractHashtagsFromText(text: string) {
+  return [...new Set((text.match(/#[\p{L}\p{N}_]+/gu) ?? []).map((tag) => tag.toLowerCase()))];
+}
+
+function countFilledCaptions(posts: CompetitorCapturedPost[]) {
+  return posts.filter((post) => normalizeText(post.caption || post.captionLead)).length;
+}
+
+function captureTextLength(posts: CompetitorCapturedPost[]) {
+  return posts.reduce((total, post) => total + normalizeText(post.caption || post.captionLead).length, 0);
+}
+
+export function assessCompetitorDataQuality(snapshot: CompetitorSourceSnapshot): CompetitorDataQualityAssessment {
+  const posts = Array.isArray(snapshot.topPosts) ? snapshot.topPosts : [];
+  const captions = countFilledCaptions(posts);
+  const characters = captureTextLength(posts);
+  const stats = {
+    posts: snapshot.postsAnalyzed,
+    captions,
+    reels: snapshot.reelsAnalyzed,
+    feed: snapshot.feedAnalyzed,
+    characters
+  };
+
+  if (!stats.posts || !captions) {
+    return {
+      quality: 'insufficient',
+      enoughForAi: false,
+      reason: 'Dados insuficientes para analise completa. O sistema nao conseguiu capturar posts e legendas publicas suficientes desse perfil.',
+      stats
+    };
+  }
+
+  if (
+    stats.posts < MIN_COMPETITOR_POSTS_FOR_AI ||
+    captions < MIN_COMPETITOR_CAPTIONS_FOR_AI ||
+    characters < MIN_COMPETITOR_TEXT_LENGTH_FOR_AI
+  ) {
+    return {
+      quality: 'partial',
+      enoughForAi: false,
+      reason: `Dados insuficientes para analise completa. Foram capturados ${stats.posts} post(s), ${captions} legenda(s) utilizaveis e ${characters} caracteres de texto.`,
+      stats
+    };
+  }
+
+  return {
+    quality: 'ready',
+    enoughForAi: true,
+    reason: '',
+    stats
+  };
+}
+
+export function buildCompetitorCapturePayload(input: {
+  companyId: string;
+  competitorId: string;
+  source: CompetitorCaptureSource;
+  snapshot: CompetitorSourceSnapshot;
+  status: 'success' | 'partial' | 'error';
+}) {
+  const posts = Array.isArray(input.snapshot.topPosts) ? input.snapshot.topPosts : [];
+
+  return {
+    company_id: input.companyId,
+    competitor_id: input.competitorId,
+    source: input.source,
+    status: input.status,
+    bio: input.snapshot.instagram?.bio ?? '',
+    captions: posts.map((post) => post.caption).filter(Boolean),
+    hashtags: [...new Set(posts.flatMap((post) => extractHashtagsFromText(post.caption)))],
+    post_types: posts.map((post) => post.format).filter(Boolean),
+    hooks_detected: posts.map((post) => post.hookPattern).filter(Boolean),
+    ctas_detected: posts.flatMap((post) => post.ctaPatterns).filter(Boolean),
+    transcript_text: posts
+      .map((post) => normalizeText(post.accessibilityCaption))
+      .filter(Boolean),
+    capture_notes: input.snapshot.captureNotes,
+    posts_captured: input.snapshot.postsAnalyzed,
+    reels_captured: input.snapshot.reelsAnalyzed,
+    feed_captured: input.snapshot.feedAnalyzed,
+    raw_snapshot: input.snapshot
+  };
+}
+
+export function buildCompetitorPatternPayload(input: {
+  companyId: string;
+  competitorId: string;
+  captureId: string;
+  snapshot: CompetitorSourceSnapshot;
+  facts: CompetitorAnalysisFacts;
+  assessment: CompetitorDataQualityAssessment;
+}) {
+  const dominantFormat = input.facts.formatMix[0];
+
+  return {
+    company_id: input.companyId,
+    competitor_id: input.competitorId,
+    capture_id: input.captureId,
+    data_quality: input.assessment.quality,
+    tone: input.facts.toneHints.join(', '),
+    most_common_cta: input.facts.ctaPatterns[0] ?? '',
+    most_common_hook_type: input.facts.hookPatterns[0] ?? '',
+    most_common_format: dominantFormat ? formatShareLabel(dominantFormat.format) : '',
+    narrative_structure: input.facts.storytellingPatterns[0] ?? '',
+    content_pillars: input.facts.topAngles,
+    recurring_themes: input.facts.recurringThemes,
+    top_words: input.facts.recurringThemes,
+    format_mix: input.facts.formatMix,
+    hook_patterns: input.facts.hookPatterns,
+    cta_patterns: input.facts.ctaPatterns,
+    pattern_summary: {
+      cadenceLabel: input.facts.cadenceLabel,
+      visualHints: input.facts.visualHints,
+      toneHints: input.facts.toneHints,
+      topCaptions: input.facts.topCaptions,
+      stats: input.assessment.stats,
+      sourceNotes: input.snapshot.captureNotes
+    }
+  };
+}
+
 function topPostsForSnapshot(posts: CompetitorCapturedPost[]) {
   return [...posts]
     .sort((left, right) => right.metrics.engagementScore - left.metrics.engagementScore)
@@ -701,6 +841,82 @@ export async function captureCompetitorSources(competitor: CompetitorAnalysisInp
   return {
     snapshot,
     suggestedLogoUrl: website?.logoUrl || website?.iconUrl || instagram?.profilePicUrl || competitor.logoUrl || ''
+  };
+}
+
+function splitManualCaptureSamples(content: string) {
+  return content
+    .replace(/\r/g, '')
+    .split(/\n\s*\n+|^---+$|(?:\n-{3,}\n)/m)
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+export function buildManualCompetitorSnapshot(input: {
+  competitor: CompetitorAnalysisInput['competitor'];
+  content: string;
+  mode: 'captions' | 'script';
+}) {
+  const samples = splitManualCaptureSamples(input.content);
+  const now = Date.now();
+  const format: CompetitorContentFormat = input.mode === 'script' ? 'video' : 'unknown';
+  const posts = topPostsForSnapshot(
+    samples.map((sample, index) => {
+      const normalized = normalizeWhitespace(sample);
+
+      return {
+        id: `manual-${index + 1}`,
+        shortcode: '',
+        sourceUrl: '',
+        format,
+        caption: normalized,
+        captionLead: firstCaptionLine(normalized),
+        thumbnailUrl: '',
+        mediaUrl: '',
+        postedAt: new Date(now - index * 60 * 1000).toISOString(),
+        metrics: {
+          likes: Math.max(0, samples.length - index),
+          comments: 0,
+          views: 0,
+          engagementScore: Math.max(0, samples.length - index)
+        },
+        accessibilityCaption: '',
+        hookPattern: detectHookPattern(normalized),
+        ctaPatterns: detectCtaPatterns(normalized),
+        storytellingPatterns: detectStorytellingPatterns(normalized)
+      } satisfies CompetitorCapturedPost;
+    })
+  );
+
+  return {
+    snapshot: {
+      fetchedAt: new Date().toISOString(),
+      instagram: input.competitor.handle
+        ? {
+            handle: input.competitor.handle,
+            bio: '',
+            fullName: input.competitor.name,
+            followers: 0,
+            following: 0,
+            postsCount: posts.length,
+            reelsCount: input.mode === 'script' ? posts.length : 0,
+            verified: false,
+            externalUrl: '',
+            profilePicUrl: input.competitor.logoUrl ?? ''
+          }
+        : null,
+      website: null,
+      postsAnalyzed: posts.length,
+      reelsAnalyzed: input.mode === 'script' ? posts.length : 0,
+      feedAnalyzed: input.mode === 'script' ? 0 : posts.length,
+      captureNotes: [
+        input.mode === 'script'
+          ? 'Analise apoiada por roteiros/legendas colados manualmente pelo usuario.'
+          : 'Analise apoiada por legendas coladas manualmente pelo usuario.'
+      ],
+      topPosts: posts
+    } satisfies CompetitorSourceSnapshot,
+    suggestedLogoUrl: input.competitor.logoUrl ?? ''
   };
 }
 
@@ -934,7 +1150,7 @@ export function summarizeCompetitorAnalysisInput(input: CompetitorAnalysisInput)
 }
 
 export function buildReferencePayloadFromInsight(
-  competitor: Pick<CompetitorRecord, 'id' | 'name'>,
+  competitor: Pick<CompetitorRecord, 'id' | 'name' | 'niche' | 'type'>,
   insight: CompetitorInsight
 ): Omit<ContentReferenceRecord, 'id' | 'savedAt'> {
   return {
@@ -951,6 +1167,16 @@ export function buildReferencePayloadFromInsight(
     category: insight.kind,
     source: 'analysis',
     sourceInsightId: insight.id,
-    sourceUrl: insight.sourceUrl
+    sourceUrl: insight.sourceUrl,
+    metadata: {
+      origin: 'competitors-analysis',
+      competitorType: competitor.type,
+      niche: competitor.niche,
+      tags: insight.tags,
+      hookType: insight.hookType || insight.kind,
+      ctaType: insight.ctaType || '',
+      format: insight.format || '',
+      referenceType: insight.kind
+    }
   };
 }

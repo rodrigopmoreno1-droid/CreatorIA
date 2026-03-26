@@ -17,6 +17,7 @@ type ReferencePayload = {
   source?: 'manual' | 'analysis';
   sourceInsightId?: string;
   sourceUrl?: string;
+  metadata?: Record<string, unknown>;
 };
 
 export async function GET(_request: Request, { params }: { params: Promise<{ workspace: string }> }) {
@@ -150,7 +151,9 @@ export async function POST(request: Request, { params }: { params: Promise<{ wor
       source_insight_id: body.sourceInsightId?.trim() || '',
       source_url: body.sourceUrl?.trim() || null,
       metadata: {
-        competitorName: body.competitorName?.trim() || ''
+        competitorName: body.competitorName?.trim() || '',
+        origin: body.source === 'analysis' ? 'competitors-analysis' : 'manual-reference',
+        ...(body.metadata && typeof body.metadata === 'object' ? body.metadata : {})
       }
     })
     .select('id,company_id,competitor_id,title,content,hook_type,cta_type,format,image_url,notes,liked,category,source,source_insight_id,source_url,metadata,created_at,updated_at,competitors(name)')
