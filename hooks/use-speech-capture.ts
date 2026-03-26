@@ -113,7 +113,8 @@ export function useSpeechCapture({ lang = 'pt-BR', maxDurationMs = 120000, onTra
     recognition.onresult = (event) => {
       const transcript = Array.from(event.results)
         .map((result) => result[0]?.transcript ?? '')
-        .join('')
+        .join(' ')
+        .replace(/\s+/g, ' ')
         .trim();
 
       transcriptRef.current = transcript;

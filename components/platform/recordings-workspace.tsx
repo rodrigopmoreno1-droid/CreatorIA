@@ -17,7 +17,7 @@ import {
   verticalListSortingStrategy
 } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
-import { Eye, LayoutGrid, List, Loader2, PencilLine, Plus, X } from 'lucide-react';
+import { AlertTriangle, Eye, GripVertical, LayoutGrid, List, Loader2, PencilLine, Plus, Trash2, X } from 'lucide-react';
 import { toast } from 'sonner';
 
 import { Button } from '@/components/ui/button';
@@ -132,6 +132,16 @@ function parseCommaList(value: string) {
     .filter(Boolean);
 }
 
+function padTakeList(takes: string[], minimum = 5) {
+  const nextTakes = [...takes];
+
+  while (nextTakes.length < minimum) {
+    nextTakes.push('');
+  }
+
+  return nextTakes;
+}
+
 function createEmptyRecordingCard(column: RecordingColumnKey): RecordingFormState {
   const tempId = `draft-${crypto.randomUUID()}`;
 
@@ -158,7 +168,7 @@ function createEmptyRecordingCard(column: RecordingColumnKey): RecordingFormStat
 function buildRecordingFormFromCard(card: RecordingCard): RecordingFormState {
   return {
     ...card,
-    takes: card.takes.length ? card.takes : ['', '', '', '', ''],
+    takes: padTakeList(card.takes.length ? card.takes : []),
     labels: card.labels ?? [],
     fields: card.fields ?? []
   };
@@ -187,12 +197,16 @@ function SortableRecordingCard({
   card,
   onView,
   onEdit,
-  loading
+  onDelete,
+  loading,
+  deleting
 }: {
   card: RecordingCard;
   onView: (card: RecordingCard) => void;
   onEdit: (card: RecordingCard) => void;
+  onDelete: (card: RecordingCard) => void;
   loading: boolean;
+  deleting: boolean;
 }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: card.id
@@ -205,7 +219,9 @@ function SortableRecordingCard({
         transform: CSS.Transform.toString(transform),
         transition
       }}
-      className={cn(isDragging ? 'opacity-60' : 'opacity-100')}
+      className={cn('touch-none select-none cursor-grab active:cursor-grabbing', isDragging ? 'opacity-60' : 'opacity-100')}
+      {...attributes}
+      {...listeners}
     >
       <div className="rounded-[22px] border border-border bg-white p-4 shadow-soft">
         <div className="flex items-start justify-between gap-3">
@@ -227,6 +243,7 @@ function SortableRecordingCard({
             <button
               type="button"
               onClick={() => onView(card)}
+              onPointerDownCapture={(event) => event.stopPropagation()}
               className="inline-flex h-8 w-8 items-center justify-center rounded-xl border border-border bg-white transition hover:bg-muted"
               aria-label="Ver roteiro"
             >
@@ -235,10 +252,21 @@ function SortableRecordingCard({
             <button
               type="button"
               onClick={() => onEdit(card)}
+              onPointerDownCapture={(event) => event.stopPropagation()}
               className="inline-flex h-8 w-8 items-center justify-center rounded-xl border border-border bg-white transition hover:bg-muted"
               aria-label="Editar roteiro"
             >
               <PencilLine className="h-4 w-4" />
+            </button>
+            <button
+              type="button"
+              onClick={() => onDelete(card)}
+              onPointerDownCapture={(event) => event.stopPropagation()}
+              className="inline-flex h-8 w-8 items-center justify-center rounded-xl border border-rose-200 bg-white text-rose-600 transition hover:bg-rose-50"
+              aria-label="Remover roteiro"
+              disabled={deleting}
+            >
+              {deleting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
             </button>
           </div>
         </div>
@@ -256,14 +284,10 @@ function SortableRecordingCard({
         </div>
 
         <div className="mt-4 flex items-center justify-between">
-          <button
-            type="button"
-            className="inline-flex items-center gap-2 rounded-full border border-border bg-background px-3 py-1.5 text-[11px] font-medium text-muted-foreground"
-            {...attributes}
-            {...listeners}
-          >
-            Arrastar
-          </button>
+          <span className="inline-flex items-center gap-1.5 text-[11px] font-medium text-muted-foreground">
+            <GripVertical className="h-3.5 w-3.5" />
+            Arraste o bloco inteiro
+          </span>
           <span className="text-[11px] text-muted-foreground">
             {loading ? 'salvando...' : formatDateLabel(card.updatedAt)}
           </span>
@@ -278,15 +302,19 @@ function RecordingColumn({
   cards,
   onView,
   onEdit,
+  onDelete,
   onAdd,
-  loadingId
+  loadingId,
+  deletingId
 }: {
   column: { key: RecordingColumnKey; label: string };
   cards: RecordingCard[];
   onView: (card: RecordingCard) => void;
   onEdit: (card: RecordingCard) => void;
+  onDelete: (card: RecordingCard) => void;
   onAdd: (column: RecordingColumnKey) => void;
   loadingId: string | null;
+  deletingId: string | null;
 }) {
   const { setNodeRef } = useDroppable({
     id: `column-${column.key}`
@@ -318,7 +346,9 @@ function RecordingColumn({
                 card={card}
                 onView={onView}
                 onEdit={onEdit}
+                onDelete={onDelete}
                 loading={loadingId === card.id}
+                deleting={deletingId === card.id}
               />
             ))
           ) : (
@@ -332,7 +362,19 @@ function RecordingColumn({
   );
 }
 
-function RecordingViewModal({ card, onClose }: { card: RecordingCard; onClose: () => void }) {
+function RecordingViewModal({
+  card,
+  onClose,
+  onEdit,
+  onDelete,
+  deleting
+}: {
+  card: RecordingCard;
+  onClose: () => void;
+  onEdit: () => void;
+  onDelete: () => void;
+  deleting: boolean;
+}) {
   return (
     <div className="fixed inset-0 z-50 bg-[rgba(15,23,42,0.66)] p-4 backdrop-blur-sm">
       <div className="mx-auto flex h-full w-full max-w-5xl flex-col rounded-[32px] bg-white">
@@ -379,6 +421,13 @@ function RecordingViewModal({ card, onClose }: { card: RecordingCard; onClose: (
             </div>
 
             <div>
+              <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-muted-foreground">Legenda</p>
+              <p className="mt-3 text-[14px] leading-7 text-foreground">
+                {card.caption || 'Nenhuma legenda adicionada ainda para este bloco.'}
+              </p>
+            </div>
+
+            <div>
               <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-muted-foreground">Observacoes</p>
               <p className="mt-3 text-[14px] leading-7 text-muted-foreground">
                 {card.notes || 'Nenhuma observacao adicionada ainda para esta gravacao.'}
@@ -410,14 +459,99 @@ function RecordingViewModal({ card, onClose }: { card: RecordingCard; onClose: (
             <div>
               <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-muted-foreground">Takes</p>
               <div className="mt-4 space-y-3">
-                {card.takes.map((take, index) => (
-                  <div key={`${card.id}-${index}`} className="rounded-[22px] border border-border bg-white px-4 py-3 text-[15px] leading-7 text-foreground">
-                    {index + 1}. {take}
+                {card.takes.length ? (
+                  card.takes.map((take, index) => (
+                    <div key={`${card.id}-${index}`} className="rounded-[22px] border border-border bg-white px-4 py-3 text-[15px] leading-7 text-foreground">
+                      {index + 1}. {take}
+                    </div>
+                  ))
+                ) : (
+                  <div className="rounded-[22px] border border-dashed border-border bg-white px-4 py-3 text-[13px] leading-6 text-muted-foreground">
+                    Nenhum take definido ainda.
                   </div>
-                ))}
+                )}
               </div>
             </div>
           </div>
+        </div>
+
+        <div className="flex flex-wrap items-center justify-end gap-2 border-t border-border px-5 py-4 lg:px-6">
+          <Button variant="outline" onClick={onEdit}>
+            <PencilLine className="h-4 w-4" />
+            Editar bloco
+          </Button>
+          <Button
+            variant="outline"
+            onClick={onDelete}
+            disabled={deleting}
+            className="border-rose-200 text-rose-600 hover:bg-rose-50"
+          >
+            {deleting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
+            Remover bloco
+          </Button>
+          <Button onClick={onClose}>Fechar</Button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function RecordingDeleteModal({
+  card,
+  onClose,
+  onConfirm,
+  processing
+}: {
+  card: RecordingCard | null;
+  onClose: () => void;
+  onConfirm: () => void;
+  processing: boolean;
+}) {
+  if (!card) {
+    return null;
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-[rgba(15,23,42,0.34)] p-4 backdrop-blur-sm">
+      <div className="w-full max-w-md rounded-[28px] border border-border bg-white shadow-[0_30px_90px_rgba(15,23,42,0.18)]">
+        <div className="flex items-start gap-3 border-b border-border px-5 py-4">
+          <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl border border-rose-200 bg-rose-50 text-rose-600">
+            <AlertTriangle className="h-4 w-4" />
+          </div>
+          <div className="min-w-0">
+            <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-muted-foreground">Confirmar acao</p>
+            <h3 className="mt-1 text-lg font-semibold text-foreground">Remover este bloco?</h3>
+            <p className="mt-2 text-[13px] leading-6 text-muted-foreground">
+              Esta acao remove o roteiro do fluxo e da lista de gravacoes. Verifique se voce realmente quer apagar agora.
+            </p>
+          </div>
+        </div>
+
+        <div className="space-y-3 px-5 py-4">
+          <div className="rounded-[18px] border border-border bg-muted/30 px-4 py-3">
+            <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">Bloco</p>
+            <p className="mt-1 text-sm font-medium text-foreground">{card.title}</p>
+            <p className="mt-1 text-[12px] text-muted-foreground">
+              {cardCategory(card)} {card.dueDate ? `· ${card.dueDate}` : ''}
+            </p>
+          </div>
+          <div className="rounded-[18px] border border-border bg-white px-4 py-3 text-[13px] leading-6 text-muted-foreground">
+            {card.hook || 'Sem gancho informado.'}
+          </div>
+        </div>
+
+        <div className="flex items-center justify-end gap-2 border-t border-border px-5 py-4">
+          <Button variant="outline" onClick={onClose} disabled={processing}>
+            Cancelar
+          </Button>
+          <Button
+            onClick={onConfirm}
+            disabled={processing}
+            className="border border-rose-200 bg-rose-600 text-white hover:bg-rose-700"
+          >
+            {processing ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
+            Apagar bloco
+          </Button>
         </div>
       </div>
     </div>
@@ -428,6 +562,7 @@ function RecordingEditModal({
   title,
   card,
   saving,
+  onDelete,
   onChange,
   onSave,
   onClose
@@ -435,6 +570,7 @@ function RecordingEditModal({
   title: string;
   card: RecordingEditorState;
   saving: boolean;
+  onDelete?: () => void;
   onChange: (nextValue: RecordingEditorState) => void;
   onSave: () => void;
   onClose: () => void;
@@ -592,6 +728,16 @@ function RecordingEditModal({
         </div>
 
         <div className="sticky bottom-0 flex items-center justify-end gap-2 border-t border-border bg-white/95 px-5 py-4 backdrop-blur-sm lg:px-6">
+          {onDelete ? (
+            <Button
+              variant="outline"
+              onClick={onDelete}
+              className="border-rose-200 text-rose-600 hover:bg-rose-50"
+            >
+              <Trash2 className="h-4 w-4" />
+              Remover bloco
+            </Button>
+          ) : null}
           <Button variant="outline" onClick={onClose}>
             Fechar
           </Button>
@@ -619,6 +765,8 @@ export function RecordingsWorkspace({
   const [editingCard, setEditingCard] = useState<RecordingEditorState | null>(null);
   const [editingMode, setEditingMode] = useState<'create' | 'edit' | null>(null);
   const [loadingId, setLoadingId] = useState<string | null>(null);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [pendingDeleteCard, setPendingDeleteCard] = useState<RecordingCard | null>(null);
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 8 } }));
 
   const categoryOptions = useMemo(() => {
@@ -725,6 +873,50 @@ export function RecordingsWorkspace({
   function openCreateCard(column: RecordingColumnKey) {
     setEditingCard(createEmptyRecordingCard(column));
     setEditingMode('create');
+  }
+
+  function openEditCard(card: RecordingCard) {
+    setEditingCard(buildRecordingFormFromCard(card));
+    setEditingMode('edit');
+  }
+
+  function requestDeleteCard(card: RecordingCard) {
+    setPendingDeleteCard(card);
+  }
+
+  async function deleteCard(card: RecordingCard) {
+    setDeletingId(card.id);
+
+    try {
+      const response = await fetch(`/api/workspaces/${workspace}/scripts/${card.scriptId}`, {
+        method: 'DELETE'
+      });
+
+      const payload = (await response.json().catch(() => null)) as { ok?: boolean; error?: string } | null;
+
+      if (!response.ok || !payload?.ok) {
+        throw new Error(payload?.error ?? 'Nao foi possivel apagar o bloco.');
+      }
+
+      setCards((current) => current.filter((item) => item.id !== card.id));
+
+      if (viewingCard?.id === card.id) {
+        setViewingCard(null);
+      }
+
+      if (editingCard?.id === card.id) {
+        setEditingCard(null);
+        setEditingMode(null);
+      }
+
+      toast.success('Bloco removido.');
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Nao foi possivel apagar o bloco.';
+      toast.error(message);
+    } finally {
+      setDeletingId(null);
+      setPendingDeleteCard(null);
+    }
   }
 
   async function saveCard() {
@@ -869,12 +1061,11 @@ export function RecordingsWorkspace({
                       column={column}
                       cards={column.cards}
                       onView={setViewingCard}
-                      onEdit={(card) => {
-                        setEditingCard(buildRecordingFormFromCard(card));
-                        setEditingMode('edit');
-                      }}
+                      onEdit={openEditCard}
+                      onDelete={requestDeleteCard}
                       onAdd={openCreateCard}
                       loadingId={loadingId}
+                      deletingId={deletingId}
                     />
                   ))}
                 </div>
@@ -899,11 +1090,15 @@ export function RecordingsWorkspace({
                         </div>
                         <p className="mt-2 truncate text-sm font-semibold text-foreground">{card.title}</p>
                         <p className="mt-1 line-clamp-1 text-[13px] text-muted-foreground">{card.hook}</p>
+                        <p className="mt-1 line-clamp-2 text-[12px] leading-5 text-muted-foreground">
+                          {card.caption || 'Nenhuma legenda definida ainda.'}
+                        </p>
                       </div>
                       <div className="flex items-center gap-1">
                         <button
                           type="button"
                           onClick={() => setViewingCard(card)}
+                          onPointerDownCapture={(event) => event.stopPropagation()}
                           className="inline-flex h-8 w-8 items-center justify-center rounded-xl border border-border bg-white transition hover:bg-muted"
                           aria-label="Ver bloco"
                         >
@@ -911,14 +1106,22 @@ export function RecordingsWorkspace({
                         </button>
                         <button
                           type="button"
-                          onClick={() => {
-                            setEditingCard(buildRecordingFormFromCard(card));
-                            setEditingMode('edit');
-                          }}
+                          onClick={() => openEditCard(card)}
+                          onPointerDownCapture={(event) => event.stopPropagation()}
                           className="inline-flex h-8 w-8 items-center justify-center rounded-xl border border-border bg-white transition hover:bg-muted"
                           aria-label="Editar bloco"
                         >
                           <PencilLine className="h-4 w-4" />
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => requestDeleteCard(card)}
+                          onPointerDownCapture={(event) => event.stopPropagation()}
+                          className="inline-flex h-8 w-8 items-center justify-center rounded-xl border border-rose-200 bg-white text-rose-600 transition hover:bg-rose-50"
+                          aria-label="Remover bloco"
+                          disabled={deletingId === card.id}
+                        >
+                          {deletingId === card.id ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
                         </button>
                       </div>
                     </div>
@@ -939,6 +1142,9 @@ export function RecordingsWorkspace({
                       <div className="min-w-0">
                         <p className="truncate text-sm font-semibold text-foreground">{card.title}</p>
                         <p className="mt-2 line-clamp-2 text-[13px] leading-6 text-muted-foreground">{card.hook}</p>
+                        <p className="mt-2 line-clamp-2 text-[12px] leading-5 text-muted-foreground">
+                          {card.caption || 'Nenhuma legenda definida ainda.'}
+                        </p>
                       </div>
                       <button
                         type="button"
@@ -963,6 +1169,7 @@ export function RecordingsWorkspace({
                       <button
                         type="button"
                         onClick={() => setViewingCard(card)}
+                        onPointerDownCapture={(event) => event.stopPropagation()}
                         className="inline-flex h-8 items-center gap-2 rounded-full border border-border bg-white px-3 text-[12px] font-medium text-foreground transition hover:bg-muted"
                       >
                         <Eye className="h-4 w-4" />
@@ -970,14 +1177,22 @@ export function RecordingsWorkspace({
                       </button>
                       <button
                         type="button"
-                        onClick={() => {
-                          setEditingCard(buildRecordingFormFromCard(card));
-                          setEditingMode('edit');
-                        }}
+                        onClick={() => openEditCard(card)}
+                        onPointerDownCapture={(event) => event.stopPropagation()}
                         className="inline-flex h-8 items-center gap-2 rounded-full border border-border bg-white px-3 text-[12px] font-medium text-foreground transition hover:bg-muted"
                       >
                         <PencilLine className="h-4 w-4" />
                         Editar
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => requestDeleteCard(card)}
+                        onPointerDownCapture={(event) => event.stopPropagation()}
+                        className="inline-flex h-8 items-center gap-2 rounded-full border border-rose-200 bg-white px-3 text-[12px] font-medium text-rose-600 transition hover:bg-rose-50"
+                        disabled={deletingId === card.id}
+                      >
+                        {deletingId === card.id ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
+                        Remover
                       </button>
                     </div>
                   </div>
@@ -992,13 +1207,38 @@ export function RecordingsWorkspace({
         </CardContent>
       </Card>
 
-      {viewingCard ? <RecordingViewModal card={viewingCard} onClose={() => setViewingCard(null)} /> : null}
+      {viewingCard ? (
+        <RecordingViewModal
+          card={viewingCard}
+          onClose={() => setViewingCard(null)}
+          onEdit={() => {
+            const current = viewingCard;
+            if (!current) {
+              return;
+            }
+
+            setViewingCard(null);
+            openEditCard(current);
+          }}
+          onDelete={() => requestDeleteCard(viewingCard!)}
+          deleting={deletingId === viewingCard.id}
+        />
+      ) : null}
       {editingCard ? (
         <RecordingEditModal
           title={editingMode === 'create' ? 'Novo bloco' : 'Editar bloco'}
           card={editingCard}
           saving={loadingId === editingCard.id}
           onChange={setEditingCard}
+          onDelete={
+            editingMode === 'edit'
+              ? () => {
+                  if (editingCard) {
+                    requestDeleteCard(editingCard);
+                  }
+                }
+              : undefined
+          }
           onSave={saveCard}
           onClose={() => {
             setEditingCard(null);
@@ -1006,6 +1246,18 @@ export function RecordingsWorkspace({
           }}
         />
       ) : null}
+      <RecordingDeleteModal
+        card={pendingDeleteCard}
+        onClose={() => setPendingDeleteCard(null)}
+        onConfirm={() => {
+          if (!pendingDeleteCard) {
+            return;
+          }
+
+          void deleteCard(pendingDeleteCard);
+        }}
+        processing={deletingId === pendingDeleteCard?.id}
+      />
     </div>
   );
 }

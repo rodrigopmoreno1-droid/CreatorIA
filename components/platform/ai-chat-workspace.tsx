@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   AlertTriangle,
   Bot,
+  Edit2,
   Loader2,
   Mic,
   Plus,
@@ -11,14 +12,13 @@ import {
   Send,
   Square,
   Trash2,
-  Wand2
 } from 'lucide-react';
 import { toast } from 'sonner';
 
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
+import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
-import { PageIntro } from '@/components/platform/page-intro';
 import { useSpeechCapture } from '@/hooks/use-speech-capture';
 import { cn } from '@/lib/utils';
 import type { AiConversation, AiMessage } from '@/types/platform';
@@ -74,20 +74,16 @@ function getSuggestedActions(message: AiMessage, messages: AiMessage[]): ChatAct
   ) {
     return [
       {
-        label: 'Mais atuais',
-        prompt: 'Traga referências mais atuais, com data e janela temporal clara.'
+        label: 'Gerar ganchos',
+        prompt: 'Transforme isso em ganchos prontos para Reels e Stories.'
       },
       {
-        label: 'Fontes em links',
-        prompt: 'Organize as referências atuais em bullets com links clicáveis.'
+        label: 'Virar carrossel',
+        prompt: 'Converta isso em uma pauta de carrossel curta e prática.'
       },
       {
-        label: 'Resumo semanal',
-        prompt: 'Resuma isso em formato de semana passada, hoje e próximos passos.'
-      },
-      {
-        label: 'Aplicar ao tema',
-        prompt: 'Aplique essas referências ao tema em um plano de conteúdo prático.'
+        label: 'Resumo curto',
+        prompt: 'Resuma isso em uma linha de contexto e uma linha de ação.'
       }
     ];
   }
@@ -100,11 +96,7 @@ function getSuggestedActions(message: AiMessage, messages: AiMessage[]): ChatAct
       },
       {
         label: 'Versão curta',
-        prompt: 'Encurte essa resposta em uma versão mais direta.'
-      },
-      {
-        label: 'Storyboard',
-        prompt: 'Transforme isso em um storyboard simples de gravação.'
+        prompt: 'Encurte essa resposta e deixe só o essencial.'
       },
       {
         label: 'Legenda pronta',
@@ -126,10 +118,6 @@ function getSuggestedActions(message: AiMessage, messages: AiMessage[]): ChatAct
       {
         label: 'Versão curta',
         prompt: 'Resuma a sequência em poucas telas objetivas.'
-      },
-      {
-        label: 'Contexto atual',
-        prompt: 'Atualize essa sequência com contexto atual e linguagem mais natural.'
       }
     ];
   }
@@ -137,7 +125,7 @@ function getSuggestedActions(message: AiMessage, messages: AiMessage[]): ChatAct
   if (/m[eé]tric|alcance|engajamento|crescimento|salvament|compartilh|coment/.test(normalized)) {
     return [
       {
-        label: 'Explicar melhor',
+        label: 'Resumo executivo',
         prompt: 'Explique essas métricas em linguagem prática e acionável.'
       },
       {
@@ -147,10 +135,6 @@ function getSuggestedActions(message: AiMessage, messages: AiMessage[]): ChatAct
       {
         label: 'Próximos testes',
         prompt: 'Sugira testes rápidos para melhorar essas métricas.'
-      },
-      {
-        label: 'Resumo executivo',
-        prompt: 'Resuma isso para tomada de decisão em bullets curtos.'
       }
     ];
   }
@@ -164,10 +148,6 @@ function getSuggestedActions(message: AiMessage, messages: AiMessage[]): ChatAct
       {
         label: 'Comparar canais',
         prompt: 'Compare Instagram, Reels e Stories para esse caso.'
-      },
-      {
-        label: 'Sinalizar riscos',
-        prompt: 'Aponte os riscos e oportunidades que eu devo observar.'
       },
       {
         label: 'Ação prática',
@@ -185,10 +165,6 @@ function getSuggestedActions(message: AiMessage, messages: AiMessage[]): ChatAct
       {
         label: 'Preço e âncora',
         prompt: 'Sugira faixa de preço e preço âncora.'
-      },
-      {
-        label: 'Posicionamento',
-        prompt: 'Resuma o posicionamento comercial em bullets.'
       },
       {
         label: 'Transformar em pauta',
@@ -493,6 +469,89 @@ function ConversationDeleteModal({
   );
 }
 
+function ConversationRenameModal({
+  target,
+  onClose,
+  onConfirm,
+  processing
+}: {
+  target: AiConversation | null;
+  onClose: () => void;
+  onConfirm: (title: string) => void;
+  processing: boolean;
+}) {
+  const [title, setTitle] = useState('');
+
+  useEffect(() => {
+    setTitle(target?.title ?? '');
+  }, [target]);
+
+  if (!target) {
+    return null;
+  }
+
+  const trimmedTitle = title.trim();
+  const canSubmit = trimmedTitle.length > 0 && trimmedTitle !== target.title.trim();
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-[rgba(15,23,42,0.34)] p-4 backdrop-blur-sm">
+      <div className="w-full max-w-md rounded-[28px] border border-border bg-white shadow-[0_30px_90px_rgba(15,23,42,0.18)]">
+        <div className="flex items-start gap-3 border-b border-border px-5 py-4">
+          <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl border border-border bg-muted/35 text-foreground">
+            <Edit2 className="h-4 w-4" />
+          </div>
+          <div className="min-w-0">
+            <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-muted-foreground">Renomear conversa</p>
+            <h3 className="mt-1 text-lg font-semibold text-foreground">Dê um nome mais claro</h3>
+            <p className="mt-2 text-[13px] leading-6 text-muted-foreground">
+              Um nome objetivo ajuda a encontrar depois na barra lateral e na lixeira.
+            </p>
+          </div>
+        </div>
+
+        <div className="space-y-3 px-5 py-4">
+          <div className="rounded-[18px] border border-border bg-muted/30 px-4 py-3">
+            <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">Nome atual</p>
+            <p className="mt-1 text-sm font-medium text-foreground">{target.title}</p>
+          </div>
+
+          <div className="space-y-2">
+            <label className="text-[12px] font-medium text-foreground" htmlFor="conversation-title">
+              Novo nome
+            </label>
+            <Input
+              id="conversation-title"
+              value={title}
+              onChange={(event) => setTitle(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter' && !event.shiftKey) {
+                  event.preventDefault();
+
+                  if (canSubmit && !processing) {
+                    onConfirm(trimmedTitle);
+                  }
+                }
+              }}
+              autoFocus
+              placeholder="Ex.: Ganchos para emagrecimento"
+            />
+          </div>
+        </div>
+
+        <div className="flex items-center justify-end gap-2 border-t border-border px-5 py-4">
+          <Button variant="outline" onClick={onClose} disabled={processing}>
+            Cancelar
+          </Button>
+          <Button onClick={() => onConfirm(trimmedTitle)} disabled={processing || !canSubmit}>
+            {processing ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
+            Salvar nome
+          </Button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export function AiChatWorkspace({
   workspace,
   initialConversations = [],
@@ -516,8 +575,10 @@ export function AiChatWorkspace({
   const [loadingConversationId, setLoadingConversationId] = useState<string | null>(null);
   const [deletingConversationId, setDeletingConversationId] = useState<string | null>(null);
   const [restoringConversationId, setRestoringConversationId] = useState<string | null>(null);
+  const [renamingConversationId, setRenamingConversationId] = useState<string | null>(null);
   const [trashOpen, setTrashOpen] = useState(false);
   const [pendingDelete, setPendingDelete] = useState<{ conversation: AiConversation; mode: 'trash' | 'permanent' } | null>(null);
+  const [pendingRename, setPendingRename] = useState<AiConversation | null>(null);
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
 
   const voiceCapture = useSpeechCapture({
@@ -559,7 +620,12 @@ export function AiChatWorkspace({
   const isComposerLocked = voiceCapture.isRecording || voiceCapture.isProcessing;
   const hasOpenDraft = prompt.trim().length > 0 || isComposerLocked;
   const isMutationLocked =
-    isCreatingConversation || isSending || loadingConversationId !== null || deletingConversationId !== null || restoringConversationId !== null;
+    isCreatingConversation ||
+    isSending ||
+    loadingConversationId !== null ||
+    deletingConversationId !== null ||
+    restoringConversationId !== null ||
+    renamingConversationId !== null;
   const canMutateConversations = !isMutationLocked && !hasOpenDraft;
 
   useEffect(() => {
@@ -663,6 +729,51 @@ export function AiChatWorkspace({
       toast.error(message);
     } finally {
       setRestoringConversationId(null);
+    }
+  }
+
+  async function renameConversation(conversationId: string, title: string) {
+    const trimmedTitle = title.trim();
+
+    if (!trimmedTitle || !canMutateConversations) {
+      return;
+    }
+
+    setRenamingConversationId(conversationId);
+
+    try {
+      const response = await fetch(`/api/workspaces/${workspace}/ai/conversations/${conversationId}`, {
+        method: 'PATCH',
+        headers: {
+          'content-type': 'application/json'
+        },
+        body: JSON.stringify({
+          title: trimmedTitle
+        })
+      });
+
+      const payload = (await response.json().catch(() => null)) as { conversation?: AiConversation; error?: string } | null;
+
+      if (!response.ok || !payload?.conversation) {
+        throw new Error(payload?.error ?? 'Nao foi possivel renomear a conversa.');
+      }
+
+      setConversations((current) => sortConversations([payload.conversation!, ...current.filter((conversation) => conversation.id !== conversationId)]));
+
+      if (activeConversationId === conversationId) {
+        setActiveConversationId(conversationId);
+      }
+
+      if (pendingRename?.id === conversationId) {
+        setPendingRename(null);
+      }
+
+      toast.success('Conversa renomeada.');
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Nao foi possivel renomear a conversa.';
+      toast.error(message);
+    } finally {
+      setRenamingConversationId(null);
     }
   }
 
@@ -818,8 +929,8 @@ export function AiChatWorkspace({
         <div
           key={conversation.id}
           className={cn(
-            'group rounded-[18px] border px-3 py-3 transition',
-            active ? 'border-foreground bg-[#17171b] text-white' : 'border-border bg-muted/20 hover:bg-muted/40'
+            'group rounded-[18px] border px-3 py-2.5 transition',
+            active ? 'border-foreground bg-[#17171b] text-white shadow-[0_14px_35px_rgba(15,23,42,0.12)]' : 'border-border bg-muted/20 hover:bg-muted/40'
           )}
         >
           <button
@@ -839,7 +950,21 @@ export function AiChatWorkspace({
             ) : null}
           </button>
 
-          <div className="mt-2 flex justify-end">
+          <div className="mt-2 flex items-center justify-end gap-1.5">
+            <button
+              type="button"
+              onClick={() => setPendingRename(conversation)}
+              disabled={!canMutateConversations}
+              className={cn(
+                'inline-flex h-8 w-8 items-center justify-center rounded-xl border transition disabled:pointer-events-none disabled:opacity-40',
+                active
+                  ? 'border-white/10 bg-white/5 text-white/68 hover:bg-white/10'
+                  : 'border-border bg-white text-muted-foreground hover:bg-muted'
+              )}
+              aria-label="Renomear conversa"
+            >
+              <Edit2 className="h-4 w-4" />
+            </button>
             <button
               type="button"
               onClick={() => setPendingDelete({ conversation, mode: 'trash' })}
@@ -928,211 +1053,235 @@ export function AiChatWorkspace({
   ) : null;
 
   return (
-    <div className="space-y-4">
-      <PageIntro
-        eyebrow="Chat IA"
-        title="Creator AI"
-        actions={
-          <Button variant="outline" onClick={createConversation} disabled={isMutationLocked || isComposerLocked}>
-            <Plus className="h-4 w-4" />
-            Nova conversa
-          </Button>
-        }
-      />
+    <div className="flex h-full min-h-0 flex-col gap-4 overflow-hidden">
+      <section className="flex items-center justify-between gap-4 rounded-[22px] border border-border bg-white/92 px-4 py-2.5 shadow-soft">
+        <div className="min-w-0">
+          <p className="text-[10px] font-light uppercase tracking-[0.42em] text-muted-foreground">Creator AI</p>
+        </div>
 
-      <div className="grid gap-4 xl:grid-cols-[0.36fr_0.64fr]">
-        <Card className="rounded-[26px] border-border/90 bg-white/95">
-          <CardContent className="space-y-4 p-4 lg:p-5">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-3">
-                <div className="flex h-10 w-10 items-center justify-center rounded-2xl bg-[#17171b] text-white">
-                  <Bot className="h-4 w-4" />
-                </div>
-                <div>
-                  <p className="text-sm font-semibold text-foreground">Creator AI</p>
-                </div>
-              </div>
-              <Wand2 className="h-4 w-4 text-muted-foreground" />
+        <Button variant="outline" onClick={createConversation} disabled={isMutationLocked || isComposerLocked}>
+          <Plus className="h-4 w-4" />
+          Nova conversa
+        </Button>
+      </section>
+
+      <div className="grid flex-1 min-h-0 gap-4 xl:grid-cols-[300px_minmax(0,1fr)]">
+        <Card className="flex h-full min-h-0 flex-col rounded-[28px] border-border/90 bg-white/96 shadow-[0_18px_60px_rgba(15,23,42,0.06)]">
+          <CardContent className="flex h-full min-h-0 flex-col p-3.5 lg:p-4">
+            <div className="rounded-[22px] border border-border bg-gradient-to-b from-muted/35 to-white px-4 py-4">
+              <p className="mt-2 text-[12px] leading-5 text-muted-foreground">Direto, minimalista e pronto para seu conteúdo.</p>
             </div>
 
-            <div className="grid gap-2">
-              {[
-                'Criar ideias, roteiros e legendas.',
-                'Usar contexto atual quando existir.',
-                'Responder com próximo passo claro.'
-              ].map((item) => (
-                <div
-                  key={item}
-                  className="rounded-[16px] border border-border bg-muted/30 px-3 py-2 text-[12px] leading-5 text-muted-foreground"
+            <div className="mt-4 flex items-center justify-between gap-3">
+              <div>
+                <p className="text-[12px] font-semibold uppercase tracking-[0.18em] text-foreground">Conversas</p>
+                <p className="mt-1 text-[11px] leading-4 text-muted-foreground">Histórico e lixeira ficam aqui.</p>
+              </div>
+
+              <div className="flex items-center gap-2">
+                <span className="rounded-full border border-border bg-muted px-2.5 py-1 text-[11px] text-muted-foreground">
+                  {conversations.length}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setTrashOpen((value) => !value)}
+                  className="inline-flex items-center gap-2 rounded-full border border-border bg-white px-2.5 py-1 text-[11px] font-medium text-muted-foreground transition hover:bg-muted"
                 >
-                  {item}
-                </div>
-              ))}
-            </div>
-
-            <div className="space-y-2">
-              <div className="flex items-center justify-between">
-                <p className="text-sm font-semibold text-foreground">Conversas</p>
-                <div className="flex items-center gap-2">
-                  <span className="rounded-full border border-border bg-muted px-2.5 py-1 text-[11px] text-muted-foreground">
-                    {conversations.length}
+                  <Trash2 className="h-3.5 w-3.5" />
+                  Apagados
+                  <span className="rounded-full bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground">
+                    {trashedConversations.length}
                   </span>
-                  <button
-                    type="button"
-                    onClick={() => setTrashOpen((value) => !value)}
-                    className="inline-flex items-center gap-2 rounded-full border border-border bg-white px-2.5 py-1 text-[11px] font-medium text-muted-foreground transition hover:bg-muted"
-                  >
-                    <Trash2 className="h-3.5 w-3.5" />
-                    Apagados
-                    <span className="rounded-full bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground">
-                      {trashedConversations.length}
-                    </span>
-                  </button>
-                </div>
-              </div>
-
-              <div className="space-y-1.5">
-                {renderConversationList}
+                </button>
               </div>
             </div>
 
-            {renderTrashList}
+            <div className="mt-3 flex-1 min-h-0 space-y-3 overflow-y-auto pr-1">
+              {renderConversationList}
+              {renderTrashList}
+            </div>
           </CardContent>
         </Card>
 
-        <Card className="rounded-[26px] border-border/90 bg-white/95">
-          <CardContent className="flex h-[78vh] min-h-[680px] flex-col gap-3 p-4 lg:p-5">
-            <div className="flex items-center justify-between">
+        <Card className="flex h-full min-h-0 flex-col rounded-[28px] border-border/90 bg-white/96 shadow-[0_18px_60px_rgba(15,23,42,0.06)]">
+          <CardContent className="flex h-full min-h-0 flex-col gap-0 p-0">
+            <div className="flex items-start justify-between gap-4 border-b border-border px-4 py-3.5 lg:px-5">
               <div className="min-w-0">
-                <p className="truncate text-sm font-semibold text-foreground">{activeConversation?.title ?? 'Nova conversa'}</p>
-                <p className="truncate text-[12px] text-muted-foreground">
-                  {activeConversation ? 'Histórico salvo no workspace' : 'Crie uma conversa para começar'}
-                </p>
-              </div>
-              <div className="flex h-9 w-9 items-center justify-center rounded-full border border-border bg-muted/30 text-foreground">
-                <Wand2 className="h-4 w-4" />
-              </div>
-            </div>
-
-            <div className="flex-1 space-y-3 overflow-y-auto rounded-[24px] border border-border bg-muted/20 p-4">
-              {messages.length ? (
-                messages.map((message) => {
-                  const isAssistant = message.role === 'assistant';
-
-                  return (
-                    <div
-                      key={message.id}
-                      className={cn(
-                        'max-w-[88%] rounded-[20px] px-4 py-3 text-[13px] leading-6',
-                        isAssistant ? 'border border-border bg-white text-foreground' : 'ml-auto bg-[#17171b] text-white'
-                      )}
+                <p className="text-[10px] font-light uppercase tracking-[0.34em] text-muted-foreground">Creator AI</p>
+                <div className="mt-1 flex items-center gap-2">
+                  <p className="truncate text-[15px] font-semibold text-foreground">{activeConversation?.title ?? 'Nova conversa'}</p>
+                  {activeConversation ? (
+                    <button
+                      type="button"
+                      onClick={() => setPendingRename(activeConversation)}
+                      disabled={!canMutateConversations}
+                      className="inline-flex h-7 w-7 items-center justify-center rounded-full border border-border bg-white text-muted-foreground transition hover:bg-muted disabled:pointer-events-none disabled:opacity-40"
+                      aria-label="Renomear conversa"
                     >
-                      {isAssistant ? (
-                        <ChatMarkdown content={message.content} />
-                      ) : (
-                        <div className="whitespace-pre-wrap">{message.content}</div>
-                      )}
-
-                      {isAssistant ? (
-                        <div className="mt-3 flex flex-wrap gap-2">
-                          {getSuggestedActions(message, messages).map((action) => (
-                            <button
-                              key={action.label}
-                              type="button"
-                              onClick={() => submitPrompt(action.prompt)}
-                              disabled={isMutationLocked || isComposerLocked}
-                              className="inline-flex h-8 items-center rounded-full border border-border bg-muted/30 px-3 text-[11px] font-medium text-muted-foreground transition hover:bg-muted disabled:pointer-events-none disabled:opacity-50"
-                            >
-                              {action.label}
-                            </button>
-                          ))}
-                        </div>
-                      ) : null}
-                    </div>
-                  );
-                })
-              ) : (
-                <div className="flex h-full items-center justify-center text-center text-[13px] leading-6 text-muted-foreground">
-                  Escreva um pedido objetivo e a Creator AI responde com estrutura, contexto, referências atuais e próximo passo.
+                      <Edit2 className="h-3.5 w-3.5" />
+                    </button>
+                  ) : null}
                 </div>
-              )}
-
-              {isSending ? (
-                <div className="max-w-[88%] rounded-[20px] border border-border bg-white px-4 py-3 text-[13px] leading-6 text-foreground">
-                  <div className="flex items-center gap-3">
-                    <div className="flex h-8 w-8 items-center justify-center rounded-full bg-muted/50">
-                      <Bot className="h-4 w-4 text-foreground" />
-                    </div>
-                    <div>
-                      <p className="text-[12px] font-medium text-foreground">Creator AI está pensando</p>
-                      <TypingDots />
-                    </div>
-                  </div>
-                </div>
-              ) : null}
-
-              <div ref={messagesEndRef} />
+              </div>
+              <div className="flex h-10 w-10 items-center justify-center rounded-2xl border border-border bg-muted/30 text-foreground">
+                <Bot className="h-4 w-4" />
+              </div>
             </div>
 
-            <div className="space-y-3 rounded-[28px] border border-border bg-white p-3 shadow-soft">
-              <Textarea
-                value={prompt}
-                onChange={(event) => setPrompt(event.target.value)}
-                onKeyDown={(event) => {
-                  if (event.key === 'Enter' && !event.shiftKey) {
-                    event.preventDefault();
-                    void submitPrompt(prompt);
-                  }
-                }}
-                placeholder="Ex.: me ajude a criar 5 ganchos para um conteúdo sobre emagrecimento, usando referências atuais e sem inventar dados."
-                className="min-h-[128px] resize-none border-0 bg-transparent px-0 py-0 text-[14px] shadow-none focus-visible:ring-0"
-              />
+            <div className="flex-1 min-h-0 overflow-y-auto px-4 py-3.5 lg:px-5">
+              <div className="space-y-3">
+                {messages.length ? (
+                  messages.map((message) => {
+                    const isAssistant = message.role === 'assistant';
 
-              {voiceCapture.error ? (
-                <div className="rounded-[16px] border border-rose-200 bg-rose-50 px-3 py-2 text-[13px] text-rose-700">
-                  {voiceCapture.error}
-                </div>
-              ) : null}
+                    return (
+                      <div
+                        key={message.id}
+                        className={cn('flex w-full items-end gap-2', isAssistant ? 'justify-start' : 'justify-end')}
+                      >
+                        {isAssistant ? (
+                          <span className="hidden shrink-0 text-[10px] font-medium uppercase tracking-[0.16em] text-muted-foreground sm:block">
+                            {formatTime(message.createdAt)}
+                          </span>
+                        ) : null}
 
-              <div className="flex flex-wrap items-center justify-between gap-3 border-t border-border pt-3">
-                <div className="flex flex-wrap items-center gap-2">
-                  <ComposerActionButton
-                    onClick={voiceCapture.isRecording ? voiceCapture.stop : voiceCapture.start}
-                    disabled={!voiceCapture.isSupported || isMutationLocked || voiceCapture.isProcessing}
-                  >
-                    {voiceCapture.isRecording ? <Square className="h-4 w-4" /> : <Mic className="h-4 w-4" />}
-                    {voiceCapture.isRecording ? 'Parar' : 'Voz'}
-                  </ComposerActionButton>
-                  {voiceCapture.isRecording ? (
-                    <span className="rounded-full border border-border px-2.5 py-1 text-[12px] text-muted-foreground">gravando...</span>
-                  ) : null}
-                  {voiceCapture.isProcessing ? (
-                    <span className="rounded-full border border-border px-2.5 py-1 text-[12px] text-muted-foreground">transcrevendo...</span>
-                  ) : null}
-                  {hasOpenDraft ? (
-                    <span className="rounded-full border border-border bg-muted/30 px-2.5 py-1 text-[12px] text-muted-foreground">
-                      rascunho aberto
-                    </span>
-                  ) : null}
-                </div>
+                        <div
+                          className={cn(
+                            'max-w-[88%] rounded-[22px] px-4 py-3 text-[13px] leading-6 sm:max-w-[80%]',
+                            isAssistant
+                              ? 'border border-border bg-white text-foreground shadow-[0_12px_30px_rgba(15,23,42,0.05)]'
+                              : 'bg-[#17171b] text-white shadow-[0_12px_30px_rgba(15,23,42,0.18)]'
+                          )}
+                        >
+                          {isAssistant ? (
+                            <ChatMarkdown content={message.content} />
+                          ) : (
+                            <div className="whitespace-pre-wrap">{message.content}</div>
+                          )}
 
-                <div className="flex items-center gap-3">
-                  <div className="text-[12px] text-muted-foreground">
-                    {messages.length ? 'Histórico salvo na conversa.' : 'Crie uma conversa nova ou escolha uma existente.'}
+                          {isAssistant ? (
+                            <div className="mt-3 flex flex-wrap gap-2">
+                              {getSuggestedActions(message, messages).map((action) => (
+                                <button
+                                  key={action.label}
+                                  type="button"
+                                  onClick={() => submitPrompt(action.prompt)}
+                                  disabled={isMutationLocked || isComposerLocked}
+                                  className="inline-flex h-8 items-center rounded-full border border-border bg-muted/30 px-3 text-[11px] font-medium text-muted-foreground transition hover:bg-muted disabled:pointer-events-none disabled:opacity-50"
+                                >
+                                  {action.label}
+                                </button>
+                              ))}
+                            </div>
+                          ) : null}
+                        </div>
+
+                        {!isAssistant ? (
+                          <span className="hidden shrink-0 text-[10px] font-medium uppercase tracking-[0.16em] text-muted-foreground sm:block">
+                            {formatTime(message.createdAt)}
+                          </span>
+                        ) : null}
+                      </div>
+                    );
+                  })
+                ) : (
+                  <div className="flex min-h-[32vh] items-center justify-center rounded-[24px] border border-dashed border-border bg-muted/15 px-6 text-center text-[13px] leading-6 text-muted-foreground">
+                    Escreva um pedido objetivo para gerar ideias, roteiros, hooks, legendas e próximos passos.
                   </div>
-                  <Button
-                    onClick={() => void submitPrompt(prompt)}
-                    disabled={isMutationLocked || isComposerLocked || !prompt.trim()}
-                  >
-                    <Send className="h-4 w-4" />
-                    Enviar
-                  </Button>
+                )}
+
+                {isSending ? (
+                  <div className="max-w-[88%] rounded-[22px] border border-border bg-white px-4 py-3 text-[13px] leading-6 text-foreground shadow-[0_12px_30px_rgba(15,23,42,0.05)]">
+                    <div className="flex items-center gap-3">
+                      <div className="flex h-8 w-8 items-center justify-center rounded-full bg-muted/50">
+                        <Bot className="h-4 w-4 text-foreground" />
+                      </div>
+                      <div>
+                        <p className="text-[12px] font-medium text-foreground">Creator AI está pensando</p>
+                        <TypingDots />
+                      </div>
+                    </div>
+                  </div>
+                ) : null}
+
+                <div ref={messagesEndRef} />
+              </div>
+            </div>
+
+            <div className="border-t border-border p-3 lg:p-3.5">
+              <div className="rounded-[26px] border border-border bg-white p-2.5 shadow-soft">
+                <Textarea
+                  value={prompt}
+                  onChange={(event) => setPrompt(event.target.value)}
+                  onKeyDown={(event) => {
+                    if (event.key === 'Enter' && !event.shiftKey) {
+                      event.preventDefault();
+                      void submitPrompt(prompt);
+                    }
+                  }}
+                  placeholder="Ex.: me ajude a criar 5 ganchos para um conteúdo sobre emagrecimento, usando referências atuais e sem inventar dados."
+                  className="min-h-[118px] resize-none border-0 bg-transparent px-0 py-0 text-[14px] shadow-none focus-visible:ring-0"
+                />
+
+                {voiceCapture.error ? (
+                  <div className="mt-3 rounded-[16px] border border-rose-200 bg-rose-50 px-3 py-2 text-[13px] text-rose-700">
+                    {voiceCapture.error}
+                  </div>
+                ) : null}
+
+                <div className="mt-3 flex flex-col gap-3 border-t border-border pt-3 sm:flex-row sm:items-center sm:justify-between">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <ComposerActionButton
+                      onClick={voiceCapture.isRecording ? voiceCapture.stop : voiceCapture.start}
+                      disabled={!voiceCapture.isSupported || isMutationLocked || voiceCapture.isProcessing}
+                    >
+                      {voiceCapture.isRecording ? <Square className="h-4 w-4" /> : <Mic className="h-4 w-4" />}
+                      {voiceCapture.isRecording ? 'Parar' : 'Voz'}
+                    </ComposerActionButton>
+                    {voiceCapture.isRecording ? (
+                      <span className="rounded-full border border-border px-2.5 py-1 text-[12px] text-muted-foreground">gravando...</span>
+                    ) : null}
+                    {voiceCapture.isProcessing ? (
+                      <span className="rounded-full border border-border px-2.5 py-1 text-[12px] text-muted-foreground">transcrevendo...</span>
+                    ) : null}
+                    {hasOpenDraft ? (
+                      <span className="rounded-full border border-border bg-muted/30 px-2.5 py-1 text-[12px] text-muted-foreground">
+                        rascunho aberto
+                      </span>
+                    ) : null}
+                  </div>
+
+                  <div className="flex items-center gap-3">
+                    <div className="hidden text-[12px] text-muted-foreground sm:block">Histórico salvo automaticamente.</div>
+                    <Button
+                      size="lg"
+                      onClick={() => void submitPrompt(prompt)}
+                      disabled={isMutationLocked || isComposerLocked || !prompt.trim()}
+                      className="rounded-2xl px-5"
+                    >
+                      <Send className="h-4 w-4" />
+                      Enviar
+                    </Button>
+                  </div>
                 </div>
               </div>
             </div>
           </CardContent>
         </Card>
       </div>
+
+      <ConversationRenameModal
+        target={pendingRename}
+        onClose={() => setPendingRename(null)}
+        onConfirm={(title) => {
+          if (!pendingRename) {
+            return;
+          }
+
+          void renameConversation(pendingRename.id, title);
+        }}
+        processing={renamingConversationId === pendingRename?.id}
+      />
 
       <ConversationDeleteModal
         target={pendingDelete}

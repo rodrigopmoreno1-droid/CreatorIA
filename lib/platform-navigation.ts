@@ -70,8 +70,8 @@ export const platformNavigation: Array<{
   },
   {
     key: 'ai',
-    label: 'Chat IA',
-    description: 'Assistente interno',
+    label: 'CreatorAI',
+    description: 'Assistente interno de conteudo',
     icon: Bot,
     href: (workspace) => `/${workspace}/ai`
   },

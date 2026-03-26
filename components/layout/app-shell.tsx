@@ -23,6 +23,7 @@ export function AppShell({
   const pathname = usePathname();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [desktopMenuCollapsed, setDesktopMenuCollapsed] = useState(false);
+  const companyInitial = companyName.trim().slice(0, 1).toUpperCase() || 'V';
   const currentLabel = useMemo(() => {
     return platformNavigation.find((item) => pathname.startsWith(item.href(workspace)))?.label ?? 'Dashboard';
   }, [pathname, workspace]);
@@ -36,21 +37,12 @@ export function AppShell({
             desktopMenuCollapsed ? 'w-[64px] p-2.5' : 'w-[248px]'
           )}
         >
-          <div className={cn('flex items-center gap-3 px-2', desktopMenuCollapsed && 'justify-center px-0')}>
-            <BrandMark tone="light" className="h-10 w-10 shrink-0" />
-            {!desktopMenuCollapsed ? (
-              <div className="min-w-0">
-                <p className="truncate text-[15px] font-semibold tracking-tight">Creator AI</p>
-                <p className="truncate text-[11px] text-white/55">Operacao de conteudo</p>
-              </div>
-            ) : null}
+          <div className={cn('flex flex-col items-start gap-2', desktopMenuCollapsed && 'items-center')}>
+            <BrandMark tone="light" className="h-9 w-9 shrink-0" />
             <button
               type="button"
               onClick={() => setDesktopMenuCollapsed((value) => !value)}
-              className={cn(
-                'ml-auto inline-flex h-8 w-8 items-center justify-center rounded-xl border border-white/10 bg-white/5 transition hover:bg-white/10',
-                desktopMenuCollapsed && 'ml-0'
-              )}
+              className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-white/10 bg-white/5 transition hover:bg-white/10"
               aria-label={desktopMenuCollapsed ? 'Expandir menu lateral' : 'Recolher menu lateral'}
             >
               {desktopMenuCollapsed ? <ChevronRight className="h-4 w-4" /> : <ChevronLeft className="h-4 w-4" />}
@@ -58,13 +50,22 @@ export function AppShell({
           </div>
 
           {!desktopMenuCollapsed ? (
-            <div className="mt-6 rounded-[22px] border border-white/10 bg-white/5 px-4 py-4">
+            <div className="mt-4 rounded-[22px] border border-white/10 bg-white/5 px-4 py-4">
               <p className="text-[10px] font-medium uppercase tracking-[0.2em] text-white/45">Empresa</p>
               <p className="mt-2 truncate text-sm font-semibold text-white">{companyName}</p>
+              <p className="mt-1 text-[11px] leading-5 text-white/55">Operação de conteúdo</p>
             </div>
           ) : null}
 
-          <Separator className={cn('my-5 bg-white/8', desktopMenuCollapsed && 'my-4')} />
+          {desktopMenuCollapsed ? (
+            <div className="mt-4 flex justify-center">
+              <div className="flex h-10 w-10 items-center justify-center rounded-2xl border border-white/10 bg-white/5 text-[13px] font-semibold text-white/90">
+                {companyInitial}
+              </div>
+            </div>
+          ) : null}
+
+          <Separator className={cn('my-4 bg-white/10', desktopMenuCollapsed && 'my-3')} />
 
           <nav className="flex flex-1 flex-col gap-1">
             {platformNavigation.map((item) => {
@@ -154,11 +155,13 @@ export function AppShell({
 
             {mobileMenuOpen ? (
               <div className="mt-3 rounded-[22px] border border-border bg-white p-3 shadow-soft lg:hidden">
-                <div className="mb-3 flex items-center gap-3 rounded-2xl bg-muted/50 px-3 py-3">
-                  <BrandMark tone="dark" className="h-9 w-9 shrink-0" />
-                  <div className="min-w-0">
-                    <p className="truncate text-sm font-semibold">{companyName}</p>
-                    <p className="truncate text-[11px] text-muted-foreground">Creator AI</p>
+                <div className="mb-3 rounded-[20px] border border-border bg-gradient-to-b from-muted/40 to-white px-3 py-3">
+                  <div className="flex items-center gap-3">
+                    <BrandMark tone="dark" className="h-9 w-9 shrink-0" />
+                    <div className="min-w-0">
+                      <p className="truncate text-[10px] font-semibold uppercase tracking-[0.2em] text-muted-foreground">Creator AI</p>
+                      <p className="truncate text-sm font-semibold text-foreground">{companyName}</p>
+                    </div>
                   </div>
                 </div>
 

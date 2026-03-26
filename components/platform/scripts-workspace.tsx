@@ -17,13 +17,23 @@ import type { ProductItem, ScriptItem } from '@/types/platform';
 
 type GeneratedScript = EditableScriptDraft;
 
+function padTakeList(takes: string[], minimum = 5) {
+  const nextTakes = [...takes];
+
+  while (nextTakes.length < minimum) {
+    nextTakes.push('');
+  }
+
+  return nextTakes;
+}
+
 function buildEditableScript(script: ScriptItem): EditableScriptDraft {
   return {
     id: script.id,
     title: script.title,
     hook: script.hook,
     spoken: script.spoken,
-    takes: script.takes.length ? script.takes : ['', '', '', '', ''],
+    takes: padTakeList(script.takes.length ? script.takes : []),
     cta: script.cta,
     caption: script.caption,
     prompt: script.prompt,
@@ -55,7 +65,7 @@ function normalizeGeneratedScripts(
         title: typeof raw.title === 'string' ? raw.title : `Roteiro ${index + 1}`,
         hook: typeof raw.hook === 'string' ? raw.hook : '',
         spoken: typeof raw.spoken === 'string' ? raw.spoken : '',
-        takes: Array.isArray(raw.takes) ? raw.takes.filter((take): take is string => typeof take === 'string') : [],
+        takes: padTakeList(Array.isArray(raw.takes) ? raw.takes.filter((take): take is string => typeof take === 'string') : []),
         cta: typeof raw.cta === 'string' ? raw.cta : '',
         caption: typeof raw.caption === 'string' ? raw.caption : '',
         prompt: context.prompt,
@@ -128,7 +138,7 @@ export function ScriptsWorkspace({
           throw new Error(payload?.error ?? 'Nao foi possivel refinar a transcricao.');
         }
 
-        const nextText = typeof payload?.content === 'string' ? payload.content : text;
+        const nextText = typeof payload?.content === 'string' ? payload.content.trim() : text;
         setPrompt(nextText);
         toast.success('Transcricao aplicada ao briefing.');
       } catch {
@@ -139,6 +149,11 @@ export function ScriptsWorkspace({
   });
 
   async function handleGenerate() {
+    if (promptVoiceCapture.isRecording || promptVoiceCapture.isProcessing) {
+      toast.error('Aguarde a transcricao terminar antes de gerar os roteiros.');
+      return;
+    }
+
     if (!prompt.trim()) {
       toast.error('Descreva o que voce quer criar antes de chamar a IA.');
       return;
@@ -333,7 +348,7 @@ export function ScriptsWorkspace({
                   variant="outline"
                   size="sm"
                   onClick={promptVoiceCapture.isRecording ? promptVoiceCapture.stop : promptVoiceCapture.start}
-                  disabled={!promptVoiceCapture.isSupported}
+                  disabled={!promptVoiceCapture.isSupported || loadingGeneration || promptVoiceCapture.isProcessing}
                 >
                   {promptVoiceCapture.isRecording ? <Square className="h-4 w-4" /> : <Mic className="h-4 w-4" />}
                   {promptVoiceCapture.isRecording ? 'Parar' : 'Voz'}
@@ -390,7 +405,7 @@ export function ScriptsWorkspace({
             </div>
 
             <div className="flex flex-wrap items-center gap-2">
-              <Button onClick={handleGenerate} disabled={loadingGeneration}>
+              <Button onClick={handleGenerate} disabled={loadingGeneration || promptVoiceCapture.isRecording || promptVoiceCapture.isProcessing}>
                 {loadingGeneration ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
                 Gerar 3 roteiros
               </Button>
@@ -462,6 +477,9 @@ export function ScriptsWorkspace({
                       <div className="min-w-0">
                         <p className="truncate text-sm font-semibold text-foreground">{script.title}</p>
                         <p className="mt-1.5 line-clamp-2 text-[13px] leading-5 text-muted-foreground">{script.hook}</p>
+                        <p className="mt-2 line-clamp-2 text-[12px] leading-5 text-muted-foreground">
+                          {script.caption || 'Legenda pronta para revisar.'}
+                        </p>
                       </div>
                       <div className="flex h-8 w-8 items-center justify-center rounded-full border border-border bg-white text-foreground">
                         <Bot className="h-4 w-4" />
@@ -513,6 +531,9 @@ export function ScriptsWorkspace({
                         <div className="min-w-0">
                           <p className="truncate text-sm font-semibold text-foreground">{script.title}</p>
                           <p className="mt-1.5 line-clamp-2 text-[13px] leading-5 text-muted-foreground">{script.hook}</p>
+                          <p className="mt-2 line-clamp-2 text-[12px] leading-5 text-muted-foreground">
+                            {script.caption || 'Legenda pronta para revisar.'}
+                          </p>
                           <p className="mt-2.5 text-[12px] text-muted-foreground">
                             {script.productName || 'Sem produto'} · atualizado em {formatDateLabel(script.updatedAt)}
                           </p>
@@ -566,6 +587,9 @@ export function ScriptsWorkspace({
                       <p className="text-sm font-semibold text-foreground">{script.title}</p>
                       <p className="mt-1.5 text-[13px] leading-5 text-muted-foreground">
                         {script.productName || 'Sem produto'} · pronto para aparecer em Gravações
+                      </p>
+                      <p className="mt-2 line-clamp-2 text-[12px] leading-5 text-muted-foreground">
+                        {script.caption || 'Legenda pronta para revisar.'}
                       </p>
                     </div>
                   ))

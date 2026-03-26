@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 
 import { PRODUCT_IMPORT_MAX_FILE_SIZE_BYTES } from '@/lib/product-import-storage';
-import { createProductImportUploadToken } from '@/lib/supabase/storage';
+import { createProductImportUploadToken, deleteProductImportFile } from '@/lib/supabase/storage';
 import { resolveWorkspaceDataAccess } from '@/lib/platform-data';
 
 type UploadPayload = {
@@ -71,6 +71,41 @@ export async function POST(request: Request, { params }: { params: Promise<{ wor
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Nao foi possivel preparar o upload do arquivo.';
+    return NextResponse.json({ error: message }, { status: 500 });
+  }
+}
+
+type DeletePayload = {
+  bucket?: string;
+  storagePath?: string;
+};
+
+export async function DELETE(request: Request, { params }: { params: Promise<{ workspace: string }> }) {
+  const { workspace } = await params;
+  const access = await resolveWorkspaceDataAccess(workspace);
+
+  if (!access) {
+    return NextResponse.json({ error: 'Workspace nao encontrado.' }, { status: 404 });
+  }
+
+  const body = (await request.json().catch(() => null)) as DeletePayload | null;
+  const storagePath = body?.storagePath?.trim();
+
+  if (!storagePath) {
+    return NextResponse.json({ error: 'Caminho do arquivo obrigatorio.' }, { status: 400 });
+  }
+
+  try {
+    await deleteProductImportFile({
+      admin: access.admin,
+      companyId: access.context.companyId,
+      storagePath,
+      bucket: body?.bucket?.trim() || undefined
+    });
+
+    return NextResponse.json({ ok: true });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Nao foi possivel remover o arquivo importado.';
     return NextResponse.json({ error: message }, { status: 500 });
   }
 }

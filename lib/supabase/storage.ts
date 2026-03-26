@@ -58,3 +58,23 @@ export async function createProductImportUploadToken(input: {
     token: data.token
   };
 }
+
+export async function deleteProductImportFile(input: {
+  admin: SupabaseAdminClient;
+  companyId: string;
+  storagePath: string;
+  bucket?: string;
+}) {
+  const bucket = input.bucket ?? PRODUCT_IMPORT_BUCKET;
+  const expectedPrefix = `companies/${input.companyId}/product-imports/`;
+
+  if (!input.storagePath.startsWith(expectedPrefix)) {
+    throw new Error('Arquivo de importacao invalido.');
+  }
+
+  const { error } = await input.admin.storage.from(bucket).remove([input.storagePath]);
+
+  if (error) {
+    throw new Error(error.message);
+  }
+}

@@ -28,6 +28,8 @@ type ImportFileReference = {
   mimeType: string;
   name: string;
   sizeBytes: number;
+  text?: string;
+  pageTexts?: string[];
 };
 
 const emptyForm: ProductFormState = {
@@ -91,6 +93,69 @@ function formatFileSize(bytes: number) {
   }
 
   return `${(bytes / (1024 * 1024)).toFixed(1).replace('.0', '')} MB`;
+}
+
+function sleep(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function extractBrowserImportText(file: File) {
+  const mimeType = file.type || 'application/octet-stream';
+
+  if (mimeType === 'application/pdf' || /\.pdf$/i.test(file.name)) {
+    const pdfjs = (await import('pdfjs-dist/webpack.mjs')) as typeof import('pdfjs-dist/webpack.mjs');
+    const { getDocument } = pdfjs;
+    const buffer = await file.arrayBuffer();
+    const pdf = await getDocument({ data: buffer }).promise;
+    const pageTexts: string[] = [];
+
+    try {
+      for (let pageIndex = 1; pageIndex <= pdf.numPages; pageIndex += 1) {
+        const page = await pdf.getPage(pageIndex);
+        const content = await page.getTextContent();
+        const text = (content.items as Array<{ str?: string } | { [key: string]: unknown }>)
+          .map((item) => (typeof item === 'object' && item && 'str' in item ? String(item.str ?? '') : ''))
+          .join(' ')
+          .replace(/\s+/g, ' ')
+          .trim();
+
+        if (text) {
+          pageTexts.push(text);
+        }
+      }
+    } finally {
+      await pdf.destroy().catch(() => null);
+    }
+
+    if (pageTexts.length) {
+      return {
+        text: pageTexts.join('\n\n'),
+        pageTexts
+      };
+    }
+  }
+
+  if (
+    mimeType.startsWith('text/') ||
+    ['application/json', 'application/xml', 'text/csv', 'text/tsv'].includes(mimeType)
+  ) {
+    const text = (await file.text()).trim();
+
+    if (text) {
+      return {
+        text,
+        pageTexts: text.split(/\n{2,}/).map((part) => part.trim()).filter(Boolean)
+      };
+    }
+  }
+
+  return null;
+}
+
+function isRetryableImportAnalysisError(message: string) {
+  return /nao foi possivel analisar a importacao|nao foi possivel acessar o arquivo importado|failed to fetch|network|tempo esgotado/i.test(
+    message
+  );
 }
 
 function ProductRowEditor({
@@ -169,19 +234,202 @@ export function ProductsWorkspace({ workspace, initialProducts }: { workspace: s
   const [importSource, setImportSource] = useState('');
   const [importFileName, setImportFileName] = useState('');
   const [importDrafts, setImportDrafts] = useState<ImportedProductDraft[]>([]);
+  const [analysisBusy, setAnalysisBusy] = useState(false);
   const [importBusy, setImportBusy] = useState(false);
   const [uploadBusy, setUploadBusy] = useState(false);
   const [importFileRef, setImportFileRef] = useState<ImportFileReference | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const importRunRef = useRef(0);
 
   const voiceCapture = useSpeechCapture({
     onTranscript: async (text) => {
-      setImportSource(text);
-      toast.success('Transcricao pronta. Revise antes de analisar.');
+      let refinedText = text;
+
+      try {
+        const response = await fetch('/api/ai', {
+          method: 'POST',
+          headers: {
+            'content-type': 'application/json'
+          },
+          body: JSON.stringify({
+            action: 'rewriteHumanTone',
+            payload: {
+              text
+            }
+          })
+        });
+
+        const payload = (await response.json().catch(() => null)) as { content?: unknown; error?: string } | null;
+
+        if (!response.ok) {
+          throw new Error(payload?.error ?? 'Nao foi possivel refinar a transcricao.');
+        }
+
+        if (typeof payload?.content === 'string' && payload.content.trim()) {
+          refinedText = payload.content;
+        }
+      } catch {
+        // Continua com a transcricao original se o refinamento falhar.
+      }
+
+      setImportSource(refinedText);
+      setImportDrafts([]);
+      toast.success('Transcrição pronta. Analisando o catálogo...');
+      void handleImportAnalysis(refinedText, importFileRef);
     }
   });
 
   const canImport = useMemo(() => Boolean(importSource.trim() || importFileRef), [importFileRef, importSource]);
+  const importTimeEstimate = useMemo(() => {
+    if (analysisBusy) {
+      return 'Análise em andamento. Esse catálogo pode levar até 2 minutos.';
+    }
+
+    if (voiceCapture.isProcessing) {
+      return 'A transcrição pode levar até 1 minuto antes da análise começar.';
+    }
+
+    const sizeBytes = importFileRef?.sizeBytes ?? 0;
+
+    if (!sizeBytes && importSource.trim()) {
+      return 'A análise desse texto costuma levar de 30 segundos a 1 minuto.';
+    }
+
+    if (sizeBytes < 2 * 1024 * 1024) {
+      return 'Esse arquivo costuma analisar em até 30 segundos.';
+    }
+
+    if (sizeBytes < 8 * 1024 * 1024) {
+      return 'Esse arquivo costuma analisar em até 1 minuto.';
+    }
+
+    return 'Esse arquivo pode levar até 2 minutos para analisar.';
+  }, [analysisBusy, importFileRef?.sizeBytes, importSource, voiceCapture.isProcessing]);
+
+  async function clearImportedFile(fileRef: ImportFileReference | null) {
+    if (!fileRef) {
+      return;
+    }
+
+    try {
+      const response = await fetch(`/api/workspaces/${workspace}/products/import-upload`, {
+        method: 'DELETE',
+        headers: {
+          'content-type': 'application/json'
+        },
+        body: JSON.stringify({
+          bucket: fileRef.bucket,
+          storagePath: fileRef.storagePath
+        })
+      });
+
+      if (!response.ok) {
+        const payload = (await response.json().catch(() => null)) as { error?: string } | null;
+        throw new Error(payload?.error ?? 'Nao foi possivel remover o arquivo importado.');
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Nao foi possivel remover o arquivo importado.';
+      toast.error(message);
+      throw error;
+    }
+  }
+
+  async function resetImportFlow(options?: { keepSource?: boolean; keepDrafts?: boolean; clearFile?: boolean }) {
+    const fileRef = options?.clearFile === false ? null : importFileRef;
+
+    if (fileRef) {
+      try {
+        await clearImportedFile(fileRef);
+      } catch {
+        // The helper already surfaced the error. Continue resetting the UI so the user can retry cleanly.
+      }
+    }
+
+    if (!options?.keepSource) {
+      setImportSource('');
+    }
+
+    if (!options?.keepDrafts) {
+      setImportDrafts([]);
+    }
+
+    setImportFileRef(null);
+    setImportFileName('');
+
+    if (fileInputRef.current) {
+      fileInputRef.current.value = '';
+    }
+  }
+
+  async function runImportAnalysis(input?: { sourceText?: string; fileRef?: ImportFileReference | null }) {
+    const sourceText = input?.sourceText ?? importSource.trim();
+    const fileRef = input?.fileRef ?? importFileRef;
+
+    if (!sourceText && !fileRef) {
+      toast.error('Adicione um arquivo, uma transcricao ou uma descricao antes de analisar.');
+      return;
+    }
+
+    const runId = importRunRef.current + 1;
+    importRunRef.current = runId;
+    setAnalysisBusy(true);
+
+    try {
+      let nextDrafts: ImportedProductDraft[] = [];
+      let lastError: Error | null = null;
+
+      for (let attempt = 0; attempt < 2; attempt += 1) {
+        const response = await fetch('/api/ai', {
+          method: 'POST',
+          headers: {
+            'content-type': 'application/json'
+          },
+          body: JSON.stringify({
+            action: 'extractProducts',
+            payload: {
+              prompt: sourceText,
+              sourceText,
+              file: fileRef
+            }
+          })
+        });
+
+        const payload = (await response.json().catch(() => null)) as { content?: unknown; error?: string } | null;
+
+        if (!response.ok) {
+          lastError = new Error(payload?.error ?? 'Nao foi possivel analisar a importacao.');
+
+          if (attempt === 0 && isRetryableImportAnalysisError(lastError.message)) {
+            await sleep(700);
+            continue;
+          }
+
+          throw lastError;
+        }
+
+        nextDrafts = normalizeImportedProducts(payload?.content);
+        lastError = null;
+        break;
+      }
+
+      if (!nextDrafts.length) {
+        throw new Error('Nao consegui extrair produtos com seguranca desse material. Tente um PDF mais limpo ou complemente no campo de texto.');
+      }
+
+      if (importRunRef.current === runId) {
+        setImportDrafts(nextDrafts);
+      }
+
+      toast.success(`${nextDrafts.length} produtos prontos para revisao.`);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Nao foi possivel analisar a importacao.';
+      toast.error(message);
+    } finally {
+      if (importRunRef.current === runId) {
+        setAnalysisBusy(false);
+      }
+    }
+  }
 
   async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -249,50 +497,19 @@ export function ProductsWorkspace({ workspace, initialProducts }: { workspace: s
     }
   }
 
-  async function handleImportAnalysis() {
-    if (!canImport) {
+  async function handleImportAnalysis(sourceTextOverride?: string, fileRefOverride?: ImportFileReference | null) {
+    const nextSourceText = sourceTextOverride ?? importSource.trim();
+    const nextFileRef = fileRefOverride ?? importFileRef;
+
+    if (!nextSourceText && !nextFileRef) {
       toast.error('Adicione um arquivo, uma transcricao ou uma descricao antes de analisar.');
       return;
     }
 
-    setImportBusy(true);
-
-    try {
-      const response = await fetch('/api/ai', {
-        method: 'POST',
-        headers: {
-          'content-type': 'application/json'
-        },
-        body: JSON.stringify({
-          action: 'extractProducts',
-          payload: {
-            prompt: importSource.trim(),
-            sourceText: importSource.trim(),
-            file: importFileRef
-          }
-        })
-      });
-
-      const payload = (await response.json().catch(() => null)) as { content?: unknown; error?: string } | null;
-
-      if (!response.ok) {
-        throw new Error(payload?.error ?? 'Nao foi possivel analisar a importacao.');
-      }
-
-      const nextDrafts = normalizeImportedProducts(payload?.content);
-
-      if (!nextDrafts.length) {
-        throw new Error('A IA nao encontrou produtos suficientes nesse material.');
-      }
-
-      setImportDrafts(nextDrafts);
-      toast.success(`${nextDrafts.length} produtos prontos para revisao.`);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : 'Nao foi possivel analisar a importacao.';
-      toast.error(message);
-    } finally {
-      setImportBusy(false);
-    }
+    await runImportAnalysis({
+      sourceText: nextSourceText,
+      fileRef: nextFileRef
+    });
   }
 
   async function importProducts() {
@@ -301,6 +518,7 @@ export function ProductsWorkspace({ workspace, initialProducts }: { workspace: s
     }
 
     setImportBusy(true);
+    const fileRef = importFileRef;
 
     try {
       const response = await fetch(`/api/workspaces/${workspace}/products`, {
@@ -330,6 +548,12 @@ export function ProductsWorkspace({ workspace, initialProducts }: { workspace: s
 
       setProducts((current) => [...nextProducts, ...current]);
       setImportDrafts([]);
+      try {
+        await clearImportedFile(fileRef);
+      } catch {
+        toast.warning('Os produtos foram importados, mas o arquivo temporario nao pôde ser removido.');
+      }
+
       setImportSource('');
       setImportFileRef(null);
       setImportFileName('');
@@ -347,8 +571,6 @@ export function ProductsWorkspace({ workspace, initialProducts }: { workspace: s
 
   async function handleFileChange(file: File | null) {
     if (!file) {
-      setImportFileRef(null);
-      setImportFileName('');
       return;
     }
 
@@ -357,9 +579,11 @@ export function ProductsWorkspace({ workspace, initialProducts }: { workspace: s
       return;
     }
 
+    const previousFileRef = importFileRef;
     setUploadBusy(true);
 
     try {
+      const extracted = await extractBrowserImportText(file).catch(() => null);
       const response = await fetch(`/api/workspaces/${workspace}/products/import-upload`, {
         method: 'POST',
         headers: {
@@ -410,15 +634,30 @@ export function ProductsWorkspace({ workspace, initialProducts }: { workspace: s
         storagePath: payload.upload.path,
         mimeType: file.type || 'application/octet-stream',
         name: file.name,
-        sizeBytes: file.size
+        sizeBytes: file.size,
+        text: extracted?.text,
+        pageTexts: extracted?.pageTexts
       });
       setImportFileName(file.name);
+      setImportDrafts([]);
+
+      if (previousFileRef?.storagePath && previousFileRef.storagePath !== payload.upload.path) {
+        void clearImportedFile(previousFileRef).catch(() => null);
+      }
+
       toast.success(`Arquivo pronto para analise (${formatFileSize(file.size)}).`);
+      await handleImportAnalysis(importSource.trim(), {
+        bucket: payload.upload.bucket,
+        storagePath: payload.upload.path,
+        mimeType: file.type || 'application/octet-stream',
+        name: file.name,
+        sizeBytes: file.size,
+        text: extracted?.text,
+        pageTexts: extracted?.pageTexts
+      });
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Nao foi possivel ler o arquivo.';
       toast.error(message);
-      setImportFileRef(null);
-      setImportFileName('');
       if (fileInputRef.current) {
         fileInputRef.current.value = '';
       }
@@ -512,7 +751,7 @@ export function ProductsWorkspace({ workspace, initialProducts }: { workspace: s
                 type="button"
                 onClick={() => fileInputRef.current?.click()}
                 className="justify-start"
-                disabled={uploadBusy}
+                disabled={uploadBusy || analysisBusy || importBusy}
               >
                 {uploadBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <FileUp className="h-4 w-4" />}
                 {uploadBusy ? 'Enviando...' : 'Arquivo'}
@@ -522,14 +761,14 @@ export function ProductsWorkspace({ workspace, initialProducts }: { workspace: s
                 type="button"
                 onClick={voiceCapture.isRecording ? voiceCapture.stop : voiceCapture.start}
                 className="justify-start"
-                disabled={!voiceCapture.isSupported || voiceCapture.isProcessing}
+                disabled={!voiceCapture.isSupported || voiceCapture.isProcessing || analysisBusy || importBusy}
               >
                 {voiceCapture.isRecording ? <Square className="h-4 w-4" /> : <Mic className="h-4 w-4" />}
                 {voiceCapture.isRecording ? 'Parar' : 'Voz'}
               </Button>
-              <Button type="button" onClick={handleImportAnalysis} disabled={importBusy || uploadBusy || !canImport}>
-                {importBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <AudioLines className="h-4 w-4" />}
-                Analisar
+              <Button type="button" onClick={() => void handleImportAnalysis()} disabled={analysisBusy || importBusy || uploadBusy || !canImport}>
+                {analysisBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <AudioLines className="h-4 w-4" />}
+                {analysisBusy ? 'Analisando...' : 'Analisar'}
               </Button>
             </div>
 
@@ -548,10 +787,11 @@ export function ProductsWorkspace({ workspace, initialProducts }: { workspace: s
             ) : null}
 
             <p className="text-[12px] leading-5 text-muted-foreground">
-              Arquivos de imagem e PDF agora sobem direto para o Storage, com suporte para ate {Math.round(
-                PRODUCT_IMPORT_MAX_FILE_SIZE_BYTES / (1024 * 1024)
-              )} MB.
+              Arquivos de imagem e PDF sobem direto para o Storage com suporte para ate{' '}
+              {Math.round(PRODUCT_IMPORT_MAX_FILE_SIZE_BYTES / (1024 * 1024))} MB e sao removidos logo depois que os produtos sao importados.
             </p>
+
+            <p className="text-[12px] leading-5 text-muted-foreground">{importTimeEstimate}</p>
 
             <div className="space-y-2">
               <label className="text-sm font-medium">O que o arquivo ou a voz traz</label>
@@ -562,12 +802,26 @@ export function ProductsWorkspace({ workspace, initialProducts }: { workspace: s
                 placeholder="Cole uma lista, descreva os produtos ou fale por até 2 minutos."
               />
               <div className="flex flex-wrap items-center gap-2 text-[12px] text-muted-foreground">
-                {importFileName ? <span className="rounded-full border border-border px-2.5 py-1">{importFileName}</span> : null}
-                {importFileRef ? (
-                  <span className="rounded-full border border-border px-2.5 py-1">
-                    {formatFileSize(importFileRef.sizeBytes)}
+                {importFileName ? (
+                  <span className="inline-flex items-center gap-1.5 rounded-full border border-border px-2.5 py-1">
+                    <span>{importFileName}</span>
+                    <button
+                      type="button"
+                      className="inline-flex h-4 w-4 items-center justify-center rounded-full text-muted-foreground transition hover:bg-muted hover:text-foreground"
+                      onClick={() => {
+                        void resetImportFlow({ keepSource: true, keepDrafts: false });
+                      }}
+                      aria-label="Remover arquivo importado"
+                    >
+                      <X className="h-3 w-3" />
+                    </button>
                   </span>
                 ) : null}
+                {importFileRef ? (
+                  <span className="rounded-full border border-border px-2.5 py-1">{formatFileSize(importFileRef.sizeBytes)}</span>
+                ) : null}
+                {analysisBusy ? <span className="rounded-full border border-border px-2.5 py-1">analisando...</span> : null}
+                {importBusy ? <span className="rounded-full border border-border px-2.5 py-1">importando...</span> : null}
                 {voiceCapture.isRecording ? <span className="rounded-full border border-border px-2.5 py-1">gravando...</span> : null}
                 {voiceCapture.isProcessing ? <span className="rounded-full border border-border px-2.5 py-1">transcrevendo...</span> : null}
               </div>
@@ -581,11 +835,9 @@ export function ProductsWorkspace({ workspace, initialProducts }: { workspace: s
                     variant="outline"
                     type="button"
                     onClick={() => {
-                      setImportDrafts([]);
-                      setImportSource('');
-                      setImportFileRef(null);
-                      setImportFileName('');
+                      void resetImportFlow({ keepSource: false, keepDrafts: false });
                     }}
+                    disabled={analysisBusy || importBusy}
                   >
                     Limpar
                   </Button>
@@ -600,7 +852,7 @@ export function ProductsWorkspace({ workspace, initialProducts }: { workspace: s
                     />
                   ))}
                 </div>
-                <Button type="button" onClick={importProducts} disabled={importBusy}>
+                <Button type="button" onClick={importProducts} disabled={importBusy || analysisBusy}>
                   {importBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />}
                   Importar tudo
                 </Button>
