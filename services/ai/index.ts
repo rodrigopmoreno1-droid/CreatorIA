@@ -1129,53 +1129,57 @@ async function resolveProductImportFile(file?: ProductImportInput['file']): Prom
     return null;
   }
 
-  const bucket = file.bucket ?? PRODUCT_IMPORT_BUCKET;
-  const data = await downloadProductImportFileWithRetry(admin, bucket, file.storagePath);
+  try {
+    const bucket = file.bucket ?? PRODUCT_IMPORT_BUCKET;
+    const data = await downloadProductImportFileWithRetry(admin, bucket, file.storagePath);
 
-  const fileName = file.name ?? file.storagePath;
+    const fileName = file.name ?? file.storagePath;
 
-  if (isTextLikeImportFile(file.mimeType, fileName)) {
-    const text = await data.text();
+    if (isTextLikeImportFile(file.mimeType, fileName)) {
+      const text = await data.text();
+      return {
+        mimeType: file.mimeType,
+        name: fileName,
+        text: trimImportedText(text)
+      };
+    }
+
+    const arrayBuffer = await data.arrayBuffer();
+    const buffer = Buffer.from(arrayBuffer);
+
+    if (isPdfImportFile(file.mimeType, fileName)) {
+      const pdfData = await extractPdfImportData(buffer).catch(() => null);
+
+      if (pdfData) {
+        return {
+          mimeType: file.mimeType,
+          name: fileName,
+          ...pdfData,
+          base64: buffer.toString('base64')
+        };
+      }
+    }
+
+    if (isDocxImportFile(file.mimeType, fileName)) {
+      const result = await mammoth.extractRawText({ buffer });
+
+      if (result.value?.trim()) {
+        return {
+          mimeType: file.mimeType,
+          name: fileName,
+          text: trimImportedText(result.value)
+        };
+      }
+    }
+
     return {
       mimeType: file.mimeType,
       name: fileName,
-      text: trimImportedText(text)
+      base64: buffer.toString('base64')
     };
+  } catch {
+    return null;
   }
-
-  const arrayBuffer = await data.arrayBuffer();
-  const buffer = Buffer.from(arrayBuffer);
-
-  if (isPdfImportFile(file.mimeType, fileName)) {
-    const pdfData = await extractPdfImportData(buffer).catch(() => null);
-
-    if (pdfData) {
-      return {
-        mimeType: file.mimeType,
-        name: fileName,
-        ...pdfData,
-        base64: buffer.toString('base64')
-      };
-    }
-  }
-
-  if (isDocxImportFile(file.mimeType, fileName)) {
-    const result = await mammoth.extractRawText({ buffer });
-
-    if (result.value?.trim()) {
-      return {
-        mimeType: file.mimeType,
-        name: fileName,
-        text: trimImportedText(result.value)
-      };
-    }
-  }
-
-  return {
-    mimeType: file.mimeType,
-    name: fileName,
-    base64: buffer.toString('base64')
-  };
 }
 
 async function callAnthropicMessages(
@@ -2028,12 +2032,18 @@ export async function rewriteHumanTone(input: { text: string }) {
 export async function extractProductsFromSource(input: ProductImportInput) {
   const maxItems = input.maxItems ?? 80;
   const uploadedFile = await resolveProductImportFile(input.file);
-  const hasExtractedPages = Boolean(uploadedFile?.pageTexts?.length);
   const localCandidates = uploadedFile?.pageTexts?.length
     ? extractCatalogProductsFromPages(uploadedFile.pageTexts, maxItems)
     : uploadedFile?.text
       ? extractProductImportRecordsFromText(uploadedFile.text, maxItems)
       : [];
+
+  if (localCandidates.length) {
+    return {
+      products: localCandidates.slice(0, maxItems)
+    };
+  }
+
   const prompt = await buildCreatorAiPrompt([
     'Voce organiza catalogos de produtos para um SaaS de operacao de conteudo.',
     'Responda somente JSON valido.',
@@ -2051,24 +2061,13 @@ export async function extractProductsFromSource(input: ProductImportInput) {
           .map((pageText, index) => `--- PAGINA ${index + 1} ---\n${pageText}`)
           .join('\n\n')}`
       : null
-  ], input.sourceText ?? uploadedFile?.text ?? input.prompt ?? uploadedFile?.name ?? input.file?.name);
+  ]);
 
   const anthropicContent =
     uploadedFile && !uploadedFile.pageTexts?.length && !uploadedFile.text ? buildAnthropicImportContent(uploadedFile, prompt) : null;
   const candidates: Array<{ provider: string; products: ProductImportRecord[] }> = [];
 
-  if (localCandidates.length) {
-    candidates.push({
-      provider: 'local',
-      products: localCandidates
-    });
-  }
-
-  if (
-    !hasExtractedPages &&
-    (uploadedFile?.text || uploadedFile?.base64) &&
-    (process.env.ANTHROPIC_API_KEY || process.env.GEMINI_API_KEY)
-  ) {
+  if ((uploadedFile?.text || uploadedFile?.base64) && (process.env.ANTHROPIC_API_KEY || process.env.GEMINI_API_KEY)) {
     try {
       const textResponse = await callProvider(prompt);
       if (textResponse) {
@@ -2082,7 +2081,7 @@ export async function extractProductsFromSource(input: ProductImportInput) {
     }
   }
 
-  if (!hasExtractedPages && anthropicContent && process.env.ANTHROPIC_API_KEY) {
+  if (anthropicContent && process.env.ANTHROPIC_API_KEY) {
     try {
       const payload = await callAnthropicMessages(anthropicContent, {
         temperature: 0.1,
@@ -2098,7 +2097,7 @@ export async function extractProductsFromSource(input: ProductImportInput) {
     }
   }
 
-  if (!hasExtractedPages && uploadedFile?.base64 && process.env.GEMINI_API_KEY) {
+  if (uploadedFile?.base64 && process.env.GEMINI_API_KEY) {
     try {
       const response = await callGeminiWithParts([
         {
@@ -2121,14 +2120,12 @@ export async function extractProductsFromSource(input: ProductImportInput) {
     }
   }
 
-  if (!candidates.length) {
-    const response = await callProvider(prompt);
+  const response = await callProvider(prompt);
 
-    candidates.push({
-      provider: 'fallback',
-      products: extractProductImportRecordsFromResponse(response, maxItems)
-    });
-  }
+  candidates.push({
+    provider: 'fallback',
+    products: extractProductImportRecordsFromResponse(response, maxItems)
+  });
 
   const rankedCandidates = candidates
     .map((candidate) => ({
