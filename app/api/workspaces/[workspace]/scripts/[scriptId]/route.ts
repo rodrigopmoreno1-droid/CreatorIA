@@ -23,6 +23,11 @@ type ScriptPatchBody = {
   dueDate?: string;
   labels?: string[];
   fields?: Array<{ key?: string; value?: string }>;
+  contentType?: string;
+  subOption?: string;
+  storySlides?: unknown[];
+  carrosselSlides?: unknown[];
+  postFields?: unknown;
 };
 
 export async function PATCH(
@@ -85,7 +90,12 @@ export async function PATCH(
                 key: item.key?.trim() || '',
                 value: item.value?.trim() || ''
               }))
-              .filter((item) => item.key || item.value)
+              .filter((item) => item.key || item.value),
+      contentType: body.contentType === undefined ? existingMeta.contentType : body.contentType,
+      subOption: body.subOption === undefined ? existingMeta.subOption : body.subOption,
+      storySlides: body.storySlides === undefined ? existingMeta.storySlides : (body.storySlides as import('@/types/platform').StorySlide[]),
+      carrosselSlides: body.carrosselSlides === undefined ? existingMeta.carrosselSlides : (body.carrosselSlides as import('@/types/platform').CarrosselSlide[]),
+      postFields: body.postFields === undefined ? existingMeta.postFields : (body.postFields as import('@/types/platform').PostFields | null)
     })
   };
 

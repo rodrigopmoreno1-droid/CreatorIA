@@ -182,13 +182,18 @@ function buildEditableScript(script: ScriptItem): EditableScriptDraft {
     prompt: script.prompt,
     referenceContext: script.referenceContext,
     productId: script.productId,
-    productName: script.productName
+    productName: script.productName,
+    contentType: script.contentType,
+    subOption: script.subOption,
+    storySlides: script.storySlides,
+    carrosselSlides: script.carrosselSlides,
+    postFields: script.postFields
   };
 }
 
 function buildScriptSavePayloads(
   payload: unknown,
-  context: { prompt: string; product?: ProductItem }
+  context: { prompt: string; product?: ProductItem; contentType?: string; subOption?: string }
 ) {
   if (!Array.isArray(payload)) return [];
 
@@ -207,13 +212,20 @@ function buildScriptSavePayloads(
         referenceContext: '',
         productId: context.product?.id,
         productName: context.product?.name,
+        contentType: context.contentType ?? 'reels',
+        subOption: context.subOption ?? '',
+        storySlides: Array.isArray(raw.storySlides) ? raw.storySlides : undefined,
+        carrosselSlides: Array.isArray(raw.carrosselSlides) ? raw.carrosselSlides : undefined,
+        postFields: raw.postFields && typeof raw.postFields === 'object' ? raw.postFields : undefined,
         status: 'draft'
       };
     })
     .filter(Boolean) as Array<{
       title: string; hook: string; spoken: string; takes: string[];
       cta: string; caption: string; prompt: string; referenceContext: string;
-      productId?: string; productName?: string; status: string;
+      productId?: string; productName?: string; contentType: string; subOption: string;
+      storySlides?: unknown[]; carrosselSlides?: unknown[]; postFields?: unknown;
+      status: string;
     }>;
 }
 
@@ -405,7 +417,9 @@ export function ScriptsWorkspace({
 
       const toSave = buildScriptSavePayloads(aiPayload?.content, {
         prompt: combinedPrompt,
-        product: selectedProduct
+        product: selectedProduct,
+        contentType,
+        subOption
       });
 
       if (!toSave.length) {
@@ -486,7 +500,12 @@ export function ScriptsWorkspace({
           prompt: script.prompt,
           referenceContext: script.referenceContext,
           productId: script.productId,
-          productName: script.productName
+          productName: script.productName,
+          contentType: script.contentType,
+          subOption: script.subOption,
+          storySlides: script.storySlides,
+          carrosselSlides: script.carrosselSlides,
+          postFields: script.postFields
         })
       });
       const payload = (await response.json().catch(() => null)) as { script?: ScriptItem; error?: string } | null;
@@ -808,6 +827,11 @@ export function ScriptsWorkspace({
                       <div className="min-w-0 flex-1">
                         <div className="flex flex-wrap items-center gap-2">
                           <p className="truncate text-sm font-semibold text-foreground">{script.title}</p>
+                          {script.contentType && script.contentType !== 'reels' && (
+                            <span className="rounded-full border border-violet-200 bg-violet-50 px-2 py-0.5 text-[11px] font-medium text-violet-700">
+                              {CONTENT_TYPES.find((c) => c.value === script.contentType)?.label ?? script.contentType}
+                            </span>
+                          )}
                           <span className={`rounded-full border px-2 py-0.5 text-[11px] font-medium ${
                             script.status === 'draft'
                               ? 'border-amber-200 bg-amber-50 text-amber-700'
@@ -818,12 +842,42 @@ export function ScriptsWorkspace({
                             {STATUS_LABELS[script.status] ?? script.status}
                           </span>
                         </div>
-                        <p className="mt-1.5 text-[13px] font-medium leading-5 text-foreground/80 line-clamp-2">
-                          {script.hook}
-                        </p>
-                        <p className="mt-1.5 line-clamp-2 text-[12px] leading-5 text-muted-foreground">
-                          {script.spoken}
-                        </p>
+                        {script.contentType === 'stories' && script.storySlides && script.storySlides.length > 0 ? (
+                          <>
+                            <p className="mt-1.5 text-[13px] font-medium leading-5 text-foreground/80 line-clamp-2">
+                              {script.storySlides[0].objetivo || script.storySlides[0].textoTela}
+                            </p>
+                            <p className="mt-1 text-[12px] text-muted-foreground">{script.storySlides.length} slides</p>
+                          </>
+                        ) : script.contentType === 'carrossel' && script.carrosselSlides && script.carrosselSlides.length > 0 ? (
+                          <>
+                            <p className="mt-1.5 text-[13px] font-medium leading-5 text-foreground/80 line-clamp-2">
+                              {script.carrosselSlides[0].titulo}
+                            </p>
+                            <p className="mt-1.5 line-clamp-2 text-[12px] leading-5 text-muted-foreground">
+                              {script.carrosselSlides[0].subtitulo}
+                            </p>
+                            <p className="mt-1 text-[12px] text-muted-foreground">{script.carrosselSlides.length} páginas</p>
+                          </>
+                        ) : script.contentType === 'post' && script.postFields ? (
+                          <>
+                            <p className="mt-1.5 text-[13px] font-medium leading-5 text-foreground/80 line-clamp-2">
+                              {script.postFields.tituloPeca}
+                            </p>
+                            <p className="mt-1.5 line-clamp-2 text-[12px] leading-5 text-muted-foreground">
+                              {script.postFields.conceito}
+                            </p>
+                          </>
+                        ) : (
+                          <>
+                            <p className="mt-1.5 text-[13px] font-medium leading-5 text-foreground/80 line-clamp-2">
+                              {script.hook}
+                            </p>
+                            <p className="mt-1.5 line-clamp-2 text-[12px] leading-5 text-muted-foreground">
+                              {script.spoken}
+                            </p>
+                          </>
+                        )}
                         <p className="mt-2 text-[12px] text-muted-foreground">
                           {script.productName || 'Sem produto'} · {formatDateLabel(script.updatedAt)}
                         </p>

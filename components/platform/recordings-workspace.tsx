@@ -158,6 +158,7 @@ function createEmptyRecordingCard(column: RecordingColumnKey): RecordingFormStat
     takes: ['', '', '', '', ''],
     cta: '',
     caption: '',
+    contentType: '',
     column,
     order: 0,
     notes: '',

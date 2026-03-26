@@ -49,6 +49,28 @@ export type RecordingField = {
   value: string;
 };
 
+export type StorySlide = {
+  objetivo: string;
+  textoTela: string;
+  falado: string;
+  visual: string;
+};
+
+export type CarrosselSlide = {
+  numero: number;
+  titulo: string;
+  subtitulo: string;
+  conteudo: string;
+  visual: string;
+};
+
+export type PostFields = {
+  conceito: string;
+  tituloPeca: string;
+  textoApoio: string;
+  direcaoVisual: string;
+};
+
 export type ScriptItem = {
   id: string;
   title: string;
@@ -61,6 +83,11 @@ export type ScriptItem = {
   takes: string[];
   cta: string;
   caption: string;
+  contentType: string;
+  subOption: string;
+  storySlides: StorySlide[];
+  carrosselSlides: CarrosselSlide[];
+  postFields: PostFields | null;
   status: ScriptStatus;
   createdAt: string;
   updatedAt: string;
@@ -81,6 +108,7 @@ export type RecordingCard = {
   takes: string[];
   cta: string;
   caption: string;
+  contentType: string;
   column: RecordingColumnKey;
   order: number;
   notes: string;

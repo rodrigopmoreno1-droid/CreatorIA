@@ -134,6 +134,8 @@ type ResolvedProductImportFile = {
   base64?: string;
 };
 
+import type { CarrosselSlide, PostFields, StorySlide } from '@/types/platform';
+
 type ScriptDraftResponse = {
   title: string;
   hook: string;
@@ -141,6 +143,9 @@ type ScriptDraftResponse = {
   takes: string[];
   cta: string;
   caption: string;
+  storySlides?: StorySlide[];
+  carrosselSlides?: CarrosselSlide[];
+  postFields?: PostFields;
 };
 
 type ProductImportRecord = {
@@ -2116,10 +2121,295 @@ function resolveObjectivesLabel(objectives?: string[], objective?: string): stri
   return active.map((o) => resolveObjectiveLabel(o)).join(' + ');
 }
 
+function buildBriefingLines(input: ScriptVariantInput, extras: string[] = []): (string | null)[] {
+  return [
+    input.pain ? `Dor central do publico: ${input.pain}` : null,
+    input.benefit ? `Transformacao que o produto entrega: ${input.benefit}` : null,
+    input.targetAudience ? `Publico-alvo: ${input.targetAudience}` : null,
+    input.productName ? `Produto: ${input.productName}` : null,
+    input.productContext ? `Contexto do produto: ${input.productContext}` : null,
+    input.referenceContext ? `Referencias adicionais: ${input.referenceContext}` : null,
+    input.prompt ? `Instrucao extra: ${input.prompt}` : null,
+    ...extras
+  ];
+}
+
+function parseStoriesArray(raw: unknown): StorySlide[] {
+  if (!Array.isArray(raw)) return [];
+  return raw
+    .filter((item): item is Record<string, unknown> => !!item && typeof item === 'object')
+    .map((item) => ({
+      objetivo: typeof item.objetivo === 'string' ? item.objetivo : '',
+      textoTela: typeof item.textoTela === 'string' ? item.textoTela : '',
+      falado: typeof item.falado === 'string' ? item.falado : '',
+      visual: typeof item.visual === 'string' ? item.visual : ''
+    }));
+}
+
+function parseCarrosselArray(raw: unknown): CarrosselSlide[] {
+  if (!Array.isArray(raw)) return [];
+  return raw
+    .filter((item): item is Record<string, unknown> => !!item && typeof item === 'object')
+    .map((item, i) => ({
+      numero: typeof item.numero === 'number' ? item.numero : i + 1,
+      titulo: typeof item.titulo === 'string' ? item.titulo : '',
+      subtitulo: typeof item.subtitulo === 'string' ? item.subtitulo : '',
+      conteudo: typeof item.conteudo === 'string' ? item.conteudo : '',
+      visual: typeof item.visual === 'string' ? item.visual : ''
+    }));
+}
+
+async function generateStoriesVariants(input: ScriptVariantInput): Promise<ScriptDraftResponse[]> {
+  const n = Math.max(1, Math.min(10, parseInt(input.subOption ?? '3', 10) || 3));
+  const productLabel = input.productName ?? 'produto';
+  const toneLabel = resolveTonesLabel(input.tones, input.tone);
+  const objectiveLabel = resolveObjectivesLabel(input.objectives, input.objective);
+
+  const slidesTemplate = Array.from({ length: n }, (_, i) =>
+    `{"objetivo":"","textoTela":"","falado":"","visual":""}`
+  ).join(',');
+
+  const fallback: ScriptDraftResponse[] = Array.from({ length: 3 }, (_, i) => ({
+    title: `Stories ${i + 1} — ${productLabel}`,
+    hook: i === 0 ? 'Ninguem te contou isso sobre [tema].' : i === 1 ? 'POV: voce finalmente resolveu [problema].' : 'Ja tentei de tudo. Isso aqui foi diferente.',
+    spoken: '',
+    takes: [],
+    cta: 'Responde aqui embaixo ou manda DM.',
+    caption: '',
+    storySlides: Array.from({ length: n }, (_, j) => ({
+      objetivo: j === 0 ? 'gancho' : j === n - 1 ? 'CTA' : 'valor',
+      textoTela: j === 0 ? `[Frase de gancho ${j + 1}]` : `[Conteudo ${j + 1}]`,
+      falado: `Texto falado do story ${j + 1}.`,
+      visual: j === 0 ? 'Selfie direto na camera, expressao de surpresa' : j === n - 1 ? 'Tela final com CTA visivel' : 'Fundo limpo com texto centralizado'
+    }))
+  }));
+
+  const webQuery = buildSocialTrendQuery(input.productName ?? input.prompt, input.pain ?? '', input.benefit ?? '', 'stories instagram viral');
+
+  const prompt = await buildCreatorAiPrompt([
+    '=== PAPEL ===',
+    'Voce e um creator especialista em Stories do Instagram com altissimo engajamento.',
+    'Stories sao slides curtos, diretos, com progressao narrativa que prende o usuario.',
+    '',
+    '=== FORMATO DE RESPOSTA ===',
+    'Responda somente JSON valido. Array com exatamente 3 sequencias de stories.',
+    `Cada sequencia: {"title":"","stories":[${slidesTemplate}],"cta":""}`,
+    `Cada sequencia deve ter exatamente ${n} story(ies).`,
+    '',
+    '=== REGRAS DOS STORIES ===',
+    'textoTela: texto escrito na tela do story. Max 8 palavras. Deve ser MUITO impactante. Sem pontuacao excessiva.',
+    'falado: o que o creator fala nesse slide. Max 2 frases curtas. Linguagem oral, conversa real.',
+    'objetivo: papel do slide (opcoes: gancho, contexto, tensao, revelacao, prova, solucao, CTA).',
+    'visual: instrucao para o editor (ex: "selfie falando", "fundo escuro texto branco", "video de produto em uso").',
+    `Story 1: gancho visual forte que faz a pessoa querer ver o proximo.`,
+    `Stories 2 a ${n - 1}: progressao com valor real. Cada slide = 1 ideia.`,
+    `Story ${n}: CTA especifico e alinhado ao objetivo.`,
+    'Stories NAO tem legenda. CTA vai no campo "cta", nao no ultimo slide.',
+    '',
+    `=== ESTILO E OBJETIVO ===`,
+    `${toneLabel}`,
+    `${objectiveLabel}`,
+    '',
+    '=== BRIEFING ===',
+    ...buildBriefingLines(input),
+    '',
+    '=== 3 SEQUENCIAS OBRIGATORIAS (angulos diferentes) ===',
+    'Sequencia 1 — REVELACAO: primeiro story faz uma promessa ou revela um dado surpreendente. Progressao constroi curiosidade ate o final.',
+    'Sequencia 2 — POV/HISTORIA: começa com POV especifico que o publico se identifica. Desenvolve a historia slide a slide.',
+    'Sequencia 3 — LISTA/ENSINO: entrega valor direto em formato de lista ou passos. Ultimo slide converte.'
+  ], webQuery);
+
+  const parsed = parseStructuredResponse<unknown[]>(await callProvider(prompt, { maxTokens: 3200 }), []);
+  if (!parsed.length) return fallback;
+
+  return fallback.map((fb, i) => {
+    const raw = parsed[i];
+    if (!raw || typeof raw !== 'object') return fb;
+    const r = raw as Record<string, unknown>;
+    const storySlides = parseStoriesArray(r.stories);
+    return {
+      ...fb,
+      title: typeof r.title === 'string' ? r.title : fb.title,
+      hook: storySlides[0]?.textoTela || fb.hook,
+      cta: typeof r.cta === 'string' ? r.cta : fb.cta,
+      storySlides: storySlides.length ? storySlides : fb.storySlides
+    };
+  });
+}
+
+async function generateCarrosselVariants(input: ScriptVariantInput): Promise<ScriptDraftResponse[]> {
+  const n = Math.max(2, Math.min(15, parseInt(input.subOption ?? '5', 10) || 5));
+  const productLabel = input.productName ?? 'produto';
+  const toneLabel = resolveTonesLabel(input.tones, input.tone);
+  const objectiveLabel = resolveObjectivesLabel(input.objectives, input.objective);
+
+  const slideTemplate = Array.from({ length: n }, (_, i) =>
+    `{"numero":${i + 1},"titulo":"","subtitulo":"","conteudo":"","visual":""}`
+  ).join(',');
+
+  const fallback: ScriptDraftResponse[] = Array.from({ length: 3 }, (_, i) => ({
+    title: `Carrossel ${i + 1} — ${productLabel}`,
+    hook: i === 0 ? 'O que ninguem te conta sobre [tema].' : i === 1 ? '[N] erros que voce esta cometendo em [tema].' : 'Como resolver [dor] em [tempo].',
+    spoken: '',
+    takes: [],
+    cta: 'Salva esse carrossel pra nao esquecer.',
+    caption: `Voce sabia que [dado surpreendente]?\n\nO carrossel acima explica tudo.\n\nSalva e manda pra quem precisa.\n\n#carrossel #${productLabel.toLowerCase().replace(/\s+/g, '')} #dica`,
+    carrosselSlides: Array.from({ length: n }, (_, j) => ({
+      numero: j + 1,
+      titulo: j === 0 ? '[Titulo da capa]' : j === n - 1 ? 'Agora e hora de agir' : `Ponto ${j}`,
+      subtitulo: j === 0 ? '[Promessa especifica]' : `[Subtitulo ${j + 1}]`,
+      conteudo: j === 0 ? '' : j === n - 1 ? `CTA claro relacionado a ${productLabel}` : `[Conteudo da pagina ${j + 1}]`,
+      visual: j === 0 ? 'Capa impactante, fundo solido, tipografia grande' : j === n - 1 ? 'CTA visivel, cor de destaque' : 'Layout limpo, icone ou ilustracao relevante'
+    }))
+  }));
+
+  const webQuery = buildSocialTrendQuery(input.productName ?? input.prompt, input.pain ?? '', input.benefit ?? '', 'carrossel instagram viral');
+
+  const maxTokens = n > 6 ? 5000 : 3200;
+
+  const prompt = await buildCreatorAiPrompt([
+    '=== PAPEL ===',
+    'Voce e um especialista em carrosseis de alta performance para Instagram.',
+    'Seus carrosseis tem altissimo rate de salvamento e compartilhamento.',
+    '',
+    '=== FORMATO DE RESPOSTA ===',
+    'Responda somente JSON valido. Array com exatamente 3 carrosseis.',
+    `Cada carrossel: {"title":"","hook":"","slides":[${slideTemplate}],"cta":"","caption":""}`,
+    `Cada carrossel deve ter exatamente ${n} slides.`,
+    '',
+    '=== REGRAS DO CARROSSEL ===',
+    'titulo: texto curto da pagina. Max 6 palavras. Impacto imediato.',
+    'subtitulo: complemento do titulo. Max 10 palavras. Promessa ou contexto.',
+    'conteudo: texto principal da pagina. 2 a 3 linhas diretas. Valor concreto.',
+    'visual: instrucao para o designer (ex: "fundo azul, icone de check", "foto de resultado", "numero em destaque").',
+    `Slide 1 (capa): titulo que FORCA o swipe. Hook que cria curiosidade irresistivel.`,
+    `Slides 2 a ${n - 1}: cada slide entrega 1 insight ou passo especifico. Sem repeticao.`,
+    `Slide ${n}: CTA especifico — salvar, compartilhar, DM, link.`,
+    'caption: legenda da publicacao com abertura forte (diferente do hook), valor resumido, CTA e hashtags.',
+    '',
+    `=== ESTILO E OBJETIVO ===`,
+    `${toneLabel}`,
+    `${objectiveLabel}`,
+    '',
+    '=== BRIEFING ===',
+    ...buildBriefingLines(input),
+    '',
+    '=== 3 CARROSSEIS OBRIGATORIOS (angulos completamente diferentes) ===',
+    'Carrossel 1 — LISTA DE ERROS/MITOS: desmonta o que o publico acredita erroneamente. Cada slide = 1 mito + correcao.',
+    'Carrossel 2 — PASSO A PASSO: guia pratico do problema a solucao. Cada slide = 1 passo acionavel.',
+    'Carrossel 3 — COMPARATIVO/TRANSFORMACAO: antes vs depois, errado vs certo, sem produto vs com produto. Formato de contraste visual.'
+  ], webQuery);
+
+  const parsed = parseStructuredResponse<unknown[]>(await callProvider(prompt, { maxTokens }), []);
+  if (!parsed.length) return fallback;
+
+  return fallback.map((fb, i) => {
+    const raw = parsed[i];
+    if (!raw || typeof raw !== 'object') return fb;
+    const r = raw as Record<string, unknown>;
+    const carrosselSlides = parseCarrosselArray(r.slides);
+    return {
+      ...fb,
+      title: typeof r.title === 'string' ? r.title : fb.title,
+      hook: typeof r.hook === 'string' ? r.hook : (carrosselSlides[0]?.titulo || fb.hook),
+      cta: typeof r.cta === 'string' ? r.cta : fb.cta,
+      caption: typeof r.caption === 'string' ? r.caption : fb.caption,
+      carrosselSlides: carrosselSlides.length ? carrosselSlides : fb.carrosselSlides
+    };
+  });
+}
+
+async function generatePostVariants(input: ScriptVariantInput): Promise<ScriptDraftResponse[]> {
+  const productLabel = input.productName ?? 'produto';
+  const toneLabel = resolveTonesLabel(input.tones, input.tone);
+  const objectiveLabel = resolveObjectivesLabel(input.objectives, input.objective);
+
+  const fallback: ScriptDraftResponse[] = Array.from({ length: 3 }, (_, i) => ({
+    title: `Post ${i + 1} — ${productLabel}`,
+    hook: i === 0 ? '[Titulo impactante da peca]' : i === 1 ? '[Dado surpreendente]' : '[Pergunta provocadora]',
+    spoken: '',
+    takes: [],
+    cta: 'Salva esse post.',
+    caption: `[Abertura forte]\n\n[2-3 linhas de valor]\n\n[CTA especifico]\n\n#post #${productLabel.toLowerCase().replace(/\s+/g, '')} #dica`,
+    postFields: {
+      conceito: `Conceito do post ${i + 1}`,
+      tituloPeca: `[Titulo curto e impactante]`,
+      textoApoio: `[Subtitulo que complementa]`,
+      direcaoVisual: `Fundo limpo, tipografia em destaque, cores da marca`
+    }
+  }));
+
+  const webQuery = buildSocialTrendQuery(input.productName ?? input.prompt, input.pain ?? '', input.benefit ?? '', 'post estatico instagram viral');
+
+  const prompt = await buildCreatorAiPrompt([
+    '=== PAPEL ===',
+    'Voce e um especialista em posts estaticos de alto impacto para Instagram.',
+    'Seus posts param o scroll e geram salvamentos.',
+    '',
+    '=== FORMATO DE RESPOSTA ===',
+    'Responda somente JSON valido. Array com exatamente 3 conceitos de post.',
+    'Cada post: {"title":"","conceito":"","tituloPeca":"","textoApoio":"","direcaoVisual":"","cta":"","caption":""}',
+    '',
+    '=== REGRAS DO POST ESTATICO ===',
+    'conceito: a ideia central em 1 frase. Para briefing do designer.',
+    'tituloPeca: texto principal da imagem. Max 7 palavras. MUITO impactante. Deve parar o scroll.',
+    'textoApoio: texto secundario da peca. Max 12 palavras. Complementa o titulo, nao repete.',
+    'direcaoVisual: instrucao detalhada para o designer. Inclui: paleta, composicao, foto ou ilustracao, mood.',
+    'cta: chamada para acao na legenda (salvar, compartilhar, comentar, etc).',
+    'caption: legenda completa. Abertura forte (diferente do tituloPeca), 2-4 linhas de valor, CTA, hashtags.',
+    '',
+    `=== ESTILO E OBJETIVO ===`,
+    `${toneLabel}`,
+    `${objectiveLabel}`,
+    '',
+    '=== BRIEFING ===',
+    ...buildBriefingLines(input),
+    '',
+    '=== 3 CONCEITOS OBRIGATORIOS (angulos e visuais completamente diferentes) ===',
+    'Conceito 1 — DADO/ESTATISTICA: usa um numero ou fato surpreendente como titulo. Visual forte em torno do numero.',
+    'Conceito 2 — FRASE/CRENCA: uma frase que quebra uma crenca comum ou valida uma experiencia do publico.',
+    'Conceito 3 — LISTA VISUAL: um mini-ranking ou lista numerada que entrega valor rapidamente.'
+  ], webQuery);
+
+  const parsed = parseStructuredResponse<unknown[]>(await callProvider(prompt, { maxTokens: 2500 }), []);
+  if (!parsed.length) return fallback;
+
+  return fallback.map((fb, i) => {
+    const raw = parsed[i];
+    if (!raw || typeof raw !== 'object') return fb;
+    const r = raw as Record<string, unknown>;
+    const postFields: PostFields = {
+      conceito: typeof r.conceito === 'string' ? r.conceito : fb.postFields!.conceito,
+      tituloPeca: typeof r.tituloPeca === 'string' ? r.tituloPeca : fb.postFields!.tituloPeca,
+      textoApoio: typeof r.textoApoio === 'string' ? r.textoApoio : fb.postFields!.textoApoio,
+      direcaoVisual: typeof r.direcaoVisual === 'string' ? r.direcaoVisual : fb.postFields!.direcaoVisual
+    };
+    return {
+      ...fb,
+      title: typeof r.title === 'string' ? r.title : fb.title,
+      hook: postFields.tituloPeca || fb.hook,
+      cta: typeof r.cta === 'string' ? r.cta : fb.cta,
+      caption: typeof r.caption === 'string' ? r.caption : fb.caption,
+      postFields
+    };
+  });
+}
+
 export async function generateScriptVariants(input: ScriptVariantInput) {
+  const contentType = input.contentType ?? 'reels';
+
+  if (contentType === 'stories') return generateStoriesVariants(input);
+  if (contentType === 'carrossel') return generateCarrosselVariants(input);
+  if (contentType === 'post') return generatePostVariants(input);
+
+  // Reels + video_curto — existing high-quality generator below
+  return generateReelsVariants(input);
+}
+
+async function generateReelsVariants(input: ScriptVariantInput) {
   const productLabel = input.productName ?? 'Creator AI';
   const contentTypeLabel = resolveContentTypeLabel(input.contentType);
-  const durationLabel = resolveDurationLabel(input.duration);
+  const durationLabel = resolveDurationLabel(input.duration ?? input.subOption);
   const toneLabel = resolveTonesLabel(input.tones, input.tone);
   const objectiveLabel = resolveObjectivesLabel(input.objectives, input.objective);
   const isTrend = input.tones?.includes('trend') || input.tone === 'trend';

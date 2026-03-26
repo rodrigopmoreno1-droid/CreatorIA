@@ -3,11 +3,14 @@ import { getAuthenticatedUser, getWorkspaceContextForSlug, type WorkspaceContext
 import type {
   AiConversation,
   AiMessage,
+  CarrosselSlide,
+  PostFields,
   ProductItem,
   RecordingCard,
   RecordingColumnKey,
   RecordingField,
-  ScriptItem
+  ScriptItem,
+  StorySlide
 } from '@/types/platform';
 
 type ProductRow = {
@@ -68,6 +71,11 @@ type ScriptMetadata = {
   dueDate?: string;
   labels?: string[];
   fields?: RecordingField[];
+  contentType?: string;
+  subOption?: string;
+  storySlides?: StorySlide[];
+  carrosselSlides?: CarrosselSlide[];
+  postFields?: PostFields;
 };
 
 type WorkspaceDataAccess = {
@@ -196,7 +204,12 @@ export function parseScriptMetadata(storyboard: unknown): ScriptMetadata {
       category: normalizeString(raw.category),
       dueDate: normalizeString(raw.dueDate),
       labels: normalizeStringArray(raw.labels),
-      fields: normalizeRecordingFields(raw.fields)
+      fields: normalizeRecordingFields(raw.fields),
+      storySlides: Array.isArray(raw.storySlides) ? (raw.storySlides as StorySlide[]) : [],
+      carrosselSlides: Array.isArray(raw.carrosselSlides) ? (raw.carrosselSlides as CarrosselSlide[]) : [],
+      postFields: (raw.postFields && typeof raw.postFields === 'object') ? (raw.postFields as PostFields) : undefined,
+      contentType: normalizeString(raw.contentType) || undefined,
+      subOption: normalizeString(raw.subOption) || undefined
     };
   }
 
@@ -217,6 +230,11 @@ export function buildScriptMetadata(input: {
   dueDate?: string;
   labels?: string[];
   fields?: RecordingField[];
+  contentType?: string;
+  subOption?: string;
+  storySlides?: StorySlide[];
+  carrosselSlides?: CarrosselSlide[];
+  postFields?: PostFields | null;
 }) {
   return {
     caption: input.caption ?? '',
@@ -231,7 +249,12 @@ export function buildScriptMetadata(input: {
     category: input.category ?? '',
     dueDate: input.dueDate ?? '',
     labels: input.labels ?? [],
-    fields: input.fields ?? []
+    fields: input.fields ?? [],
+    contentType: input.contentType ?? '',
+    subOption: input.subOption ?? '',
+    storySlides: input.storySlides ?? [],
+    carrosselSlides: input.carrosselSlides ?? [],
+    postFields: input.postFields ?? null
   };
 }
 
@@ -268,6 +291,11 @@ export function toScriptItem(row: ScriptRow): ScriptItem {
     takes: meta.takes ?? [],
     cta: row.cta ?? '',
     caption: meta.caption ?? '',
+    contentType: meta.contentType ?? '',
+    subOption: meta.subOption ?? '',
+    storySlides: meta.storySlides ?? [],
+    carrosselSlides: meta.carrosselSlides ?? [],
+    postFields: meta.postFields ?? null,
     status:
       status === 'draft' ||
       status === 'approved' ||
@@ -309,6 +337,7 @@ export function toRecordingCard(row: ScriptRow): RecordingCard | null {
     takes: meta.takes ?? [],
     cta: row.cta ?? '',
     caption: meta.caption ?? '',
+    contentType: meta.contentType ?? '',
     column,
     order: meta.boardOrder ?? 0,
     notes: meta.notes ?? '',
