@@ -1,19 +1,19 @@
 import { PostsWorkspace } from '@/components/platform/posts-workspace';
-import { getWorkspacePlannerBatches, getWorkspaceProducts, getWorkspaceRecordings, getWorkspaceScripts } from '@/lib/platform-data';
+import { getWorkspaceProducts, getWorkspaceRecordings, getWorkspaceScripts } from '@/lib/platform-data';
 
 const viewMap = {
-  drafts: 'Rascunhos',
   production: 'Produção',
   edited: 'Editados',
   calendar: 'Calendário',
   posted: 'Postados',
-  overdue: 'Atrasados'
+  overdue: 'Atrasados',
+  drafts: 'Produção'
 } as const;
 
 type ViewKey = keyof typeof viewMap;
 
 function resolveInitialTab(view?: string) {
-  return (view && view in viewMap ? viewMap[view as ViewKey] : 'Rascunhos') as (typeof viewMap)[ViewKey];
+  return (view && view in viewMap ? viewMap[view as ViewKey] : 'Produção') as (typeof viewMap)[ViewKey];
 }
 
 export default async function ContentsPage({
@@ -25,10 +25,9 @@ export default async function ContentsPage({
 }) {
   const { workspace } = await params;
   const resolvedSearchParams = searchParams ? await searchParams : null;
-  const [products, scripts, plannerBatches, recordings] = await Promise.all([
+  const [products, scripts, recordings] = await Promise.all([
     getWorkspaceProducts(workspace),
     getWorkspaceScripts(workspace),
-    getWorkspacePlannerBatches(workspace),
     getWorkspaceRecordings(workspace)
   ]);
 
@@ -37,9 +36,9 @@ export default async function ContentsPage({
       workspace={workspace}
       products={products}
       scripts={scripts}
-      plannerBatches={plannerBatches}
       recordings={recordings}
       initialTab={resolveInitialTab(resolvedSearchParams?.view)}
+      showGeneration={false}
     />
   );
 }

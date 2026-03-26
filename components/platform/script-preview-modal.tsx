@@ -174,20 +174,35 @@ export function ScriptPreviewModal({
               variant="outline"
               onClick={onDiscard}
               disabled={busy}
-              className="border-rose-200 text-rose-600 hover:bg-rose-50"
+              size="icon"
+              className="rounded-full border-rose-200 text-rose-600 hover:bg-rose-50"
+              aria-label="Descartar roteiro"
+              title="Descartar roteiro"
             >
               {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
-              Descartar
             </Button>
           ) : null}
-          <Button variant="outline" onClick={onEdit} disabled={busy}>
+          <Button
+            variant="outline"
+            onClick={onEdit}
+            disabled={busy}
+            size="icon"
+            className="rounded-full"
+            aria-label="Editar roteiro"
+            title="Editar roteiro"
+          >
             <PencilLine className="h-4 w-4" />
-            Editar
           </Button>
           {onApprove ? (
-            <Button onClick={onApprove} disabled={busy}>
+            <Button
+              onClick={onApprove}
+              disabled={busy}
+              size="icon"
+              className="rounded-full"
+              aria-label="Aprovar roteiro"
+              title="Aprovar roteiro"
+            >
               {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />}
-              Aprovar
             </Button>
           ) : null}
         </div>

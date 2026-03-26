@@ -2,7 +2,7 @@
 
 import { useMemo, useState } from 'react';
 import Link from 'next/link';
-import { Bot, CheckCircle2, Eye, Loader2, Mic, PencilLine, Plus, Sparkles, Square, X } from 'lucide-react';
+import { ArrowRight, Bot, CheckCircle2, Eye, Loader2, Mic, PencilLine, Plus, Sparkles, Square, Trash2, X } from 'lucide-react';
 import { toast } from 'sonner';
 
 import { Button } from '@/components/ui/button';
@@ -869,68 +869,81 @@ export function ScriptsWorkspace({
                         <>
                           <Button
                             variant="outline"
-                            size="sm"
+                            size="icon"
                             onClick={() => setViewingScript(script)}
                             disabled={isBusy}
+                            className="rounded-full"
+                            aria-label="Visualizar roteiro"
+                            title="Visualizar roteiro"
                           >
                             <Eye className="h-3.5 w-3.5" />
-                            Visualizar
                           </Button>
                           <Button
                             variant="outline"
-                            size="sm"
+                            size="icon"
                             onClick={() => setEditingScript(buildEditableScript(script))}
                             disabled={isBusy}
+                            className="rounded-full"
+                            aria-label="Editar roteiro"
+                            title="Editar roteiro"
                           >
                             <PencilLine className="h-3.5 w-3.5" />
-                            Editar
                           </Button>
                           <Button
-                            size="sm"
+                            size="icon"
                             onClick={() => handleApprove(script.id)}
                             disabled={isBusy}
+                            className="rounded-full"
+                            aria-label="Aprovar roteiro"
+                            title="Aprovar roteiro"
                           >
                             {isBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <CheckCircle2 className="h-3.5 w-3.5" />}
-                            Aprovar
                           </Button>
                           <button
                             type="button"
                             onClick={() => handleDiscard(script.id)}
                             disabled={isBusy}
-                            className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-white px-3 py-1.5 text-[12px] font-medium text-rose-600 transition hover:bg-rose-50 disabled:opacity-40"
+                            aria-label="Descartar roteiro"
+                            title="Descartar roteiro"
+                            className="inline-flex h-9 w-9 items-center justify-center rounded-full border border-rose-200 bg-white text-rose-600 transition hover:bg-rose-50 disabled:opacity-40"
                           >
-                            {isBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <X className="h-3.5 w-3.5" />}
-                            Descartar
+                            {isBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Trash2 className="h-3.5 w-3.5" />}
                           </button>
                         </>
                       ) : (
                         <>
                           <Button
                             variant="outline"
-                            size="sm"
+                            size="icon"
                             onClick={() => setViewingScript(script)}
                             disabled={isBusy}
+                            className="rounded-full"
+                            aria-label="Visualizar roteiro"
+                            title="Visualizar roteiro"
                           >
                             <Eye className="h-3.5 w-3.5" />
-                            Visualizar
                           </Button>
                           <Button
                             variant="outline"
-                            size="sm"
+                            size="icon"
                             onClick={() => setEditingScript(buildEditableScript(script))}
                             disabled={isBusy}
+                            className="rounded-full"
+                            aria-label="Editar roteiro"
+                            title="Editar roteiro"
                           >
                             <PencilLine className="h-3.5 w-3.5" />
-                            Editar
                           </Button>
                           {script.status === 'approved' && (
                             <button
                               type="button"
                               onClick={() => handleQuickAdvance(script.id, 'production')}
                               disabled={isBusy}
-                              className="inline-flex items-center gap-1 rounded-lg border border-blue-200 bg-blue-50 px-2.5 py-1.5 text-[12px] font-medium text-blue-700 transition hover:bg-blue-100 disabled:opacity-40"
+                              aria-label="Enviar para produção"
+                              title="Enviar para produção"
+                              className="inline-flex h-9 w-9 items-center justify-center rounded-full border border-blue-200 bg-blue-50 text-blue-700 transition hover:bg-blue-100 disabled:opacity-40"
                             >
-                              → Produção
+                              <ArrowRight className="h-3.5 w-3.5" />
                             </button>
                           )}
                         </>

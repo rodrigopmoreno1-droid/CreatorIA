@@ -1537,7 +1537,8 @@ export function PostsWorkspace({
   scripts = [],
   plannerBatches = [],
   recordings = [],
-  initialTab = 'Calendário'
+  initialTab = 'Calendário',
+  showGeneration = true
 }: {
   workspace: string;
   products?: ProductItem[];
@@ -1545,19 +1546,25 @@ export function PostsWorkspace({
   plannerBatches?: PlannerBatchItem[];
   recordings?: RecordingCard[];
   initialTab?: WorkspaceTab;
+  showGeneration?: boolean;
 }) {
   const now = new Date();
+  const canGenerateContent = showGeneration !== false;
+  const tabs: WorkspaceTab[] = canGenerateContent
+    ? ['Rascunhos', 'Produção', 'Editados', 'Calendário', 'Postados', 'Atrasados']
+    : ['Produção', 'Editados', 'Calendário', 'Postados', 'Atrasados'];
+  const initialWorkspaceTab = tabs.includes(initialTab) ? initialTab : tabs[0];
 
   const [profile, setProfile] = useState<string>(() => loadProfile(workspace));
   const [scriptsState, setScriptsState] = useState<ScriptItem[]>(scripts);
-  const [batchesState, setBatchesState] = useState<PlannerBatchItem[]>(plannerBatches);
+  const [batchesState, setBatchesState] = useState<PlannerBatchItem[]>(canGenerateContent ? plannerBatches : []);
   const [recordingsState, setRecordingsState] = useState<RecordingCard[]>(recordings);
   const [refreshingWorkspace, setRefreshingWorkspace] = useState(false);
   const [plannerSubmitting, setPlannerSubmitting] = useState(false);
   const [manualModal, setManualModal] = useState<ManualModalMode>('none');
   const [manualModalDate, setManualModalDate] = useState(now.toISOString().slice(0, 10));
   const [creatingManual, setCreatingManual] = useState(false);
-  const [activeTab, setActiveTab] = useState<WorkspaceTab>(initialTab);
+  const [activeTab, setActiveTab] = useState<WorkspaceTab>(initialWorkspaceTab);
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all');
   const [formatFilter, setFormatFilter] = useState<'all' | ContentFormatKey>('all');
   const [filterProductId, setFilterProductId] = useState('');
@@ -1571,19 +1578,23 @@ export function PostsWorkspace({
   const [dragOverDate, setDragOverDate] = useState<string | null>(null);
   const [plannerOpen, setPlannerOpen] = useState(false);
   const [schedulingDates, setSchedulingDates] = useState<Record<string, string>>({});
-  const batchStatusRef = useRef<Map<string, PlannerBatchItem['status']>>(new Map(plannerBatches.map((batch) => [batch.id, batch.status])));
+  const batchStatusRef = useRef<Map<string, PlannerBatchItem['status']>>(new Map((canGenerateContent ? plannerBatches : []).map((batch) => [batch.id, batch.status])));
 
   useEffect(() => {
     setScriptsState(scripts);
   }, [scripts]);
 
   useEffect(() => {
+    if (!canGenerateContent) {
+      return;
+    }
+
     setBatchesState(plannerBatches);
-  }, [plannerBatches]);
+  }, [plannerBatches, canGenerateContent]);
 
   useEffect(() => {
-    setActiveTab(initialTab);
-  }, [initialTab]);
+    setActiveTab(initialWorkspaceTab);
+  }, [initialWorkspaceTab]);
 
   const activeBatches = useMemo(
     () => batchesState.filter((batch) => batch.status === 'queued' || batch.status === 'running'),
@@ -1596,22 +1607,20 @@ export function PostsWorkspace({
     }
 
     try {
-      const [scriptsResponse, batchesResponse, recordingsResponse] = await Promise.all([
-        fetch(`/api/workspaces/${workspace}/scripts`, { cache: 'no-store' }),
-        fetch(`/api/workspaces/${workspace}/planner-batches`, { cache: 'no-store' }),
-        fetch(`/api/workspaces/${workspace}/recordings`, { cache: 'no-store' })
-      ]);
+      const scriptsRequest = fetch(`/api/workspaces/${workspace}/scripts`, { cache: 'no-store' });
+      const recordingsRequest = fetch(`/api/workspaces/${workspace}/recordings`, { cache: 'no-store' });
+      const batchesRequest = canGenerateContent
+        ? fetch(`/api/workspaces/${workspace}/planner-batches`, { cache: 'no-store' })
+        : null;
+
+      const [scriptsResponse, recordingsResponse] = await Promise.all([scriptsRequest, recordingsRequest]);
+      const batchesResponse = batchesRequest ? await batchesRequest : null;
 
       const scriptsPayload = (await scriptsResponse.json().catch(() => null)) as { scripts?: ScriptItem[]; error?: string } | null;
-      const batchesPayload = (await batchesResponse.json().catch(() => null)) as { batches?: PlannerBatchItem[]; error?: string } | null;
       const recordingsPayload = (await recordingsResponse.json().catch(() => null)) as { recordings?: RecordingCard[]; error?: string } | null;
 
       if (!scriptsResponse.ok) {
         throw new Error(scriptsPayload?.error ?? 'Não foi possível atualizar os conteúdos.');
-      }
-
-      if (!batchesResponse.ok) {
-        throw new Error(batchesPayload?.error ?? 'Não foi possível atualizar os lotes do cronograma.');
       }
 
       if (!recordingsResponse.ok) {
@@ -1619,8 +1628,17 @@ export function PostsWorkspace({
       }
 
       setScriptsState(scriptsPayload?.scripts ?? []);
-      setBatchesState(batchesPayload?.batches ?? []);
       setRecordingsState(recordingsPayload?.recordings ?? []);
+
+      if (canGenerateContent && batchesResponse) {
+        const batchesPayload = (await batchesResponse.json().catch(() => null)) as { batches?: PlannerBatchItem[]; error?: string } | null;
+
+        if (!batchesResponse.ok) {
+          throw new Error(batchesPayload?.error ?? 'Não foi possível atualizar os lotes do cronograma.');
+        }
+
+        setBatchesState(batchesPayload?.batches ?? []);
+      }
     } catch (error) {
       if (!silent) {
         toast.error(error instanceof Error ? error.message : 'Não foi possível atualizar a página.');
@@ -1633,7 +1651,7 @@ export function PostsWorkspace({
   }
 
   useEffect(() => {
-    if (!activeBatches.length) {
+    if (!canGenerateContent || !activeBatches.length) {
       return;
     }
 
@@ -1642,9 +1660,13 @@ export function PostsWorkspace({
     }, 4000);
 
     return () => window.clearInterval(timer);
-  }, [workspace, activeBatches.length]);
+  }, [workspace, activeBatches.length, canGenerateContent]);
 
   useEffect(() => {
+    if (!canGenerateContent) {
+      return;
+    }
+
     const previous = batchStatusRef.current;
 
     batchesState.forEach((batch) => {
@@ -1668,7 +1690,7 @@ export function PostsWorkspace({
 
       previous.set(batch.id, batch.status);
     });
-  }, [batchesState]);
+  }, [batchesState, canGenerateContent]);
 
   function handleProfileChange(value: string) {
     setProfile(value);
@@ -1968,9 +1990,13 @@ export function PostsWorkspace({
         return false;
       }
 
+      if (canGenerateContent && script.status !== 'draft' && script.status !== 'approved') {
+        return false;
+      }
+
       return true;
     });
-  }, [scriptsState, filterProductId, statusFilter, formatFilter]);
+  }, [scriptsState, filterProductId, statusFilter, formatFilter, canGenerateContent]);
 
   const scheduledScripts = useMemo(
     () =>
@@ -2077,14 +2103,16 @@ export function PostsWorkspace({
     setCalMonth((month) => month + 1);
   }
 
-  const tabs: WorkspaceTab[] = ['Rascunhos', 'Produção', 'Editados', 'Calendário', 'Postados', 'Atrasados'];
-
   return (
     <div className="flex h-full min-h-0 flex-col overflow-hidden">
       <PageIntro
         eyebrow="Conteúdos"
         title="Fluxo único de conteúdo"
-        description="Rascunhos, produção, calendário, publicação e atrasos vivendo na mesma entidade."
+        description={
+          canGenerateContent
+            ? 'Rascunhos, produção, calendário, publicação e atrasos vivendo na mesma entidade.'
+            : 'Produção, calendário, publicação e atrasos dentro do mesmo fluxo.'
+        }
       />
 
       <div className="flex flex-wrap items-center gap-3 px-6 pb-3">
@@ -2106,25 +2134,29 @@ export function PostsWorkspace({
           </div>
         ))}
 
-        <div className="ml-auto flex items-center gap-2">
-          <Button size="sm" variant="outline" onClick={() => setPlannerOpen(true)}>
-            <CalendarRange className="mr-1.5 h-3.5 w-3.5" />
-            Planejar cronograma
-          </Button>
-          <Button size="sm" onClick={() => openNewManualModal()}>
-            <Plus className="mr-1.5 h-3.5 w-3.5" />
-            Nova peça
-          </Button>
-        </div>
+        {canGenerateContent ? (
+          <div className="ml-auto flex items-center gap-2">
+            <Button size="sm" variant="outline" onClick={() => setPlannerOpen(true)}>
+              <CalendarRange className="mr-1.5 h-3.5 w-3.5" />
+              Planejar cronograma
+            </Button>
+            <Button size="sm" onClick={() => openNewManualModal()}>
+              <Plus className="mr-1.5 h-3.5 w-3.5" />
+              Nova peça
+            </Button>
+          </div>
+        ) : null}
       </div>
 
-      <div className="px-6 pb-4">
-        <PlannerBatchesPanel
-          batches={batchesState}
-          onRefresh={() => { void refreshWorkspaceData(); }}
-          refreshing={refreshingWorkspace}
-        />
-      </div>
+      {canGenerateContent ? (
+        <div className="px-6 pb-4">
+          <PlannerBatchesPanel
+            batches={batchesState}
+            onRefresh={() => { void refreshWorkspaceData(); }}
+            refreshing={refreshingWorkspace}
+          />
+        </div>
+      ) : null}
 
       <div className="flex flex-wrap items-center gap-2 border-b border-zinc-100 px-6 pb-3">
         <div className="flex items-center gap-1">
