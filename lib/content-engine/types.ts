@@ -111,6 +111,43 @@ export type NichePattern = {
   proofPoints: string[];
 };
 
+export type HookCategory = {
+  id: string;
+  label: string;
+  examples: string[];
+  formats?: ContentFormat[];
+  objectives?: string[];
+};
+
+export type CtaCategory = {
+  id: string;
+  label: string;
+  objective: string;
+  examples: string[];
+  formats?: ContentFormat[];
+};
+
+export type StorytellingModel = {
+  id: string;
+  label: string;
+  stages: string[];
+  note: string;
+  formats?: ContentFormat[];
+};
+
+export type FormatSubtype = {
+  id: string;
+  label: string;
+  format: ContentFormat;
+  description: string;
+};
+
+export type ContentContext = {
+  id: string;
+  label: string;
+  visualDescription: string;
+};
+
 export type GenerationPlan = {
   brief: NormalizedContentBrief;
   blueprint: FormatBlueprint;

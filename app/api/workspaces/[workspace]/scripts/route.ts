@@ -26,6 +26,7 @@ type IncomingScript = {
   storySlides?: unknown[];
   carrosselSlides?: unknown[];
   postFields?: unknown;
+  assignee?: string;
 };
 
 const allowedStatuses = new Set(['draft', 'approved', 'production', 'recording', 'drive', 'editing', 'edited', 'scheduled', 'posted']);
@@ -66,7 +67,8 @@ function sanitizeScriptPayload(script: IncomingScript) {
       subOption: script.subOption?.trim() || '',
       storySlides: Array.isArray(script.storySlides) ? (script.storySlides as import('@/types/platform').StorySlide[]) : [],
       carrosselSlides: Array.isArray(script.carrosselSlides) ? (script.carrosselSlides as import('@/types/platform').CarrosselSlide[]) : [],
-      postFields: (script.postFields && typeof script.postFields === 'object') ? script.postFields as import('@/types/platform').PostFields : null
+      postFields: (script.postFields && typeof script.postFields === 'object') ? script.postFields as import('@/types/platform').PostFields : null,
+      assignee: script.assignee
     })
   };
 }

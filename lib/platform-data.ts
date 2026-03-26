@@ -76,6 +76,7 @@ type ScriptMetadata = {
   storySlides?: StorySlide[];
   carrosselSlides?: CarrosselSlide[];
   postFields?: PostFields;
+  assignee?: string;
 };
 
 type WorkspaceDataAccess = {
@@ -208,6 +209,7 @@ export function parseScriptMetadata(storyboard: unknown): ScriptMetadata {
       storySlides: Array.isArray(raw.storySlides) ? (raw.storySlides as StorySlide[]) : [],
       carrosselSlides: Array.isArray(raw.carrosselSlides) ? (raw.carrosselSlides as CarrosselSlide[]) : [],
       postFields: (raw.postFields && typeof raw.postFields === 'object') ? (raw.postFields as PostFields) : undefined,
+      assignee: normalizeString(raw.assignee) || undefined,
       contentType: normalizeString(raw.contentType) || undefined,
       subOption: normalizeString(raw.subOption) || undefined
     };
@@ -235,6 +237,7 @@ export function buildScriptMetadata(input: {
   storySlides?: StorySlide[];
   carrosselSlides?: CarrosselSlide[];
   postFields?: PostFields | null;
+  assignee?: string;
 }) {
   return {
     caption: input.caption ?? '',
@@ -254,7 +257,8 @@ export function buildScriptMetadata(input: {
     subOption: input.subOption ?? '',
     storySlides: input.storySlides ?? [],
     carrosselSlides: input.carrosselSlides ?? [],
-    postFields: input.postFields ?? null
+    postFields: input.postFields ?? null,
+    assignee: input.assignee ?? ''
   };
 }
 
@@ -338,6 +342,8 @@ export function toRecordingCard(row: ScriptRow): RecordingCard | null {
     cta: row.cta ?? '',
     caption: meta.caption ?? '',
     contentType: meta.contentType ?? '',
+    productName: meta.productName,
+    assignee: meta.assignee,
     column,
     order: meta.boardOrder ?? 0,
     notes: meta.notes ?? '',

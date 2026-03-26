@@ -109,6 +109,8 @@ export type RecordingCard = {
   cta: string;
   caption: string;
   contentType: string;
+  productName?: string;
+  assignee?: string;
   column: RecordingColumnKey;
   order: number;
   notes: string;

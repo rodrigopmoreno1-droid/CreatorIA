@@ -17,7 +17,7 @@ import {
   verticalListSortingStrategy
 } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
-import { AlertTriangle, Eye, GripVertical, LayoutGrid, List, Loader2, PencilLine, Plus, Trash2, X } from 'lucide-react';
+import { AlertTriangle, Calendar, Eye, GripVertical, LayoutGrid, List, Loader2, Package, PencilLine, Plus, Trash2, User, X } from 'lucide-react';
 import { toast } from 'sonner';
 
 import { Button } from '@/components/ui/button';
@@ -31,6 +31,25 @@ import type { RecordingCard, RecordingColumnKey } from '@/types/platform';
 
 type RecordingEditorState = RecordingCard;
 
+const FORMAT_LABELS: Record<string, string> = {
+  reels: 'Reels',
+  stories: 'Stories',
+  video_curto: 'Vídeo curto',
+  carrossel: 'Carrossel',
+  post: 'Post'
+};
+
+const COLUMN_COLORS: Record<string, string> = {
+  approved: 'bg-green-50 text-green-700 border-green-100',
+  production: 'bg-blue-50 text-blue-700 border-blue-100',
+  recording: 'bg-amber-50 text-amber-700 border-amber-100',
+  drive: 'bg-purple-50 text-purple-700 border-purple-100',
+  editing: 'bg-indigo-50 text-indigo-700 border-indigo-100',
+  edited: 'bg-teal-50 text-teal-700 border-teal-100',
+  scheduled: 'bg-sky-50 text-sky-700 border-sky-100',
+  posted: 'bg-emerald-50 text-emerald-700 border-emerald-100'
+};
+
 function formatDateLabel(value: string) {
   return new Intl.DateTimeFormat('pt-BR', {
     day: '2-digit',
@@ -38,6 +57,13 @@ function formatDateLabel(value: string) {
     hour: '2-digit',
     minute: '2-digit'
   }).format(new Date(value));
+}
+
+function formatDueDateBR(value: string): string {
+  if (!value) return '';
+  const parts = value.split('-');
+  if (parts.length !== 3) return value;
+  return `${parts[2]}/${parts[1]}/${parts[0]}`;
 }
 
 function findColumn(cards: RecordingCard[], cardId: string) {
@@ -121,10 +147,6 @@ const recordingViewModes: Array<{ key: RecordingViewMode; label: string; icon: t
   { key: 'cards', label: 'Blocos', icon: LayoutGrid }
 ];
 
-function cardCategory(card: RecordingCard) {
-  return card.category?.trim() || recordingColumns.find((column) => column.key === card.column)?.label || 'Geral';
-}
-
 function parseCommaList(value: string) {
   return value
     .split(',')
@@ -162,6 +184,7 @@ function createEmptyRecordingCard(column: RecordingColumnKey): RecordingFormStat
     column,
     order: 0,
     notes: '',
+    assignee: '',
     updatedAt: new Date().toISOString()
   };
 }
@@ -171,7 +194,8 @@ function buildRecordingFormFromCard(card: RecordingCard): RecordingFormState {
     ...card,
     takes: padTakeList(card.takes.length ? card.takes : []),
     labels: card.labels ?? [],
-    fields: card.fields ?? []
+    fields: card.fields ?? [],
+    assignee: card.assignee ?? ''
   };
 }
 
@@ -190,17 +214,13 @@ function buildRecordingPayload(card: RecordingFormState, status: RecordingColumn
     category: card.category.trim(),
     dueDate: card.dueDate.trim(),
     labels: card.labels,
-    fields: card.fields
+    fields: card.fields,
+    assignee: card.assignee?.trim() ?? ''
   };
 }
 
 function SortableRecordingCard({
-  card,
-  onView,
-  onEdit,
-  onDelete,
-  loading,
-  deleting
+  card, onView, onEdit, onDelete, loading, deleting
 }: {
   card: RecordingCard;
   onView: (card: RecordingCard) => void;
@@ -209,89 +229,100 @@ function SortableRecordingCard({
   loading: boolean;
   deleting: boolean;
 }) {
-  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
-    id: card.id
-  });
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: card.id });
 
   return (
     <div
       ref={setNodeRef}
-      style={{
-        transform: CSS.Transform.toString(transform),
-        transition
-      }}
+      style={{ transform: CSS.Transform.toString(transform), transition }}
       className={cn('touch-none select-none cursor-grab active:cursor-grabbing', isDragging ? 'opacity-60' : 'opacity-100')}
       {...attributes}
       {...listeners}
     >
       <div className="rounded-[22px] border border-border bg-white p-4 shadow-soft">
-        <div className="flex items-start justify-between gap-3">
-          <div className="min-w-0">
-            <div className="flex flex-wrap items-center gap-2">
-              <span className="rounded-full border border-border bg-muted/40 px-2.5 py-1 text-[10px] font-medium uppercase tracking-[0.16em] text-muted-foreground">
-                {cardCategory(card)}
-              </span>
-              {card.dueDate ? (
-                <span className="rounded-full border border-border bg-white px-2.5 py-1 text-[10px] font-medium uppercase tracking-[0.16em] text-muted-foreground">
-                  {card.dueDate}
-                </span>
-              ) : null}
-            </div>
-            <p className="truncate text-sm font-semibold text-foreground">{card.title}</p>
-            <p className="mt-2 line-clamp-2 text-[13px] leading-6 text-muted-foreground">{card.hook}</p>
+        {/* Tags row */}
+        <div className="flex flex-wrap items-center gap-1.5">
+          {card.productName ? (
+            <span className="inline-flex items-center gap-1 rounded-full border border-border bg-muted/40 px-2 py-0.5 text-[10px] font-medium text-muted-foreground">
+              <Package className="h-2.5 w-2.5" />
+              {card.productName}
+            </span>
+          ) : null}
+          {card.contentType ? (
+            <span className="rounded-full border border-blue-100 bg-blue-50 px-2 py-0.5 text-[10px] font-medium text-blue-700">
+              {FORMAT_LABELS[card.contentType] ?? card.contentType}
+            </span>
+          ) : null}
+        </div>
+
+        {/* Title + hook */}
+        <p className={cn('truncate text-sm font-semibold text-foreground', (card.productName || card.contentType) ? 'mt-2' : '')}>
+          {card.title}
+        </p>
+        <p className="mt-1.5 line-clamp-2 text-[13px] leading-5 text-muted-foreground">{card.hook}</p>
+
+        {/* Assignee */}
+        {card.assignee ? (
+          <div className="mt-2 flex items-center gap-1.5">
+            <User className="h-3 w-3 shrink-0 text-muted-foreground" />
+            <span className="text-[11px] text-muted-foreground">{card.assignee}</span>
           </div>
+        ) : null}
+
+        {/* Notes */}
+        {card.notes ? (
+          <div className="mt-3 rounded-[16px] bg-muted/30 px-3 py-2 text-[12px] leading-5 text-muted-foreground line-clamp-2">
+            {card.notes}
+          </div>
+        ) : null}
+
+        {/* Actions + footer */}
+        <div className="mt-3 flex items-center justify-between gap-2">
           <div className="flex items-center gap-1">
             <button
               type="button"
               onClick={() => onView(card)}
-              onPointerDownCapture={(event) => event.stopPropagation()}
-              className="inline-flex h-8 w-8 items-center justify-center rounded-xl border border-border bg-white transition hover:bg-muted"
-              aria-label="Ver roteiro"
+              onPointerDownCapture={(e) => e.stopPropagation()}
+              className="inline-flex h-7 w-7 items-center justify-center rounded-xl border border-border bg-white transition hover:bg-muted"
+              aria-label="Ver"
             >
-              <Eye className="h-4 w-4" />
+              <Eye className="h-3.5 w-3.5" />
             </button>
             <button
               type="button"
               onClick={() => onEdit(card)}
-              onPointerDownCapture={(event) => event.stopPropagation()}
-              className="inline-flex h-8 w-8 items-center justify-center rounded-xl border border-border bg-white transition hover:bg-muted"
-              aria-label="Editar roteiro"
+              onPointerDownCapture={(e) => e.stopPropagation()}
+              className="inline-flex h-7 w-7 items-center justify-center rounded-xl border border-border bg-white transition hover:bg-muted"
+              aria-label="Editar"
             >
-              <PencilLine className="h-4 w-4" />
+              <PencilLine className="h-3.5 w-3.5" />
             </button>
             <button
               type="button"
               onClick={() => onDelete(card)}
-              onPointerDownCapture={(event) => event.stopPropagation()}
-              className="inline-flex h-8 w-8 items-center justify-center rounded-xl border border-rose-200 bg-white text-rose-600 transition hover:bg-rose-50"
-              aria-label="Remover roteiro"
+              onPointerDownCapture={(e) => e.stopPropagation()}
+              className="inline-flex h-7 w-7 items-center justify-center rounded-xl border border-rose-200 bg-white text-rose-600 transition hover:bg-rose-50"
+              aria-label="Remover"
               disabled={deleting}
             >
-              {deleting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
+              {deleting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Trash2 className="h-3.5 w-3.5" />}
             </button>
           </div>
-        </div>
-
-        <div className="mt-4 rounded-[18px] bg-muted/30 px-3 py-3 text-[12px] leading-6 text-muted-foreground">
-          {card.notes || 'Sem observacoes por enquanto. Use o modo de edicao para adicionar indicacoes de gravacao.'}
-        </div>
-
-        <div className="mt-3 flex flex-wrap gap-2">
-          {card.labels.map((label) => (
-            <span key={`${card.id}-${label}`} className="rounded-full border border-border bg-white px-2.5 py-1 text-[10px] font-medium uppercase tracking-[0.16em] text-muted-foreground">
-              {label}
-            </span>
-          ))}
-        </div>
-
-        <div className="mt-4 flex items-center justify-between">
-          <span className="inline-flex items-center gap-1.5 text-[11px] font-medium text-muted-foreground">
-            <GripVertical className="h-3.5 w-3.5" />
-            Arraste o bloco inteiro
-          </span>
-          <span className="text-[11px] text-muted-foreground">
-            {loading ? 'salvando...' : formatDateLabel(card.updatedAt)}
-          </span>
+          <div className="flex items-center gap-2 text-[11px] text-muted-foreground">
+            {card.dueDate ? (
+              <span className="flex items-center gap-1">
+                <Calendar className="h-3 w-3" />
+                {formatDueDateBR(card.dueDate)}
+              </span>
+            ) : null}
+            {loading ? (
+              <span className="text-[11px] text-muted-foreground">salvando...</span>
+            ) : (
+              <span className="inline-flex items-center gap-1">
+                <GripVertical className="h-3.5 w-3.5" />
+              </span>
+            )}
+          </div>
         </div>
       </div>
     </div>
@@ -384,12 +415,27 @@ function RecordingViewModal({
             <p className="text-[11px] font-semibold uppercase tracking-[0.24em] text-muted-foreground">Modo leitura</p>
             <h3 className="mt-1 text-xl font-semibold text-foreground">{card.title}</h3>
             <div className="mt-3 flex flex-wrap gap-2">
-              <span className="rounded-full border border-border bg-muted/40 px-2.5 py-1 text-[10px] font-medium uppercase tracking-[0.16em] text-muted-foreground">
-                {cardCategory(card)}
-              </span>
+              {card.productName ? (
+                <span className="inline-flex items-center gap-1 rounded-full border border-border bg-muted/40 px-2.5 py-1 text-[10px] font-medium uppercase tracking-[0.16em] text-muted-foreground">
+                  <Package className="h-2.5 w-2.5" />
+                  {card.productName}
+                </span>
+              ) : null}
+              {card.contentType ? (
+                <span className="rounded-full border border-blue-100 bg-blue-50 px-2.5 py-1 text-[10px] font-medium uppercase tracking-[0.16em] text-blue-700">
+                  {FORMAT_LABELS[card.contentType] ?? card.contentType}
+                </span>
+              ) : null}
+              {card.assignee ? (
+                <span className="inline-flex items-center gap-1 rounded-full border border-border bg-white px-2.5 py-1 text-[10px] font-medium uppercase tracking-[0.16em] text-muted-foreground">
+                  <User className="h-2.5 w-2.5" />
+                  {card.assignee}
+                </span>
+              ) : null}
               {card.dueDate ? (
-                <span className="rounded-full border border-border bg-white px-2.5 py-1 text-[10px] font-medium uppercase tracking-[0.16em] text-muted-foreground">
-                  {card.dueDate}
+                <span className="inline-flex items-center gap-1 rounded-full border border-border bg-white px-2.5 py-1 text-[10px] font-medium uppercase tracking-[0.16em] text-muted-foreground">
+                  <Calendar className="h-2.5 w-2.5" />
+                  {formatDueDateBR(card.dueDate)}
                 </span>
               ) : null}
               {card.labels.map((label) => (
@@ -533,7 +579,7 @@ function RecordingDeleteModal({
             <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">Bloco</p>
             <p className="mt-1 text-sm font-medium text-foreground">{card.title}</p>
             <p className="mt-1 text-[12px] text-muted-foreground">
-              {cardCategory(card)} {card.dueDate ? `· ${card.dueDate}` : ''}
+              {card.dueDate ? formatDueDateBR(card.dueDate) : ''}
             </p>
           </div>
           <div className="rounded-[18px] border border-border bg-white px-4 py-3 text-[13px] leading-6 text-muted-foreground">
@@ -566,7 +612,8 @@ function RecordingEditModal({
   onDelete,
   onChange,
   onSave,
-  onClose
+  onClose,
+  assignees
 }: {
   title: string;
   card: RecordingEditorState;
@@ -575,6 +622,7 @@ function RecordingEditModal({
   onChange: (nextValue: RecordingEditorState) => void;
   onSave: () => void;
   onClose: () => void;
+  assignees: string[];
 }) {
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-[rgba(15,23,42,0.34)] p-4 backdrop-blur-sm">
@@ -617,6 +665,41 @@ function RecordingEditModal({
                   onChange={(event) => onChange({ ...card, dueDate: event.target.value })}
                 />
               </div>
+            </div>
+            <div className="space-y-2">
+              <label className="text-sm font-medium">Responsável pela gravação</label>
+              <Input
+                value={card.assignee ?? ''}
+                onChange={(e) => onChange({ ...card, assignee: e.target.value })}
+                list={`assignees-${card.id}`}
+                placeholder="Ex.: Bárbara, João..."
+              />
+              {assignees.length > 0 ? (
+                <datalist id={`assignees-${card.id}`}>
+                  {assignees.map((a) => (
+                    <option key={a} value={a} />
+                  ))}
+                </datalist>
+              ) : null}
+              {assignees.length > 0 ? (
+                <div className="flex flex-wrap gap-1.5">
+                  {assignees.map((a) => (
+                    <button
+                      key={a}
+                      type="button"
+                      onClick={() => onChange({ ...card, assignee: a })}
+                      className={cn(
+                        'rounded-full border px-2.5 py-0.5 text-[11px] font-medium transition',
+                        card.assignee === a
+                          ? 'border-foreground bg-foreground text-white'
+                          : 'border-border bg-white text-muted-foreground hover:bg-muted'
+                      )}
+                    >
+                      {a}
+                    </button>
+                  ))}
+                </div>
+              ) : null}
             </div>
             <div className="space-y-2">
               <label className="text-sm font-medium">Gancho</label>
@@ -761,7 +844,19 @@ export function RecordingsWorkspace({
 }) {
   const [cards, setCards] = useState(sortColumnCards(initialCards));
   const [viewMode, setViewMode] = useState<RecordingViewMode>('flow');
-  const [activeCategory, setActiveCategory] = useState('all');
+  const [filterColumn, setFilterColumn] = useState<RecordingColumnKey | 'all'>('all');
+  const [filterFormat, setFilterFormat] = useState('all');
+  const [filterProduct, setFilterProduct] = useState('all');
+  const [filterAssignee, setFilterAssignee] = useState('all');
+  const [assignees, setAssignees] = useState<string[]>(() => {
+    if (typeof window === 'undefined') return [];
+    try {
+      const stored = localStorage.getItem(`creatorai:assignees:${workspace}`);
+      return stored ? (JSON.parse(stored) as string[]) : [];
+    } catch {
+      return [];
+    }
+  });
   const [viewingCard, setViewingCard] = useState<RecordingCard | null>(null);
   const [editingCard, setEditingCard] = useState<RecordingEditorState | null>(null);
   const [editingMode, setEditingMode] = useState<'create' | 'edit' | null>(null);
@@ -770,18 +865,48 @@ export function RecordingsWorkspace({
   const [pendingDeleteCard, setPendingDeleteCard] = useState<RecordingCard | null>(null);
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 8 } }));
 
-  const categoryOptions = useMemo(() => {
-    const categories = cards.map((card) => cardCategory(card));
-    return ['all', ...Array.from(new Set(categories))];
-  }, [cards]);
+  function persistAssignee(name: string) {
+    const trimmed = name.trim();
+    if (!trimmed) return;
+    setAssignees((current) => {
+      if (current.includes(trimmed)) return current;
+      const next = [...current, trimmed].sort((a, b) => a.localeCompare(b, 'pt-BR'));
+      try {
+        localStorage.setItem(`creatorai:assignees:${workspace}`, JSON.stringify(next));
+      } catch {}
+      return next;
+    });
+  }
+
+  const availableFormats = useMemo(
+    () => [...new Set(cards.map((c) => c.contentType).filter(Boolean))].sort(),
+    [cards]
+  );
+
+  const availableProducts = useMemo(
+    () => [...new Set(cards.map((c) => c.productName ?? '').filter(Boolean))].sort((a, b) => a.localeCompare(b, 'pt-BR')),
+    [cards]
+  );
+
+  const availableAssignees = useMemo(
+    () => [...new Set([...assignees, ...cards.map((c) => c.assignee ?? '').filter(Boolean)])].sort((a, b) => a.localeCompare(b, 'pt-BR')),
+    [cards, assignees]
+  );
+
+  const activeFilterCount = useMemo(
+    () => [filterColumn, filterFormat, filterProduct, filterAssignee].filter((f) => f !== 'all').length,
+    [filterColumn, filterFormat, filterProduct, filterAssignee]
+  );
 
   const filteredCards = useMemo(() => {
-    if (activeCategory === 'all') {
-      return cards;
-    }
-
-    return cards.filter((card) => cardCategory(card) === activeCategory);
-  }, [cards, activeCategory]);
+    return cards.filter((card) => {
+      if (filterColumn !== 'all' && card.column !== filterColumn) return false;
+      if (filterFormat !== 'all' && card.contentType !== filterFormat) return false;
+      if (filterProduct !== 'all' && (card.productName ?? '') !== filterProduct) return false;
+      if (filterAssignee !== 'all' && (card.assignee ?? '') !== filterAssignee) return false;
+      return true;
+    });
+  }, [cards, filterColumn, filterFormat, filterProduct, filterAssignee]);
 
   const groupedCards = useMemo(() => {
     return recordingColumns.map((column) => ({
@@ -820,7 +945,8 @@ export function RecordingsWorkspace({
             category: item.category,
             dueDate: item.dueDate,
             labels: item.labels,
-            fields: item.fields
+            fields: item.fields,
+            assignee: item.assignee ?? ''
           })
         })
       )
@@ -985,6 +1111,7 @@ export function RecordingsWorkspace({
         toast.success('Bloco atualizado.');
       }
 
+      persistAssignee(editingCard.assignee ?? '');
       setEditingCard(null);
       setEditingMode(null);
     } catch (error) {
@@ -1005,22 +1132,81 @@ export function RecordingsWorkspace({
       <Card className="rounded-[24px] border-border/90 bg-white/95">
         <CardContent className="space-y-4 p-4 lg:p-5">
           <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+            {/* Filters */}
             <div className="flex flex-wrap items-center gap-2">
-              {categoryOptions.map((option) => (
-                <button
-                  key={option}
-                  type="button"
-                  onClick={() => setActiveCategory(option)}
-                  className={cn(
-                    'inline-flex h-8 items-center rounded-full border px-3 text-[12px] font-medium transition',
-                    activeCategory === option
-                      ? 'border-[#17171b] bg-[#17171b] text-white'
-                      : 'border-border bg-white text-muted-foreground hover:bg-muted'
-                  )}
+              <select
+                value={filterColumn}
+                onChange={(e) => setFilterColumn(e.target.value as RecordingColumnKey | 'all')}
+                className="h-8 cursor-pointer rounded-full border border-border bg-white px-3 text-[12px] font-medium text-muted-foreground transition hover:bg-muted focus:outline-none"
+              >
+                <option value="all">Todos os status</option>
+                {recordingColumns.map((col) => (
+                  <option key={col.key} value={col.key}>
+                    {col.label}
+                  </option>
+                ))}
+              </select>
+
+              {availableFormats.length > 0 ? (
+                <select
+                  value={filterFormat}
+                  onChange={(e) => setFilterFormat(e.target.value)}
+                  className="h-8 cursor-pointer rounded-full border border-border bg-white px-3 text-[12px] font-medium text-muted-foreground transition hover:bg-muted focus:outline-none"
                 >
-                  {option === 'all' ? 'Todas' : option}
+                  <option value="all">Todos os formatos</option>
+                  {availableFormats.map((f) => (
+                    <option key={f} value={f}>
+                      {FORMAT_LABELS[f] ?? f}
+                    </option>
+                  ))}
+                </select>
+              ) : null}
+
+              {availableProducts.length > 0 ? (
+                <select
+                  value={filterProduct}
+                  onChange={(e) => setFilterProduct(e.target.value)}
+                  className="h-8 cursor-pointer rounded-full border border-border bg-white px-3 text-[12px] font-medium text-muted-foreground transition hover:bg-muted focus:outline-none"
+                >
+                  <option value="all">Todos os produtos</option>
+                  {availableProducts.map((p) => (
+                    <option key={p} value={p}>
+                      {p}
+                    </option>
+                  ))}
+                </select>
+              ) : null}
+
+              {availableAssignees.length > 0 ? (
+                <select
+                  value={filterAssignee}
+                  onChange={(e) => setFilterAssignee(e.target.value)}
+                  className="h-8 cursor-pointer rounded-full border border-border bg-white px-3 text-[12px] font-medium text-muted-foreground transition hover:bg-muted focus:outline-none"
+                >
+                  <option value="all">Todas as pessoas</option>
+                  {availableAssignees.map((a) => (
+                    <option key={a} value={a}>
+                      {a}
+                    </option>
+                  ))}
+                </select>
+              ) : null}
+
+              {activeFilterCount > 0 ? (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setFilterColumn('all');
+                    setFilterFormat('all');
+                    setFilterProduct('all');
+                    setFilterAssignee('all');
+                  }}
+                  className="inline-flex h-8 items-center gap-1.5 rounded-full border border-rose-200 bg-white px-3 text-[12px] font-medium text-rose-600 transition hover:bg-rose-50"
+                >
+                  <X className="h-3 w-3" />
+                  Limpar filtros ({activeFilterCount})
                 </button>
-              ))}
+              ) : null}
             </div>
 
             <div className="flex items-center justify-between gap-2">
@@ -1077,51 +1263,54 @@ export function RecordingsWorkspace({
               {listCards.length ? (
                 listCards.map((card) => (
                   <div key={card.id} className="rounded-[20px] border border-border bg-white p-3.5">
-                    <div className="flex items-center justify-between gap-3">
-                      <div className="min-w-0">
-                        <div className="flex flex-wrap items-center gap-2">
-                          <span className="rounded-full border border-border bg-muted/40 px-2.5 py-1 text-[10px] font-medium uppercase tracking-[0.16em] text-muted-foreground">
-                            {cardCategory(card)}
+                    <div className="flex items-center gap-3">
+                      <div className="min-w-0 flex-1">
+                        <div className="flex flex-wrap items-center gap-1.5">
+                          <span className={cn('rounded-full border px-2 py-0.5 text-[10px] font-medium', COLUMN_COLORS[card.column] ?? 'bg-muted/40 text-muted-foreground border-border')}>
+                            {recordingColumns.find((c) => c.key === card.column)?.label ?? card.column}
                           </span>
-                          {card.dueDate ? (
-                            <span className="rounded-full border border-border bg-white px-2.5 py-1 text-[10px] font-medium uppercase tracking-[0.16em] text-muted-foreground">
-                              {card.dueDate}
+                          {card.productName ? (
+                            <span className="inline-flex items-center gap-1 rounded-full border border-border bg-muted/40 px-2 py-0.5 text-[10px] font-medium text-muted-foreground">
+                              <Package className="h-2.5 w-2.5" />
+                              {card.productName}
+                            </span>
+                          ) : null}
+                          {card.contentType ? (
+                            <span className="rounded-full border border-blue-100 bg-blue-50 px-2 py-0.5 text-[10px] font-medium text-blue-700">
+                              {FORMAT_LABELS[card.contentType] ?? card.contentType}
                             </span>
                           ) : null}
                         </div>
-                        <p className="mt-2 truncate text-sm font-semibold text-foreground">{card.title}</p>
-                        <p className="mt-1 line-clamp-1 text-[13px] text-muted-foreground">{card.hook}</p>
-                        <p className="mt-1 line-clamp-2 text-[12px] leading-5 text-muted-foreground">
-                          {card.caption || 'Nenhuma legenda definida ainda.'}
-                        </p>
+                        <p className="mt-1.5 truncate text-sm font-semibold text-foreground">{card.title}</p>
+                        <p className="mt-0.5 line-clamp-1 text-[13px] text-muted-foreground">{card.hook}</p>
                       </div>
-                      <div className="flex items-center gap-1">
-                        <button
-                          type="button"
-                          onClick={() => setViewingCard(card)}
-                          onPointerDownCapture={(event) => event.stopPropagation()}
-                          className="inline-flex h-8 w-8 items-center justify-center rounded-xl border border-border bg-white transition hover:bg-muted"
-                          aria-label="Ver bloco"
-                        >
+
+                      <div className="hidden shrink-0 items-center gap-4 text-[12px] text-muted-foreground md:flex">
+                        {card.assignee ? (
+                          <span className="flex items-center gap-1">
+                            <User className="h-3 w-3" />
+                            {card.assignee}
+                          </span>
+                        ) : null}
+                        {card.dueDate ? (
+                          <span className="flex items-center gap-1">
+                            <Calendar className="h-3 w-3" />
+                            {formatDueDateBR(card.dueDate)}
+                          </span>
+                        ) : null}
+                      </div>
+
+                      <div className="flex shrink-0 items-center gap-1">
+                        <button type="button" onClick={() => setViewingCard(card)} onPointerDownCapture={(e) => e.stopPropagation()}
+                          className="inline-flex h-8 w-8 items-center justify-center rounded-xl border border-border bg-white transition hover:bg-muted" aria-label="Ver">
                           <Eye className="h-4 w-4" />
                         </button>
-                        <button
-                          type="button"
-                          onClick={() => openEditCard(card)}
-                          onPointerDownCapture={(event) => event.stopPropagation()}
-                          className="inline-flex h-8 w-8 items-center justify-center rounded-xl border border-border bg-white transition hover:bg-muted"
-                          aria-label="Editar bloco"
-                        >
+                        <button type="button" onClick={() => openEditCard(card)} onPointerDownCapture={(e) => e.stopPropagation()}
+                          className="inline-flex h-8 w-8 items-center justify-center rounded-xl border border-border bg-white transition hover:bg-muted" aria-label="Editar">
                           <PencilLine className="h-4 w-4" />
                         </button>
-                        <button
-                          type="button"
-                          onClick={() => requestDeleteCard(card)}
-                          onPointerDownCapture={(event) => event.stopPropagation()}
-                          className="inline-flex h-8 w-8 items-center justify-center rounded-xl border border-rose-200 bg-white text-rose-600 transition hover:bg-rose-50"
-                          aria-label="Remover bloco"
-                          disabled={deletingId === card.id}
-                        >
+                        <button type="button" onClick={() => requestDeleteCard(card)} onPointerDownCapture={(e) => e.stopPropagation()}
+                          className="inline-flex h-8 w-8 items-center justify-center rounded-xl border border-rose-200 bg-white text-rose-600 transition hover:bg-rose-50" aria-label="Remover" disabled={deletingId === card.id}>
                           {deletingId === card.id ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
                         </button>
                       </div>
@@ -1139,62 +1328,62 @@ export function RecordingsWorkspace({
               {listCards.length ? (
                 listCards.map((card) => (
                   <div key={card.id} className="rounded-[22px] border border-border bg-white p-4 shadow-soft">
-                    <div className="flex items-start justify-between gap-3">
-                      <div className="min-w-0">
-                        <p className="truncate text-sm font-semibold text-foreground">{card.title}</p>
-                        <p className="mt-2 line-clamp-2 text-[13px] leading-6 text-muted-foreground">{card.hook}</p>
-                        <p className="mt-2 line-clamp-2 text-[12px] leading-5 text-muted-foreground">
-                          {card.caption || 'Nenhuma legenda definida ainda.'}
-                        </p>
-                      </div>
-                      <button
-                        type="button"
-                        onClick={() => openCreateCard(card.column)}
-                        className="inline-flex h-8 w-8 items-center justify-center rounded-xl border border-border bg-white transition hover:bg-muted"
-                        aria-label="Adicionar bloco"
-                      >
-                        <Plus className="h-4 w-4" />
-                      </button>
-                    </div>
-                    <div className="mt-3 flex flex-wrap gap-2">
-                      <span className="rounded-full border border-border bg-muted/40 px-2.5 py-1 text-[10px] font-medium uppercase tracking-[0.16em] text-muted-foreground">
-                        {cardCategory(card)}
+                    {/* Column + actions */}
+                    <div className="flex items-center justify-between gap-2">
+                      <span className={cn('rounded-full border px-2 py-0.5 text-[10px] font-medium', COLUMN_COLORS[card.column] ?? 'bg-muted/40 text-muted-foreground border-border')}>
+                        {recordingColumns.find((c) => c.key === card.column)?.label ?? card.column}
                       </span>
-                      {card.labels.map((label) => (
-                        <span key={`${card.id}-${label}`} className="rounded-full border border-border bg-white px-2.5 py-1 text-[10px] font-medium uppercase tracking-[0.16em] text-muted-foreground">
-                          {label}
-                        </span>
-                      ))}
+                      <div className="flex items-center gap-1">
+                        <button type="button" onClick={() => setViewingCard(card)} onPointerDownCapture={(e) => e.stopPropagation()}
+                          className="inline-flex h-7 w-7 items-center justify-center rounded-xl border border-border bg-white transition hover:bg-muted" aria-label="Ver">
+                          <Eye className="h-3.5 w-3.5" />
+                        </button>
+                        <button type="button" onClick={() => openEditCard(card)} onPointerDownCapture={(e) => e.stopPropagation()}
+                          className="inline-flex h-7 w-7 items-center justify-center rounded-xl border border-border bg-white transition hover:bg-muted" aria-label="Editar">
+                          <PencilLine className="h-3.5 w-3.5" />
+                        </button>
+                        <button type="button" onClick={() => requestDeleteCard(card)} onPointerDownCapture={(e) => e.stopPropagation()}
+                          className="inline-flex h-7 w-7 items-center justify-center rounded-xl border border-rose-200 bg-white text-rose-600 transition hover:bg-rose-50" aria-label="Remover" disabled={deletingId === card.id}>
+                          {deletingId === card.id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Trash2 className="h-3.5 w-3.5" />}
+                        </button>
+                      </div>
                     </div>
-                    <div className="mt-4 flex items-center gap-2">
-                      <button
-                        type="button"
-                        onClick={() => setViewingCard(card)}
-                        onPointerDownCapture={(event) => event.stopPropagation()}
-                        className="inline-flex h-8 items-center gap-2 rounded-full border border-border bg-white px-3 text-[12px] font-medium text-foreground transition hover:bg-muted"
-                      >
-                        <Eye className="h-4 w-4" />
-                        Ver
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => openEditCard(card)}
-                        onPointerDownCapture={(event) => event.stopPropagation()}
-                        className="inline-flex h-8 items-center gap-2 rounded-full border border-border bg-white px-3 text-[12px] font-medium text-foreground transition hover:bg-muted"
-                      >
-                        <PencilLine className="h-4 w-4" />
-                        Editar
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => requestDeleteCard(card)}
-                        onPointerDownCapture={(event) => event.stopPropagation()}
-                        className="inline-flex h-8 items-center gap-2 rounded-full border border-rose-200 bg-white px-3 text-[12px] font-medium text-rose-600 transition hover:bg-rose-50"
-                        disabled={deletingId === card.id}
-                      >
-                        {deletingId === card.id ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
-                        Remover
-                      </button>
+
+                    {/* Product + Format tags */}
+                    {(card.productName || card.contentType) ? (
+                      <div className="mt-2.5 flex flex-wrap gap-1.5">
+                        {card.productName ? (
+                          <span className="inline-flex items-center gap-1 rounded-full border border-border bg-muted/40 px-2 py-0.5 text-[10px] font-medium text-muted-foreground">
+                            <Package className="h-2.5 w-2.5" />
+                            {card.productName}
+                          </span>
+                        ) : null}
+                        {card.contentType ? (
+                          <span className="rounded-full border border-blue-100 bg-blue-50 px-2 py-0.5 text-[10px] font-medium text-blue-700">
+                            {FORMAT_LABELS[card.contentType] ?? card.contentType}
+                          </span>
+                        ) : null}
+                      </div>
+                    ) : null}
+
+                    {/* Title + Hook */}
+                    <p className="mt-2.5 truncate text-sm font-semibold text-foreground">{card.title}</p>
+                    <p className="mt-1.5 line-clamp-2 text-[13px] leading-5 text-muted-foreground">{card.hook}</p>
+
+                    {/* Footer */}
+                    <div className="mt-3 flex items-center justify-between text-[11px] text-muted-foreground">
+                      {card.assignee ? (
+                        <span className="flex items-center gap-1">
+                          <User className="h-3 w-3" />
+                          {card.assignee}
+                        </span>
+                      ) : <span />}
+                      {card.dueDate ? (
+                        <span className="flex items-center gap-1">
+                          <Calendar className="h-3 w-3" />
+                          {formatDueDateBR(card.dueDate)}
+                        </span>
+                      ) : null}
                     </div>
                   </div>
                 ))
@@ -1231,6 +1420,7 @@ export function RecordingsWorkspace({
           card={editingCard}
           saving={loadingId === editingCard.id}
           onChange={setEditingCard}
+          assignees={assignees}
           onDelete={
             editingMode === 'edit'
               ? () => {
