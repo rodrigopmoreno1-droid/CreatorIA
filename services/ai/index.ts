@@ -839,43 +839,79 @@ export function splitCatalogPageLines(pageText: string) {
     .filter((line) => !isCatalogNoiseLine(line));
 }
 
+function matchInlinePrice(line: string) {
+  const match = line.match(/R\$\s?([\d.]+,\d{2})/i);
+  return match ? match[1] : null;
+}
+
 export function findPriceClusters(lines: string[]) {
   const clusters: Array<{ start: number; end: number; price: string; discountPrice: string }> = [];
 
   for (let index = 0; index < lines.length; index += 1) {
-    if (!/^r\$$/i.test(normalizeMatchText(lines[index] ?? ''))) {
-      continue;
+    const currentNormalized = normalizeMatchText(lines[index] ?? '');
+
+    // Strategy 1: Multi-line structured format (R$ / amount / à vista / R$ / discount / cartão)
+    if (/^r\$$/i.test(currentNormalized)) {
+      const price = lines[index + 1];
+      const vista = lines[index + 2];
+      const discountPrefix = lines[index + 3];
+      const discount = lines[index + 4];
+      const cartao = lines[index + 5];
+
+      if (price && vista && discountPrefix && discount && cartao && isPriceAmountLine(price)) {
+        const vistaLabel = normalizeMatchText(vista).replace(/\s+/g, '');
+        const cartaoLabel = normalizeMatchText(cartao).replace(/\s+/g, '');
+
+        if (vistaLabel === 'avista' && /^r\$$/i.test(normalizeMatchText(discountPrefix)) && isPriceAmountLine(discount) && cartaoLabel === 'cartao') {
+          clusters.push({
+            start: index,
+            end: index + 6,
+            price: cleanSingleLineText(price, 80),
+            discountPrice: cleanSingleLineText(discount, 80)
+          });
+          index += 5;
+          continue;
+        }
+      }
     }
 
-    const price = lines[index + 1];
-    const vista = lines[index + 2];
-    const discountPrefix = lines[index + 3];
-    const discount = lines[index + 4];
-    const cartao = lines[index + 5];
+    // Strategy 2: Inline price on a single line (e.g. "R$ 99,90" or "R$ 149,90 à vista")
+    const line = lines[index] ?? '';
+    const inlinePrices = line.match(/R\$\s?[\d.]+,\d{2}/gi);
+    if (inlinePrices && inlinePrices.length >= 1 && !isCatalogLabelLine(line) && !isCatalogNoiseLine(line) && !isLikelyProductNameLine(line)) {
+      const amounts = inlinePrices.map((p) => p.replace(/R\$\s?/i, '').trim());
+      const price = amounts[0];
+      const discountPrice = amounts.length >= 2 ? amounts[1] : '';
 
-    if (!price || !vista || !discountPrefix || !discount || !cartao) {
-      continue;
+      // Only treat as a price cluster if the line looks like a price line (not a product description that mentions a price)
+      const textWithoutPrices = line.replace(/R\$\s?[\d.]+,\d{2}/gi, '').replace(/[àa]\s*vista|cart[aã]o|desconto|promo[cç][aã]o|por|de/gi, '').trim();
+      if (textWithoutPrices.split(/\s+/).filter(Boolean).length <= 3) {
+        clusters.push({
+          start: index,
+          end: index + 1,
+          price,
+          discountPrice
+        });
+        continue;
+      }
     }
 
-    if (!isPriceAmountLine(price)) {
+    // Strategy 3: "R$" on one line followed by amount on the next (without the full 6-line pattern)
+    if (/^r\$$/i.test(currentNormalized) && lines[index + 1] && isPriceAmountLine(lines[index + 1])) {
+      const price = cleanSingleLineText(lines[index + 1], 80);
+      let discountPrice = '';
+      let end = index + 2;
+
+      // Check if there's a second price nearby
+      if (lines[index + 2] && /^r\$$/i.test(normalizeMatchText(lines[index + 2])) && lines[index + 3] && isPriceAmountLine(lines[index + 3])) {
+        discountPrice = cleanSingleLineText(lines[index + 3], 80);
+        end = index + 4;
+      }
+
+      clusters.push({ start: index, end, price, discountPrice });
+      index = end - 1;
       continue;
     }
-
-    const vistaLabel = normalizeMatchText(vista).replace(/\s+/g, '');
-    const cartaoLabel = normalizeMatchText(cartao).replace(/\s+/g, '');
-
-    if (vistaLabel !== 'avista' || !/^r\$$/i.test(normalizeMatchText(discountPrefix)) || !isPriceAmountLine(discount) || cartaoLabel !== 'cartao') {
-      continue;
-    }
-
-    clusters.push({
-      start: index,
-      end: index + 6,
-      price: cleanSingleLineText(price, 80),
-      discountPrice: cleanSingleLineText(discount, 80)
-    });
-
-    index += 5;
   }
 
   return clusters;
@@ -1831,6 +1867,37 @@ function scoreProductImportRecord(item: ProductImportRecord) {
   return score;
 }
 
+function isProductGroundedInSource(product: ProductImportRecord, sourceText: string) {
+  if (!sourceText) {
+    return true; // No source text to validate against — allow through
+  }
+
+  const normalizedSource = normalizeMatchText(sourceText);
+  const nameWords = normalizeMatchText(product.name)
+    .split(' ')
+    .filter((word) => word.length >= 3);
+
+  if (!nameWords.length) {
+    return false;
+  }
+
+  // Count how many significant words from the product name appear in the source
+  const matchedWords = nameWords.filter((word) => normalizedSource.includes(word));
+  const matchRatio = matchedWords.length / nameWords.length;
+
+  // Require at least 50% of the significant words to appear in the source
+  return matchRatio >= 0.5;
+}
+
+function filterGroundedProducts(products: ProductImportRecord[], sourceText: string) {
+  if (!sourceText || !products.length) {
+    return products;
+  }
+
+  const grounded = products.filter((product) => isProductGroundedInSource(product, sourceText));
+  return grounded;
+}
+
 function fallbackIdea(topic: string, index: number) {
   return {
     title: `${topic} - ideia ${index + 1}`,
@@ -2031,6 +2098,18 @@ export async function rewriteHumanTone(input: { text: string }) {
 export async function extractProductsFromSource(input: ProductImportInput) {
   const maxItems = input.maxItems ?? 80;
   const uploadedFile = await resolveProductImportFile(input.file);
+
+  // Collect the full source text for grounding validation later
+  const groundingText = [
+    uploadedFile?.text,
+    uploadedFile?.pageTexts?.join('\n\n'),
+    input.sourceText,
+    input.prompt
+  ]
+    .filter(Boolean)
+    .join('\n\n');
+
+  // Stage 1: Local structured parsing (no AI — fastest and most reliable)
   const localCandidates = uploadedFile?.pageTexts?.length
     ? extractCatalogProductsFromPages(uploadedFile.pageTexts, maxItems)
     : uploadedFile?.text
@@ -2039,17 +2118,30 @@ export async function extractProductsFromSource(input: ProductImportInput) {
 
   if (localCandidates.length) {
     return {
-      products: localCandidates.slice(0, maxItems)
+      products: localCandidates.slice(0, maxItems),
+      _stage: 'local-parser'
     };
   }
 
+  // Guard: If we have a file but extracted no text and no base64, report clearly
+  if (input.file && !uploadedFile?.text && !uploadedFile?.pageTexts?.length && !uploadedFile?.base64 && !input.sourceText?.trim()) {
+    return {
+      products: [],
+      _stage: 'extraction-failed',
+      _error: 'Nao foi possivel extrair texto do arquivo enviado. O PDF pode conter apenas imagens ou estar protegido. Tente um PDF com texto selecionavel ou cole o conteudo no campo de texto.'
+    };
+  }
+
+  // Stage 2: AI-based extraction with strict grounding prompt
   const prompt = await buildCreatorAiPrompt([
     'Voce organiza catalogos de produtos para um SaaS de operacao de conteudo.',
     'Responda somente JSON valido.',
     `Formato esperado: {"products":[{"name":"","benefits":"","audience":"","price":"","discountPrice":"","restrictions":""}]}.`,
     `Retorne no maximo ${maxItems} produtos.`,
-    'Se encontrar qualquer indicio de produto, extraia mesmo que algum campo fique vazio.',
-    'Nunca responda que nao encontrou produtos se houver nome, preco, descricao, beneficio, restricao ou qualquer sinal de catalogo.',
+    'REGRA CRITICA: Extraia SOMENTE produtos cujos nomes aparecem explicitamente no texto fornecido.',
+    'NAO invente, deduza ou crie nomes de produtos que nao estejam no conteudo.',
+    'Se um campo (beneficios, preco, etc.) nao estiver claro no texto, deixe-o vazio em vez de inventar.',
+    'Se o conteudo nao contiver produtos identificaveis, retorne {"products":[]}.',
     'Prefira uma saida curta e util em vez de um relatorio longo.',
     input.prompt ? `Pedido do usuario: ${input.prompt}` : null,
     input.sourceText ? `Texto base: ${input.sourceText}` : null,
@@ -2066,7 +2158,8 @@ export async function extractProductsFromSource(input: ProductImportInput) {
     uploadedFile && !uploadedFile.pageTexts?.length && !uploadedFile.text ? buildAnthropicImportContent(uploadedFile, prompt) : null;
   const candidates: Array<{ provider: string; products: ProductImportRecord[] }> = [];
 
-  if ((uploadedFile?.text || uploadedFile?.base64) && (process.env.ANTHROPIC_API_KEY || process.env.GEMINI_API_KEY)) {
+  // Strategy A: Text-based AI extraction (only if we have text content)
+  if ((uploadedFile?.text || uploadedFile?.pageTexts?.length) && (process.env.ANTHROPIC_API_KEY || process.env.GEMINI_API_KEY)) {
     try {
       const textResponse = await callProvider(prompt);
       if (textResponse) {
@@ -2080,6 +2173,7 @@ export async function extractProductsFromSource(input: ProductImportInput) {
     }
   }
 
+  // Strategy B: Vision-based Anthropic extraction (for image-only PDFs)
   if (anthropicContent && process.env.ANTHROPIC_API_KEY) {
     try {
       const payload = await callAnthropicMessages(anthropicContent, {
@@ -2096,6 +2190,7 @@ export async function extractProductsFromSource(input: ProductImportInput) {
     }
   }
 
+  // Strategy C: Vision-based Gemini extraction
   if (uploadedFile?.base64 && process.env.GEMINI_API_KEY) {
     try {
       const response = await callGeminiWithParts([
@@ -2115,38 +2210,56 @@ export async function extractProductsFromSource(input: ProductImportInput) {
         products: extractProductImportRecordsFromResponse(response, maxItems)
       });
     } catch {
-      // Fall back to the regular provider chain below.
+      // Fall back below.
     }
   }
 
-  const response = await callProvider(prompt);
+  // Strategy D: Only run fallback if no candidates produced results
+  const hasAnyCandidateProducts = candidates.some((c) => c.products.length > 0);
+  if (!hasAnyCandidateProducts) {
+    try {
+      const response = await callProvider(prompt);
+      candidates.push({
+        provider: 'fallback',
+        products: extractProductImportRecordsFromResponse(response, maxItems)
+      });
+    } catch {
+      // No more strategies available.
+    }
+  }
 
-  candidates.push({
-    provider: 'fallback',
-    products: extractProductImportRecordsFromResponse(response, maxItems)
-  });
+  // Apply grounding validation to ALL AI candidates — remove hallucinated products
+  const groundedCandidates = candidates.map((candidate) => ({
+    ...candidate,
+    products: filterGroundedProducts(candidate.products, groundingText)
+  }));
 
-  const rankedCandidates = candidates
+  // Rank candidates — vision providers get higher bonus since they see the actual document
+  const rankedCandidates = groundedCandidates
     .map((candidate) => ({
       ...candidate,
       score:
         scoreProductImportRecords(candidate.products) +
-        (candidate.provider === 'local' ? 18 : candidate.provider === 'ai-text' ? 8 : candidate.provider === 'anthropic' ? 4 : 0)
+        (candidate.provider === 'anthropic' ? 6 : candidate.provider === 'gemini' ? 4 : candidate.provider === 'ai-text' ? 3 : 0)
     }))
     .sort((left, right) => right.score - left.score || right.products.length - left.products.length);
 
   const bestCandidate = rankedCandidates[0]?.products ?? [];
   if (bestCandidate.length) {
     return {
-      products: bestCandidate.slice(0, maxItems)
+      products: bestCandidate.slice(0, maxItems),
+      _stage: `ai-${rankedCandidates[0]?.provider ?? 'unknown'}`
     };
   }
 
+  // Last resort: text-based parsing of whatever content we have
   const fallbackText = uploadedFile?.text ?? input.sourceText ?? input.prompt ?? '';
   const fallbackProducts = extractProductImportRecordsFromText(fallbackText, maxItems);
 
   return {
-    products: fallbackProducts
+    products: fallbackProducts,
+    _stage: fallbackProducts.length ? 'text-fallback' : 'no-products-found',
+    _error: fallbackProducts.length ? undefined : 'Nenhum produto identificado no conteudo enviado. Verifique se o arquivo contem nomes de produtos, precos ou descricoes.'
   };
 }
 

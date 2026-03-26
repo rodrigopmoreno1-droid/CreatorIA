@@ -71,9 +71,16 @@ function normalizeImportedProducts(payload: unknown): ImportedProductDraft[] {
 
       const rawItem = item as Record<string, unknown>;
 
+      const name = typeof rawItem.name === 'string' ? rawItem.name.trim() : '';
+
+      // Skip products without a real name or with generic fallback names
+      if (!name || /^Produto\s+\d+$/i.test(name)) {
+        return null;
+      }
+
       return {
         id: `imported-${Date.now()}-${index}`,
-        name: typeof rawItem.name === 'string' ? rawItem.name : `Produto ${index + 1}`,
+        name,
         benefits: typeof rawItem.benefits === 'string' ? rawItem.benefits : '',
         audience: typeof rawItem.audience === 'string' ? rawItem.audience : '',
         price: typeof rawItem.price === 'string' || typeof rawItem.price === 'number' ? String(rawItem.price) : '',
@@ -407,13 +414,20 @@ export function ProductsWorkspace({ workspace, initialProducts }: { workspace: s
           throw lastError;
         }
 
-        nextDrafts = normalizeImportedProducts(payload?.content);
+        const content = payload?.content as { products?: unknown; _error?: string; _stage?: string } | undefined;
+
+        // Surface extraction-stage errors from the backend
+        if (content?._error && (!Array.isArray(content.products) || !content.products.length)) {
+          throw new Error(content._error);
+        }
+
+        nextDrafts = normalizeImportedProducts(content);
         lastError = null;
         break;
       }
 
       if (!nextDrafts.length) {
-        throw new Error('Nao consegui extrair produtos com seguranca desse material. Tente um PDF mais limpo ou complemente no campo de texto.');
+        throw new Error('Nenhum produto identificado no conteudo enviado. Verifique se o arquivo contem nomes de produtos, precos ou descricoes claras.');
       }
 
       if (importRunRef.current === runId) {
