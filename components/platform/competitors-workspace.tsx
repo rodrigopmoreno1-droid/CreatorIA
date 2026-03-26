@@ -1,7 +1,8 @@
 "use client";
 
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import {
+  AlertCircle,
   BookOpen,
   Brain,
   ExternalLink,
@@ -11,26 +12,32 @@ import {
   Loader2,
   Pencil,
   Plus,
+  RefreshCcw,
   Search,
+  Sparkles,
   Tag,
   Trash2,
-  X,
+  X
 } from 'lucide-react';
 import { toast } from 'sonner';
 
+import { PageIntro } from '@/components/platform/page-intro';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
-import { PageIntro } from '@/components/platform/page-intro';
+import { buildReferencePayloadFromInsight } from '@/lib/competitor-intelligence';
 import { cn } from '@/lib/utils';
+import type {
+  CompetitorAnalysis,
+  CompetitorAnalysisStatus,
+  CompetitorInsight,
+  CompetitorRecord,
+  CompetitorType,
+  ContentReferenceRecord
+} from '@/types/competitor-intelligence';
 
-// ─── Types ────────────────────────────────────────────────────────────────────
-
-type CompetitorType = 'competitor' | 'reference' | 'inspiration';
-
-type Competitor = {
-  id: string;
+type CompetitorFormState = {
   name: string;
   handle: string;
   website: string;
@@ -38,15 +45,10 @@ type Competitor = {
   logoUrl: string;
   niche: string;
   notes: string;
-  aiAnalysis: string;
   tags: string[];
-  createdAt: string;
 };
 
-type ContentReference = {
-  id: string;
-  competitorId: string;
-  competitorName: string;
+type ReferenceFormState = {
   title: string;
   content: string;
   hookType: string;
@@ -55,24 +57,32 @@ type ContentReference = {
   imageUrl: string;
   notes: string;
   liked: boolean;
-  savedAt: string;
 };
-
-type CompetitorFormState = Omit<Competitor, 'id' | 'createdAt' | 'aiAnalysis'>;
-type ReferenceFormState = Omit<ContentReference, 'id' | 'competitorId' | 'competitorName' | 'savedAt'>;
-
-// ─── Constants ────────────────────────────────────────────────────────────────
 
 const TYPE_LABELS: Record<CompetitorType, string> = {
   competitor: 'Concorrente',
-  reference: 'Referência',
-  inspiration: 'Inspiração',
+  reference: 'Referencia',
+  inspiration: 'Inspiracao'
 };
 
 const TYPE_BADGE: Record<CompetitorType, string> = {
-  competitor: 'bg-red-50 text-red-700 border border-red-200',
-  reference: 'bg-blue-50 text-blue-700 border border-blue-200',
-  inspiration: 'bg-purple-50 text-purple-700 border border-purple-200',
+  competitor: 'border-red-200 bg-red-50 text-red-700',
+  reference: 'border-blue-200 bg-blue-50 text-blue-700',
+  inspiration: 'border-violet-200 bg-violet-50 text-violet-700'
+};
+
+const ANALYSIS_LABELS: Record<CompetitorAnalysisStatus, string> = {
+  idle: 'Sem analise',
+  running: 'Analisando',
+  completed: 'Analise pronta',
+  error: 'Erro'
+};
+
+const ANALYSIS_BADGES: Record<CompetitorAnalysisStatus, string> = {
+  idle: 'border-zinc-200 bg-zinc-50 text-zinc-500',
+  running: 'border-amber-200 bg-amber-50 text-amber-700',
+  completed: 'border-emerald-200 bg-emerald-50 text-emerald-700',
+  error: 'border-rose-200 bg-rose-50 text-rose-700'
 };
 
 const HOOK_TYPES = [
@@ -80,67 +90,20 @@ const HOOK_TYPES = [
   'Erro comum',
   'Mito',
   'Verdade chocante',
-  'Comparação',
+  'Comparacao',
   'Antes e depois',
   'Lista',
   'Alerta',
   'Segredo',
-  'História pessoal',
+  'Historia pessoal',
   'POV',
   'Pergunta forte',
-  'Frase polêmica',
-  'Outro',
+  'Frase polemica',
+  'Outro'
 ];
 
-const CTA_TYPES = ['Vendas', 'Engajamento', 'Comentários', 'Salvar', 'Compartilhar', 'Seguir', 'Direct', 'Outro'];
-const FORMAT_TYPES = ['Reels', 'Stories', 'Carrossel', 'Post', 'Outro'];
-const COMPETITOR_TYPES: { value: CompetitorType; label: string }[] = [
-  { value: 'competitor', label: 'Concorrente' },
-  { value: 'reference', label: 'Referência' },
-  { value: 'inspiration', label: 'Inspiração' },
-];
-
-// ─── Storage helpers ──────────────────────────────────────────────────────────
-
-function competitorsKey(workspace: string) {
-  return `creatorai:competitors:${workspace}`;
-}
-
-function referencesKey(workspace: string) {
-  return `creatorai:references:${workspace}`;
-}
-
-function loadCompetitors(workspace: string): Competitor[] {
-  if (typeof window === 'undefined') return [];
-  try {
-    const raw = localStorage.getItem(competitorsKey(workspace));
-    return raw ? (JSON.parse(raw) as Competitor[]) : [];
-  } catch {
-    return [];
-  }
-}
-
-function saveCompetitors(workspace: string, items: Competitor[]) {
-  try {
-    localStorage.setItem(competitorsKey(workspace), JSON.stringify(items));
-  } catch {}
-}
-
-function loadReferences(workspace: string): ContentReference[] {
-  if (typeof window === 'undefined') return [];
-  try {
-    const raw = localStorage.getItem(referencesKey(workspace));
-    return raw ? (JSON.parse(raw) as ContentReference[]) : [];
-  } catch {
-    return [];
-  }
-}
-
-function saveReferences(workspace: string, items: ContentReference[]) {
-  try {
-    localStorage.setItem(referencesKey(workspace), JSON.stringify(items));
-  } catch {}
-}
+const CTA_TYPES = ['Vendas', 'Engajamento', 'Comentarios', 'Salvar', 'Compartilhar', 'Seguir', 'Direct', 'Outro'];
+const FORMAT_TYPES = ['Reels', 'Stories', 'Carrossel', 'Post', 'Video curto', 'Outro'];
 
 function emptyCompetitorForm(): CompetitorFormState {
   return {
@@ -151,7 +114,7 @@ function emptyCompetitorForm(): CompetitorFormState {
     logoUrl: '',
     niche: '',
     notes: '',
-    tags: [],
+    tags: []
   };
 }
 
@@ -164,87 +127,188 @@ function emptyReferenceForm(): ReferenceFormState {
     format: 'Reels',
     imageUrl: '',
     notes: '',
-    liked: false,
+    liked: true
   };
 }
 
-// ─── CompetitorCard ───────────────────────────────────────────────────────────
+function formatDateLabel(value: string) {
+  if (!value) {
+    return 'Agora';
+  }
+
+  const parsed = new Date(value);
+
+  if (Number.isNaN(parsed.getTime())) {
+    return 'Data indisponivel';
+  }
+
+  return new Intl.DateTimeFormat('pt-BR', {
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit'
+  }).format(parsed);
+}
+
+function AnalysisStatusBadge({ status }: { status: CompetitorAnalysisStatus }) {
+  return (
+    <span className={cn('inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-semibold', ANALYSIS_BADGES[status])}>
+      {status === 'running' ? <Loader2 className="mr-1 h-3 w-3 animate-spin" /> : null}
+      {ANALYSIS_LABELS[status]}
+    </span>
+  );
+}
 
 function CompetitorCard({
   competitor,
-  onClick,
+  referenceCount,
+  onClick
 }: {
-  competitor: Competitor;
+  competitor: CompetitorRecord;
+  referenceCount: number;
   onClick: () => void;
 }) {
   const initial = competitor.name.charAt(0).toUpperCase();
+
   return (
-    <Card
-      className="cursor-pointer rounded-2xl border border-zinc-200 bg-white shadow-sm transition-shadow hover:shadow-md"
-      onClick={onClick}
-    >
-      <CardContent className="p-4">
+    <Card className="cursor-pointer rounded-2xl border border-zinc-200 bg-white shadow-sm transition hover:-translate-y-0.5 hover:shadow-md" onClick={onClick}>
+      <CardContent className="space-y-3 p-4">
         <div className="flex items-start gap-3">
           {competitor.logoUrl ? (
             // eslint-disable-next-line @next/next/no-img-element
-            <img
-              src={competitor.logoUrl}
-              alt={competitor.name}
-              className="h-10 w-10 rounded-xl object-cover flex-shrink-0"
-            />
+            <img src={competitor.logoUrl} alt={competitor.name} className="h-11 w-11 rounded-xl object-cover" />
           ) : (
-            <div className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-xl bg-zinc-100 text-sm font-bold text-zinc-500">
+            <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-zinc-100 text-sm font-bold text-zinc-500">
               {initial}
             </div>
           )}
           <div className="min-w-0 flex-1">
-            <div className="flex items-start justify-between gap-2">
+            <div className="flex flex-wrap items-start justify-between gap-2">
               <p className="truncate text-sm font-semibold text-zinc-900">{competitor.name}</p>
-              <span className={cn('rounded-full px-2 py-0.5 text-[10px] font-semibold whitespace-nowrap', TYPE_BADGE[competitor.type])}>
+              <span className={cn('rounded-full border px-2 py-0.5 text-[10px] font-semibold', TYPE_BADGE[competitor.type])}>
                 {TYPE_LABELS[competitor.type]}
               </span>
             </div>
-            {competitor.handle && (
+            {competitor.handle ? (
               <p className="mt-0.5 text-xs text-zinc-400">@{competitor.handle}</p>
-            )}
-            {competitor.niche && (
-              <p className="mt-1 text-xs text-zinc-500">{competitor.niche}</p>
-            )}
+            ) : null}
+            {competitor.niche ? <p className="mt-1 text-xs text-zinc-500">{competitor.niche}</p> : null}
           </div>
         </div>
-        {competitor.tags.length > 0 && (
-          <div className="mt-3 flex flex-wrap gap-1">
+
+        <div className="flex flex-wrap items-center gap-2">
+          <AnalysisStatusBadge status={competitor.analysisStatus} />
+          <span className="rounded-full border border-zinc-200 bg-zinc-50 px-2 py-0.5 text-[10px] font-medium text-zinc-500">
+            {referenceCount} referencia{referenceCount === 1 ? '' : 's'}
+          </span>
+        </div>
+
+        {competitor.tags.length ? (
+          <div className="flex flex-wrap gap-1">
             {competitor.tags.slice(0, 4).map((tag) => (
               <span key={tag} className="rounded-full bg-zinc-100 px-2 py-0.5 text-[10px] text-zinc-600">
                 {tag}
               </span>
             ))}
-            {competitor.tags.length > 4 && (
-              <span className="rounded-full bg-zinc-100 px-2 py-0.5 text-[10px] text-zinc-400">
-                +{competitor.tags.length - 4}
-              </span>
-            )}
           </div>
-        )}
-        {competitor.notes && (
-          <p className="mt-3 text-[11px] leading-relaxed text-zinc-400 line-clamp-2">
-            {competitor.notes.length > 80 ? competitor.notes.slice(0, 80) + '…' : competitor.notes}
+        ) : null}
+
+        {competitor.analysis?.overview ? (
+          <p className="text-[11px] leading-relaxed text-zinc-500 line-clamp-2">
+            {competitor.analysis.overview.positioning}
           </p>
-        )}
+        ) : competitor.notes ? (
+          <p className="text-[11px] leading-relaxed text-zinc-400 line-clamp-2">{competitor.notes}</p>
+        ) : null}
       </CardContent>
     </Card>
   );
 }
 
-// ─── CompetitorFormModal ──────────────────────────────────────────────────────
+function ReferenceCard({
+  reference,
+  showCompetitor,
+  onToggleLike,
+  onDelete
+}: {
+  reference: ContentReferenceRecord;
+  showCompetitor: boolean;
+  onToggleLike: () => void;
+  onDelete?: () => void;
+}) {
+  return (
+    <div className="rounded-2xl border border-zinc-200 bg-white p-4">
+      <div className="flex items-start gap-3">
+        <div className="flex-1 space-y-2">
+          <div className="flex flex-wrap items-center gap-2">
+            <p className="text-sm font-semibold text-zinc-900">{reference.title || 'Referencia salva'}</p>
+            {reference.category ? (
+              <span className="rounded-full border border-zinc-200 bg-zinc-50 px-2 py-0.5 text-[10px] font-medium text-zinc-500">
+                {reference.category}
+              </span>
+            ) : null}
+            {reference.format ? (
+              <span className="rounded-full border border-blue-200 bg-blue-50 px-2 py-0.5 text-[10px] font-medium text-blue-700">
+                {reference.format}
+              </span>
+            ) : null}
+          </div>
+
+          {showCompetitor && reference.competitorName ? (
+            <p className="text-[11px] text-zinc-400">de {reference.competitorName}</p>
+          ) : null}
+
+          <p className="whitespace-pre-wrap text-sm leading-relaxed text-zinc-700">{reference.content}</p>
+
+          {reference.notes ? <p className="text-xs leading-relaxed text-zinc-500">{reference.notes}</p> : null}
+
+          <div className="flex flex-wrap items-center gap-2 text-[11px] text-zinc-400">
+            {reference.hookType ? <span>Gancho: {reference.hookType}</span> : null}
+            {reference.ctaType ? <span>CTA: {reference.ctaType}</span> : null}
+            <span>Salva em {formatDateLabel(reference.savedAt)}</span>
+            {reference.sourceUrl ? (
+              <a href={reference.sourceUrl} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-zinc-500 hover:text-zinc-800">
+                Ver origem <ExternalLink className="h-3 w-3" />
+              </a>
+            ) : null}
+          </div>
+        </div>
+
+        <div className="flex flex-col gap-2">
+          <button
+            type="button"
+            onClick={onToggleLike}
+            className={cn(
+              'rounded-full border p-2 transition',
+              reference.liked
+                ? 'border-pink-200 bg-pink-50 text-pink-600'
+                : 'border-zinc-200 bg-white text-zinc-400 hover:text-pink-500'
+            )}
+            title={reference.liked ? 'Remover do banco' : 'Salvar no banco'}
+          >
+            <Heart className={cn('h-4 w-4', reference.liked && 'fill-current')} />
+          </button>
+          {onDelete ? (
+            <button type="button" onClick={onDelete} className="rounded-full border border-zinc-200 bg-white p-2 text-zinc-400 transition hover:text-rose-500">
+              <Trash2 className="h-4 w-4" />
+            </button>
+          ) : null}
+        </div>
+      </div>
+    </div>
+  );
+}
 
 function CompetitorFormModal({
+  workspace,
   initial,
   onSave,
-  onClose,
+  onClose
 }: {
-  initial?: Competitor;
-  onSave: (data: CompetitorFormState) => void;
+  workspace: string;
+  initial?: CompetitorRecord;
+  onSave: (data: CompetitorFormState) => Promise<void>;
   onClose: () => void;
 }) {
   const [form, setForm] = useState<CompetitorFormState>(() =>
@@ -257,136 +321,184 @@ function CompetitorFormModal({
           logoUrl: initial.logoUrl,
           niche: initial.niche,
           notes: initial.notes,
-          tags: initial.tags,
+          tags: initial.tags
         }
       : emptyCompetitorForm()
   );
   const [tagsInput, setTagsInput] = useState(initial?.tags.join(', ') ?? '');
+  const [saving, setSaving] = useState(false);
+  const [autofillingLogo, setAutofillingLogo] = useState(false);
+  const [logoTouched, setLogoTouched] = useState(Boolean(initial?.logoUrl));
 
   function field<K extends keyof CompetitorFormState>(key: K, value: CompetitorFormState[K]) {
-    setForm((f) => ({ ...f, [key]: value }));
+    setForm((current) => ({ ...current, [key]: value }));
   }
 
-  function handleSubmit(e: React.FormEvent) {
-    e.preventDefault();
-    if (!form.name.trim()) {
-      toast.error('Nome é obrigatório.');
+  useEffect(() => {
+    if (logoTouched) {
       return;
     }
-    const tags = tagsInput
-      .split(',')
-      .map((t) => t.trim())
-      .filter(Boolean);
-    onSave({ ...form, tags });
+
+    if (!form.website.trim() && !form.handle.trim()) {
+      return;
+    }
+
+    const controller = new AbortController();
+    const timeout = window.setTimeout(async () => {
+      setAutofillingLogo(true);
+      try {
+        const params = new URLSearchParams({
+          website: form.website,
+          handle: form.handle,
+          name: form.name,
+          niche: form.niche
+        });
+        const response = await fetch(`/api/workspaces/${workspace}/competitors/logo?${params.toString()}`, {
+          signal: controller.signal
+        });
+        const payload = (await response.json().catch(() => null)) as { logoUrl?: string } | null;
+
+        if (response.ok && payload?.logoUrl && !logoTouched) {
+          setForm((current) => ({ ...current, logoUrl: payload.logoUrl ?? current.logoUrl }));
+        }
+      } catch {
+        // noop
+      } finally {
+        setAutofillingLogo(false);
+      }
+    }, 450);
+
+    return () => {
+      controller.abort();
+      window.clearTimeout(timeout);
+    };
+  }, [form.website, form.handle, form.name, form.niche, logoTouched, workspace]);
+
+  async function handleSubmit(event: React.FormEvent) {
+    event.preventDefault();
+    if (!form.name.trim()) {
+      toast.error('Nome do perfil e obrigatorio.');
+      return;
+    }
+
+    setSaving(true);
+    try {
+      await onSave({
+        ...form,
+        tags: tagsInput
+          .split(',')
+          .map((tag) => tag.trim())
+          .filter(Boolean)
+      });
+      onClose();
+    } finally {
+      setSaving(false);
+    }
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm">
-      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl max-h-[90vh] overflow-y-auto mx-4">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 backdrop-blur-sm">
+      <div className="max-h-[90vh] w-full max-w-2xl overflow-y-auto rounded-2xl bg-white shadow-2xl">
         <div className="flex items-center justify-between border-b border-zinc-100 px-6 py-4">
-          <h2 className="text-base font-semibold text-zinc-900">
-            {initial ? 'Editar perfil' : 'Adicionar perfil'}
-          </h2>
-          <button onClick={onClose} className="text-zinc-400 hover:text-zinc-600 transition-colors">
+          <div>
+            <h2 className="text-base font-semibold text-zinc-900">{initial ? 'Editar perfil' : 'Adicionar perfil'}</h2>
+            <p className="mt-0.5 text-xs text-zinc-400">Cadastro com logo automatico via site ou Instagram quando possivel.</p>
+          </div>
+          <button onClick={onClose} className="text-zinc-400 transition hover:text-zinc-600">
             <X className="h-5 w-5" />
           </button>
         </div>
+
         <form onSubmit={handleSubmit} className="space-y-4 p-6">
           <div>
             <label className="mb-1.5 block text-xs font-medium text-zinc-700">Nome *</label>
-            <Input
-              value={form.name}
-              onChange={(e) => field('name', e.target.value)}
-              placeholder="Nome do perfil"
-              required
-            />
+            <Input value={form.name} onChange={(event) => field('name', event.target.value)} placeholder="Nome do perfil" required />
           </div>
-          <div>
-            <label className="mb-1.5 block text-xs font-medium text-zinc-700">@Instagram</label>
-            <Input
-              value={form.handle}
-              onChange={(e) => field('handle', e.target.value.replace(/^@/, ''))}
-              placeholder="handle (sem @)"
-            />
+
+          <div className="grid gap-4 sm:grid-cols-2">
+            <div>
+              <label className="mb-1.5 block text-xs font-medium text-zinc-700">@Instagram</label>
+              <Input value={form.handle} onChange={(event) => field('handle', event.target.value.replace(/^@/, ''))} placeholder="handle sem @" />
+            </div>
+            <div>
+              <label className="mb-1.5 block text-xs font-medium text-zinc-700">Website</label>
+              <Input value={form.website} onChange={(event) => field('website', event.target.value)} placeholder="https://..." type="url" />
+            </div>
           </div>
+
           <div>
             <label className="mb-1.5 block text-xs font-medium text-zinc-700">Tipo</label>
             <div className="flex gap-2">
-              {COMPETITOR_TYPES.map((opt) => (
+              {(['competitor', 'reference', 'inspiration'] as CompetitorType[]).map((value) => (
                 <button
-                  key={opt.value}
+                  key={value}
                   type="button"
-                  onClick={() => field('type', opt.value)}
+                  onClick={() => field('type', value)}
                   className={cn(
-                    'flex-1 rounded-xl border px-3 py-2 text-xs font-medium transition-colors',
-                    form.type === opt.value
-                      ? TYPE_BADGE[opt.value] + ' border-current'
-                      : 'border-zinc-200 text-zinc-500 hover:border-zinc-300'
+                    'flex-1 rounded-xl border px-3 py-2 text-xs font-medium transition',
+                    form.type === value ? TYPE_BADGE[value] : 'border-zinc-200 text-zinc-500 hover:border-zinc-300'
                   )}
                 >
-                  {opt.label}
+                  {TYPE_LABELS[value]}
                 </button>
               ))}
             </div>
           </div>
-          <div>
-            <label className="mb-1.5 block text-xs font-medium text-zinc-700">Website</label>
-            <Input
-              value={form.website}
-              onChange={(e) => field('website', e.target.value)}
-              placeholder="https://..."
-              type="url"
-            />
+
+          <div className="grid gap-4 sm:grid-cols-[1fr_120px]">
+            <div>
+              <label className="mb-1.5 block text-xs font-medium text-zinc-700">
+                URL do logo {autofillingLogo ? <Loader2 className="ml-1 inline h-3 w-3 animate-spin" /> : null}
+              </label>
+              <Input
+                value={form.logoUrl}
+                onChange={(event) => {
+                  setLogoTouched(true);
+                  field('logoUrl', event.target.value);
+                }}
+                placeholder="Preenchido automaticamente quando possivel"
+              />
+            </div>
+            <div className="flex items-end justify-center">
+              {form.logoUrl ? (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img src={form.logoUrl} alt="Preview do logo" className="h-14 w-14 rounded-2xl object-cover ring-1 ring-zinc-200" />
+              ) : (
+                <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-zinc-100 text-xs font-semibold text-zinc-400">
+                  Logo
+                </div>
+              )}
+            </div>
           </div>
+
           <div>
             <label className="mb-1.5 block text-xs font-medium text-zinc-700">Nicho</label>
-            <Input
-              value={form.niche}
-              onChange={(e) => field('niche', e.target.value)}
-              placeholder="Ex: Finanças pessoais, Moda, Fitness..."
-            />
+            <Input value={form.niche} onChange={(event) => field('niche', event.target.value)} placeholder="Ex.: emagrecimento, moda, marketing..." />
           </div>
+
           <div>
-            <label className="mb-1.5 block text-xs font-medium text-zinc-700">URL do logo</label>
-            <Input
-              value={form.logoUrl}
-              onChange={(e) => field('logoUrl', e.target.value)}
-              placeholder="https://..."
-            />
-            {form.logoUrl && (
-              // eslint-disable-next-line @next/next/no-img-element
-              <img
-                src={form.logoUrl}
-                alt="preview"
-                className="mt-2 h-12 w-12 rounded-xl object-cover"
-                onError={(e) => {
-                  (e.currentTarget as HTMLImageElement).style.display = 'none';
-                }}
-              />
-            )}
+            <label className="mb-1.5 block text-xs font-medium text-zinc-700">Tags</label>
+            <Input value={tagsInput} onChange={(event) => setTagsInput(event.target.value)} placeholder="Ex.: reels, storytelling, humor, conversao" />
           </div>
-          <div>
-            <label className="mb-1.5 block text-xs font-medium text-zinc-700">Tags (separadas por vírgula)</label>
-            <Input
-              value={tagsInput}
-              onChange={(e) => setTagsInput(e.target.value)}
-              placeholder="Ex: educação, reels, viral"
-            />
-          </div>
+
           <div>
             <label className="mb-1.5 block text-xs font-medium text-zinc-700">Notas</label>
             <Textarea
               value={form.notes}
-              onChange={(e) => field('notes', e.target.value)}
-              placeholder="Estratégia deles, o que fazem bem, estilo de comunicação..."
+              onChange={(event) => field('notes', event.target.value)}
+              placeholder="Contexto, percepcoes, o que esse perfil representa para a estrategia..."
               rows={4}
             />
           </div>
+
           <div className="flex justify-end gap-2 pt-2">
             <Button type="button" variant="outline" onClick={onClose}>
               Cancelar
             </Button>
-            <Button type="submit">Salvar</Button>
+            <Button type="submit" disabled={saving}>
+              {saving ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+              {initial ? 'Salvar alteracoes' : 'Salvar perfil'}
+            </Button>
           </div>
         </form>
       </div>
@@ -394,137 +506,120 @@ function CompetitorFormModal({
   );
 }
 
-// ─── AddReferenceModal ────────────────────────────────────────────────────────
-
 function AddReferenceModal({
-  competitorId,
   competitorName,
   onSave,
-  onClose,
+  onClose
 }: {
-  competitorId: string;
   competitorName: string;
-  onSave: (data: ReferenceFormState) => void;
+  onSave: (data: ReferenceFormState) => Promise<void>;
   onClose: () => void;
 }) {
   const [form, setForm] = useState<ReferenceFormState>(emptyReferenceForm);
+  const [saving, setSaving] = useState(false);
 
   function field<K extends keyof ReferenceFormState>(key: K, value: ReferenceFormState[K]) {
-    setForm((f) => ({ ...f, [key]: value }));
+    setForm((current) => ({ ...current, [key]: value }));
   }
 
-  function handleSubmit(e: React.FormEvent) {
-    e.preventDefault();
+  async function handleSubmit(event: React.FormEvent) {
+    event.preventDefault();
     if (!form.content.trim()) {
-      toast.error('Conteúdo é obrigatório.');
+      toast.error('Conteudo da referencia e obrigatorio.');
       return;
     }
-    onSave(form);
+
+    setSaving(true);
+    try {
+      await onSave(form);
+      onClose();
+    } finally {
+      setSaving(false);
+    }
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm">
-      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl max-h-[90vh] overflow-y-auto mx-4">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 backdrop-blur-sm">
+      <div className="max-h-[90vh] w-full max-w-2xl overflow-y-auto rounded-2xl bg-white shadow-2xl">
         <div className="flex items-center justify-between border-b border-zinc-100 px-6 py-4">
           <div>
-            <h2 className="text-base font-semibold text-zinc-900">Adicionar referência</h2>
-            <p className="text-xs text-zinc-400 mt-0.5">de {competitorName}</p>
+            <h2 className="text-base font-semibold text-zinc-900">Adicionar referencia</h2>
+            <p className="mt-0.5 text-xs text-zinc-400">de {competitorName}</p>
           </div>
-          <button onClick={onClose} className="text-zinc-400 hover:text-zinc-600 transition-colors">
+          <button onClick={onClose} className="text-zinc-400 transition hover:text-zinc-600">
             <X className="h-5 w-5" />
           </button>
         </div>
+
         <form onSubmit={handleSubmit} className="space-y-4 p-6">
           <div>
-            <label className="mb-1.5 block text-xs font-medium text-zinc-700">Título</label>
-            <Input
-              value={form.title}
-              onChange={(e) => field('title', e.target.value)}
-              placeholder="Descrição breve da referência"
-            />
+            <label className="mb-1.5 block text-xs font-medium text-zinc-700">Titulo</label>
+            <Input value={form.title} onChange={(event) => field('title', event.target.value)} placeholder="Descricao curta da referencia" />
           </div>
+
           <div>
-            <label className="mb-1.5 block text-xs font-medium text-zinc-700">Conteúdo *</label>
-            <Textarea
-              value={form.content}
-              onChange={(e) => field('content', e.target.value)}
-              placeholder="O gancho, legenda ou texto que te inspirou..."
-              rows={5}
-              required
-            />
+            <label className="mb-1.5 block text-xs font-medium text-zinc-700">Conteudo *</label>
+            <Textarea value={form.content} onChange={(event) => field('content', event.target.value)} rows={5} placeholder="Gancho, estrutura, insight ou CTA que merece ir para o banco..." required />
           </div>
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+
+          <div className="grid gap-4 sm:grid-cols-3">
             <div>
               <label className="mb-1.5 block text-xs font-medium text-zinc-700">Tipo de gancho</label>
-              <select
-                value={form.hookType}
-                onChange={(e) => field('hookType', e.target.value)}
-                className="w-full rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-900 focus:outline-none focus:ring-2 focus:ring-zinc-300"
-              >
-                {HOOK_TYPES.map((h) => (
-                  <option key={h} value={h}>{h}</option>
+              <select value={form.hookType} onChange={(event) => field('hookType', event.target.value)} className="w-full rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-900">
+                {HOOK_TYPES.map((item) => (
+                  <option key={item} value={item}>
+                    {item}
+                  </option>
                 ))}
               </select>
             </div>
             <div>
               <label className="mb-1.5 block text-xs font-medium text-zinc-700">CTA</label>
-              <select
-                value={form.ctaType}
-                onChange={(e) => field('ctaType', e.target.value)}
-                className="w-full rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-900 focus:outline-none focus:ring-2 focus:ring-zinc-300"
-              >
-                {CTA_TYPES.map((c) => (
-                  <option key={c} value={c}>{c}</option>
+              <select value={form.ctaType} onChange={(event) => field('ctaType', event.target.value)} className="w-full rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-900">
+                {CTA_TYPES.map((item) => (
+                  <option key={item} value={item}>
+                    {item}
+                  </option>
                 ))}
               </select>
             </div>
             <div>
               <label className="mb-1.5 block text-xs font-medium text-zinc-700">Formato</label>
-              <select
-                value={form.format}
-                onChange={(e) => field('format', e.target.value)}
-                className="w-full rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-900 focus:outline-none focus:ring-2 focus:ring-zinc-300"
-              >
-                {FORMAT_TYPES.map((f) => (
-                  <option key={f} value={f}>{f}</option>
+              <select value={form.format} onChange={(event) => field('format', event.target.value)} className="w-full rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-900">
+                {FORMAT_TYPES.map((item) => (
+                  <option key={item} value={item}>
+                    {item}
+                  </option>
                 ))}
               </select>
             </div>
           </div>
+
           <div>
-            <label className="mb-1.5 block text-xs font-medium text-zinc-700">URL da imagem (opcional)</label>
-            <Input
-              value={form.imageUrl}
-              onChange={(e) => field('imageUrl', e.target.value)}
-              placeholder="https://..."
-            />
+            <label className="mb-1.5 block text-xs font-medium text-zinc-700">URL da imagem</label>
+            <Input value={form.imageUrl} onChange={(event) => field('imageUrl', event.target.value)} placeholder="https://..." />
           </div>
+
           <div>
             <label className="mb-1.5 block text-xs font-medium text-zinc-700">Notas internas</label>
-            <Textarea
-              value={form.notes}
-              onChange={(e) => field('notes', e.target.value)}
-              placeholder="O que te inspirou, como adaptar..."
-              rows={2}
-            />
+            <Textarea value={form.notes} onChange={(event) => field('notes', event.target.value)} rows={3} placeholder="Como adaptar, por que isso funciona, quando usar..." />
           </div>
+
           <div className="flex items-center gap-2">
-            <input
-              id="liked-toggle"
-              type="checkbox"
-              checked={form.liked}
-              onChange={(e) => field('liked', e.target.checked)}
-              className="h-4 w-4 rounded border-zinc-300 accent-pink-500"
-            />
-            <label htmlFor="liked-toggle" className="text-sm text-zinc-700 cursor-pointer flex items-center gap-1">
-              <Heart className="h-3.5 w-3.5 text-pink-500" /> Adicionar ao banco de referências (curtidas)
+            <input id="reference-liked" type="checkbox" checked={form.liked} onChange={(event) => field('liked', event.target.checked)} className="h-4 w-4 rounded border-zinc-300 accent-pink-500" />
+            <label htmlFor="reference-liked" className="text-sm text-zinc-700">
+              Salvar direto no Banco de Referencias
             </label>
           </div>
+
           <div className="flex justify-end gap-2 pt-2">
             <Button type="button" variant="outline" onClick={onClose}>
               Cancelar
             </Button>
-            <Button type="submit">Salvar referência</Button>
+            <Button type="submit" disabled={saving}>
+              {saving ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+              Salvar referencia
+            </Button>
           </div>
         </form>
       </div>
@@ -532,204 +627,228 @@ function AddReferenceModal({
   );
 }
 
-// ─── ReferenceCard ────────────────────────────────────────────────────────────
-
-function ReferenceCard({
-  ref: reference,
-  onToggleLike,
-  onDelete,
-  showCompetitor,
+function InsightCard({
+  insight,
+  saved,
+  onToggleSave
 }: {
-  ref: ContentReference;
-  onToggleLike: () => void;
-  onDelete?: () => void;
-  showCompetitor?: boolean;
+  insight: CompetitorInsight;
+  saved: boolean;
+  onToggleSave: () => void;
 }) {
   return (
-    <Card className="rounded-2xl border border-zinc-200 bg-white shadow-sm">
-      <CardContent className="p-4">
-        <div className="flex items-start justify-between gap-2">
-          <div className="min-w-0 flex-1">
-            {showCompetitor && (
-              <span className="mb-2 inline-flex items-center gap-1 rounded-full bg-zinc-100 px-2 py-0.5 text-[10px] font-medium text-zinc-600">
-                <Instagram className="h-2.5 w-2.5" />
-                {reference.competitorName}
+    <div className="rounded-2xl border border-zinc-200 bg-white p-4">
+      <div className="flex items-start gap-3">
+        <div className="flex-1 space-y-2">
+          <div className="flex flex-wrap items-center gap-2">
+            <p className="text-sm font-semibold text-zinc-900">{insight.title}</p>
+            {insight.format ? (
+              <span className="rounded-full border border-zinc-200 bg-zinc-50 px-2 py-0.5 text-[10px] font-medium text-zinc-500">
+                {insight.format}
               </span>
-            )}
-            {reference.title && (
-              <p className="text-sm font-semibold text-zinc-900 mb-1">{reference.title}</p>
-            )}
-            <p className="text-xs text-zinc-600 leading-relaxed line-clamp-3">
-              {reference.content}
-            </p>
+            ) : null}
+            {insight.hookType ? (
+              <span className="rounded-full border border-violet-200 bg-violet-50 px-2 py-0.5 text-[10px] font-medium text-violet-700">
+                {insight.hookType}
+              </span>
+            ) : null}
+            {insight.ctaType ? (
+              <span className="rounded-full border border-blue-200 bg-blue-50 px-2 py-0.5 text-[10px] font-medium text-blue-700">
+                {insight.ctaType}
+              </span>
+            ) : null}
           </div>
-          {reference.imageUrl && (
-            // eslint-disable-next-line @next/next/no-img-element
-            <img
-              src={reference.imageUrl}
-              alt=""
-              className="ml-2 h-14 w-14 flex-shrink-0 rounded-xl object-cover"
-            />
+          <p className="text-sm leading-relaxed text-zinc-700">{insight.summary}</p>
+          <p className="text-xs leading-relaxed text-zinc-500">{insight.rationale}</p>
+          {insight.sample ? (
+            <div className="rounded-xl border border-zinc-200 bg-zinc-50 px-3 py-2 text-xs leading-relaxed text-zinc-600">
+              {insight.sample}
+            </div>
+          ) : null}
+          <div className="flex flex-wrap items-center gap-2 text-[11px] text-zinc-400">
+            {insight.tags.map((tag) => (
+              <span key={tag} className="rounded-full bg-zinc-100 px-2 py-0.5 text-[10px] text-zinc-500">
+                {tag}
+              </span>
+            ))}
+            {insight.sourceUrl ? (
+              <a href={insight.sourceUrl} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-zinc-500 hover:text-zinc-800">
+                Ver origem <ExternalLink className="h-3 w-3" />
+              </a>
+            ) : null}
+          </div>
+        </div>
+
+        <button
+          type="button"
+          onClick={onToggleSave}
+          className={cn(
+            'rounded-full border p-2 transition',
+            saved
+              ? 'border-pink-200 bg-pink-50 text-pink-600'
+              : 'border-zinc-200 bg-white text-zinc-400 hover:text-pink-500'
           )}
-        </div>
-        <div className="mt-3 flex flex-wrap items-center gap-1.5">
-          <span className="rounded-full bg-orange-50 border border-orange-200 px-2 py-0.5 text-[10px] font-medium text-orange-700">
-            {reference.hookType}
-          </span>
-          <span className="rounded-full bg-blue-50 border border-blue-200 px-2 py-0.5 text-[10px] font-medium text-blue-700">
-            {reference.ctaType}
-          </span>
-          <span className="rounded-full bg-zinc-100 px-2 py-0.5 text-[10px] font-medium text-zinc-600">
-            {reference.format}
-          </span>
-        </div>
-        {reference.notes && (
-          <p className="mt-2 text-[11px] text-zinc-400 italic line-clamp-1">{reference.notes}</p>
-        )}
-        <div className="mt-3 flex items-center justify-between">
-          <button
-            onClick={onToggleLike}
-            className={cn(
-              'flex items-center gap-1 rounded-full px-2.5 py-1 text-[11px] font-medium transition-colors',
-              reference.liked
-                ? 'bg-pink-50 text-pink-600 hover:bg-pink-100'
-                : 'bg-zinc-50 text-zinc-400 hover:bg-zinc-100'
-            )}
-          >
-            <Heart className={cn('h-3 w-3', reference.liked && 'fill-current')} />
-            {reference.liked ? 'Curtida' : 'Curtir'}
-          </button>
-          {onDelete && (
-            <button
-              onClick={onDelete}
-              className="rounded-full p-1.5 text-zinc-300 hover:bg-zinc-50 hover:text-zinc-500 transition-colors"
-            >
-              <Trash2 className="h-3.5 w-3.5" />
-            </button>
-          )}
-        </div>
-      </CardContent>
-    </Card>
+          title={saved ? 'Remover do banco de referencias' : 'Salvar no banco de referencias'}
+        >
+          <Heart className={cn('h-4 w-4', saved && 'fill-current')} />
+        </button>
+      </div>
+    </div>
   );
 }
 
-// ─── CompetitorDetailModal ────────────────────────────────────────────────────
-
 function CompetitorDetailModal({
+  workspace,
   competitor,
   references,
-  workspace,
   onUpdateCompetitor,
-  onAddReference,
+  onDeleteCompetitor,
+  onSaveReference,
   onToggleReferenceLike,
   onDeleteReference,
-  onClose,
+  onClose
 }: {
-  competitor: Competitor;
-  references: ContentReference[];
   workspace: string;
-  onUpdateCompetitor: (updated: Competitor) => void;
-  onAddReference: (data: ReferenceFormState) => void;
-  onToggleReferenceLike: (refId: string) => void;
-  onDeleteReference: (refId: string) => void;
+  competitor: CompetitorRecord;
+  references: ContentReferenceRecord[];
+  onUpdateCompetitor: (competitor: CompetitorRecord) => void;
+  onDeleteCompetitor: (competitorId: string) => Promise<void>;
+  onSaveReference: (payload: Omit<ContentReferenceRecord, 'id' | 'savedAt'>) => Promise<void>;
+  onToggleReferenceLike: (reference: ContentReferenceRecord) => Promise<void>;
+  onDeleteReference: (referenceId: string) => Promise<void>;
   onClose: () => void;
 }) {
-  const [activeTab, setActiveTab] = useState<'perfil' | 'analysis' | 'references'>('perfil');
+  const [activeTab, setActiveTab] = useState<'profile' | 'analysis' | 'references'>('analysis');
   const [editingProfile, setEditingProfile] = useState(false);
-  const [generatingAnalysis, setGeneratingAnalysis] = useState(false);
   const [addingReference, setAddingReference] = useState(false);
-  const [refFilter, setRefFilter] = useState<'all' | 'liked'>('all');
+  const [generatingAnalysis, setGeneratingAnalysis] = useState(false);
+  const [referenceFilter, setReferenceFilter] = useState<'all' | 'liked'>('all');
 
-  const competitorRefs = references.filter((r) => r.competitorId === competitor.id);
-  const filteredRefs = refFilter === 'liked' ? competitorRefs.filter((r) => r.liked) : competitorRefs;
+  const competitorReferences = useMemo(
+    () => references.filter((reference) => reference.competitorId === competitor.id),
+    [references, competitor.id]
+  );
+  const filteredReferences = useMemo(
+    () => (referenceFilter === 'liked' ? competitorReferences.filter((reference) => reference.liked) : competitorReferences),
+    [competitorReferences, referenceFilter]
+  );
+  const savedInsightIds = useMemo(
+    () => new Set(references.filter((reference) => reference.liked).map((reference) => reference.sourceInsightId).filter(Boolean)),
+    [references]
+  );
 
-  async function generateAiAnalysis() {
+  async function handleGenerateAnalysis() {
     setGeneratingAnalysis(true);
     try {
-      const convRes = await fetch(`/api/workspaces/${workspace}/ai/conversations`, {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ title: `Análise: ${competitor.name}` }),
+      const response = await fetch(`/api/workspaces/${workspace}/competitors/${competitor.id}/analyze`, {
+        method: 'POST'
       });
-      const convData = await convRes.json();
-      const convId = convData.conversation?.id;
-      if (!convId) throw new Error('Não foi possível criar conversa');
+      const payload = (await response.json().catch(() => null)) as { competitor?: CompetitorRecord; error?: string } | null;
 
-      const msgRes = await fetch(`/api/workspaces/${workspace}/ai/conversations/${convId}/messages`, {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({
-          prompt: `Faça uma análise estratégica detalhada do perfil @${competitor.handle} (${competitor.name}). Tipo: ${TYPE_LABELS[competitor.type]}. Nicho: ${competitor.niche}. Minhas observações sobre eles: ${competitor.notes || 'sem observações ainda'}. Analise: tom de voz provável, tipos de conteúdo que devem performar bem, ganchos provavelmente usados, CTAs, pontos fortes, pontos fracos, e 3 ações práticas que posso implementar baseado nessa análise.`,
-        }),
-      });
-      const msgData = await msgRes.json();
-      const analysis =
-        msgData.messages?.find((m: { role: string }) => m.role === 'assistant')?.content ?? '';
+      if (!response.ok || !payload?.competitor) {
+        throw new Error(payload?.error ?? 'Nao foi possivel gerar a analise agora.');
+      }
 
-      onUpdateCompetitor({ ...competitor, aiAnalysis: analysis });
-      toast.success('Análise gerada com sucesso!');
-    } catch {
-      toast.error('Erro ao gerar análise. Tente novamente.');
+      onUpdateCompetitor(payload.competitor);
+      toast.success('Analise concluida com dados reais do perfil.');
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Nao foi possivel gerar a analise.';
+      toast.error(message);
     } finally {
       setGeneratingAnalysis(false);
     }
   }
 
+  async function handleDelete() {
+    const confirmed = window.confirm(`Apagar ${competitor.name} e todas as referencias ligadas a esse perfil?`);
+    if (!confirmed) {
+      return;
+    }
+
+    await onDeleteCompetitor(competitor.id);
+    onClose();
+  }
+
+  async function handleInsightToggle(insight: CompetitorInsight) {
+    const existing = references.find((reference) => reference.sourceInsightId === insight.id);
+
+    if (existing) {
+      await onToggleReferenceLike(existing);
+      return;
+    }
+
+    await onSaveReference(buildReferencePayloadFromInsight(competitor, insight));
+  }
+
   const tabs = [
-    { key: 'perfil' as const, label: 'Perfil' },
-    { key: 'analysis' as const, label: 'Análise IA' },
-    { key: 'references' as const, label: `Referências (${competitorRefs.length})` },
+    { key: 'profile' as const, label: 'Perfil' },
+    { key: 'analysis' as const, label: 'Analise IA' },
+    { key: 'references' as const, label: `Referencias (${competitorReferences.length})` }
   ];
+
+  const analysis = competitor.analysis && Array.isArray(competitor.analysis.sections) && competitor.analysis.sourceSnapshot ? competitor.analysis : null;
 
   return (
     <>
-      <div className="fixed inset-0 z-50 flex items-start justify-center bg-black/50 backdrop-blur-sm overflow-y-auto py-8">
-        <div className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl mx-4">
-          {/* Header */}
-          <div className="flex items-start justify-between border-b border-zinc-100 px-6 py-4">
-            <div className="flex items-center gap-3">
+      <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/50 py-8 backdrop-blur-sm">
+        <div className="mx-4 w-full max-w-5xl rounded-3xl bg-white shadow-2xl">
+          <div className="flex items-start justify-between border-b border-zinc-100 px-6 py-5">
+            <div className="flex items-center gap-4">
               {competitor.logoUrl ? (
                 // eslint-disable-next-line @next/next/no-img-element
-                <img
-                  src={competitor.logoUrl}
-                  alt={competitor.name}
-                  className="h-10 w-10 rounded-xl object-cover"
-                />
+                <img src={competitor.logoUrl} alt={competitor.name} className="h-14 w-14 rounded-2xl object-cover" />
               ) : (
-                <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-zinc-100 text-sm font-bold text-zinc-500">
+                <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-zinc-100 text-lg font-bold text-zinc-500">
                   {competitor.name.charAt(0).toUpperCase()}
                 </div>
               )}
               <div>
-                <h2 className="text-base font-semibold text-zinc-900">{competitor.name}</h2>
-                <div className="mt-0.5 flex items-center gap-2">
-                  {competitor.handle && (
-                    <span className="flex items-center gap-1 text-xs text-zinc-400">
-                      <Instagram className="h-3 w-3" /> @{competitor.handle}
-                    </span>
-                  )}
-                  <span className={cn('rounded-full px-2 py-0.5 text-[10px] font-semibold', TYPE_BADGE[competitor.type])}>
+                <div className="flex flex-wrap items-center gap-2">
+                  <h2 className="text-lg font-semibold text-zinc-900">{competitor.name}</h2>
+                  <span className={cn('rounded-full border px-2 py-0.5 text-[10px] font-semibold', TYPE_BADGE[competitor.type])}>
                     {TYPE_LABELS[competitor.type]}
                   </span>
+                  <AnalysisStatusBadge status={competitor.analysisStatus} />
+                </div>
+                <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-zinc-400">
+                  {competitor.handle ? (
+                    <span className="inline-flex items-center gap-1">
+                      <Instagram className="h-3 w-3" /> @{competitor.handle}
+                    </span>
+                  ) : null}
+                  {competitor.website ? (
+                    <a href={competitor.website} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 hover:text-zinc-700">
+                      <Globe className="h-3 w-3" /> {competitor.website.replace(/^https?:\/\//, '')}
+                    </a>
+                  ) : null}
+                  {competitor.lastAnalyzedAt ? <span>Ultima analise em {formatDateLabel(competitor.lastAnalyzedAt)}</span> : null}
                 </div>
               </div>
             </div>
-            <button onClick={onClose} className="text-zinc-400 hover:text-zinc-600 transition-colors">
-              <X className="h-5 w-5" />
-            </button>
+            <div className="flex items-center gap-2">
+              <Button variant="outline" size="sm" onClick={() => setEditingProfile(true)}>
+                <Pencil className="mr-1.5 h-3.5 w-3.5" />
+                Editar
+              </Button>
+              <Button variant="outline" size="sm" onClick={handleDelete} className="text-rose-600 hover:text-rose-700">
+                <Trash2 className="mr-1.5 h-3.5 w-3.5" />
+                Apagar
+              </Button>
+              <button onClick={onClose} className="rounded-full p-2 text-zinc-400 transition hover:bg-zinc-100 hover:text-zinc-600">
+                <X className="h-5 w-5" />
+              </button>
+            </div>
           </div>
 
-          {/* Tab bar */}
           <div className="flex border-b border-zinc-100 px-6">
             {tabs.map((tab) => (
               <button
                 key={tab.key}
+                type="button"
                 onClick={() => setActiveTab(tab.key)}
                 className={cn(
-                  'pb-3 pt-4 text-xs font-medium transition-colors mr-6',
-                  activeTab === tab.key
-                    ? 'border-b-2 border-zinc-900 text-zinc-900'
-                    : 'text-zinc-400 hover:text-zinc-600'
+                  'mr-6 border-b-2 pb-3 pt-4 text-xs font-medium transition',
+                  activeTab === tab.key ? 'border-zinc-900 text-zinc-900' : 'border-transparent text-zinc-400 hover:text-zinc-600'
                 )}
               >
                 {tab.label}
@@ -737,430 +856,610 @@ function CompetitorDetailModal({
             ))}
           </div>
 
-          {/* Tab content */}
           <div className="p-6">
-            {activeTab === 'perfil' && (
-              <div className="space-y-4">
-                <div className="flex justify-end">
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => setEditingProfile(true)}
-                    className="flex items-center gap-1.5"
-                  >
-                    <Pencil className="h-3.5 w-3.5" /> Editar
+            {activeTab === 'profile' ? (
+              <div className="grid gap-4 lg:grid-cols-[1.15fr_0.85fr]">
+                <Card className="rounded-2xl border-zinc-200">
+                  <CardContent className="space-y-4 p-5">
+                    <div>
+                      <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-zinc-400">Contexto</p>
+                      <div className="mt-3 grid gap-4 sm:grid-cols-2">
+                        <div>
+                          <p className="text-[11px] text-zinc-400">Nicho</p>
+                          <p className="mt-1 text-sm text-zinc-900">{competitor.niche || 'Nao informado'}</p>
+                        </div>
+                        <div>
+                          <p className="text-[11px] text-zinc-400">Tipo</p>
+                          <p className="mt-1 text-sm text-zinc-900">{TYPE_LABELS[competitor.type]}</p>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div>
+                      <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-zinc-400">Notas</p>
+                      <p className="mt-2 whitespace-pre-wrap text-sm leading-relaxed text-zinc-700">{competitor.notes || 'Sem notas registradas ainda.'}</p>
+                    </div>
+
+                    <div>
+                      <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-zinc-400">Tags</p>
+                      <div className="mt-2 flex flex-wrap gap-1.5">
+                        {competitor.tags.length ? (
+                          competitor.tags.map((tag) => (
+                            <span key={tag} className="rounded-full bg-zinc-100 px-2.5 py-1 text-xs text-zinc-600">
+                              {tag}
+                            </span>
+                          ))
+                        ) : (
+                          <span className="text-sm text-zinc-400">Sem tags ainda.</span>
+                        )}
+                      </div>
+                    </div>
+                  </CardContent>
+                </Card>
+
+                <Card className="rounded-2xl border-zinc-200">
+                  <CardContent className="space-y-4 p-5">
+                    <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-zinc-400">Fontes disponiveis</p>
+                    <div className="space-y-3">
+                      <div className="rounded-2xl border border-zinc-200 bg-zinc-50 p-4">
+                        <div className="flex items-center gap-2 text-sm font-medium text-zinc-900">
+                          <Instagram className="h-4 w-4 text-zinc-500" />
+                          Instagram
+                        </div>
+                        <p className="mt-1 text-xs text-zinc-500">{competitor.handle ? `@${competitor.handle}` : 'Nao informado'}</p>
+                      </div>
+                      <div className="rounded-2xl border border-zinc-200 bg-zinc-50 p-4">
+                        <div className="flex items-center gap-2 text-sm font-medium text-zinc-900">
+                          <Globe className="h-4 w-4 text-zinc-500" />
+                          Website
+                        </div>
+                        <p className="mt-1 text-xs text-zinc-500">{competitor.website || 'Nao informado'}</p>
+                      </div>
+                    </div>
+                  </CardContent>
+                </Card>
+              </div>
+            ) : null}
+
+            {activeTab === 'analysis' ? (
+              <div className="space-y-5">
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <div>
+                    <p className="text-sm font-semibold text-zinc-900">Analise de mercado e referencias</p>
+                    <p className="mt-1 text-xs text-zinc-500">
+                      Coleta perfil, bio, feed, legendas, formatos e organiza os sinais em insights utilizaveis.
+                    </p>
+                  </div>
+                  <Button onClick={handleGenerateAnalysis} disabled={generatingAnalysis} className="min-w-[180px]">
+                    {generatingAnalysis ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Brain className="mr-2 h-4 w-4" />}
+                    {analysis ? 'Regenerar analise' : 'Gerar analise'}
                   </Button>
                 </div>
-                <div className="grid grid-cols-2 gap-4 text-sm">
-                  {competitor.niche && (
-                    <div>
-                      <p className="text-[11px] font-medium text-zinc-400 uppercase tracking-wide mb-1">Nicho</p>
-                      <p className="text-zinc-900">{competitor.niche}</p>
+
+                {competitor.analysisStatus === 'error' ? (
+                  <div className="rounded-2xl border border-rose-200 bg-rose-50 p-4 text-sm text-rose-700">
+                    <div className="flex items-start gap-2">
+                      <AlertCircle className="mt-0.5 h-4 w-4 flex-shrink-0" />
+                      <div>
+                        <p className="font-medium">Falha ao analisar este perfil.</p>
+                        <p className="mt-1">{competitor.analysisError || 'Nao foi possivel concluir a analise.'}</p>
+                      </div>
                     </div>
-                  )}
-                  {competitor.website && (
-                    <div>
-                      <p className="text-[11px] font-medium text-zinc-400 uppercase tracking-wide mb-1">Website</p>
-                      <a
-                        href={competitor.website}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="flex items-center gap-1 text-blue-600 hover:underline"
-                      >
-                        <Globe className="h-3.5 w-3.5" />
-                        {competitor.website.replace(/^https?:\/\//, '')}
-                        <ExternalLink className="h-3 w-3" />
-                      </a>
-                    </div>
-                  )}
-                </div>
-                {competitor.tags.length > 0 && (
-                  <div>
-                    <p className="text-[11px] font-medium text-zinc-400 uppercase tracking-wide mb-2 flex items-center gap-1">
-                      <Tag className="h-3 w-3" /> Tags
+                  </div>
+                ) : null}
+
+                {generatingAnalysis || competitor.analysisStatus === 'running' ? (
+                  <div className="flex flex-col items-center justify-center rounded-3xl border border-zinc-200 bg-zinc-50 py-16 text-center">
+                    <Loader2 className="mb-4 h-10 w-10 animate-spin text-zinc-400" />
+                    <p className="text-sm font-medium text-zinc-700">Analisando perfil, posts, legendas e padroes...</p>
+                    <p className="mt-2 max-w-md text-xs text-zinc-500">
+                      O sistema esta capturando dados publicos, organizando os sinais e transformando isso em repertorio acionavel.
                     </p>
-                    <div className="flex flex-wrap gap-1.5">
-                      {competitor.tags.map((tag) => (
-                        <span key={tag} className="rounded-full bg-zinc-100 px-2.5 py-1 text-xs text-zinc-600">
-                          {tag}
-                        </span>
+                  </div>
+                ) : null}
+
+                {!analysis && competitor.analysisStatus !== 'running' && !generatingAnalysis ? (
+                  <div className="flex flex-col items-center justify-center rounded-3xl border border-dashed border-zinc-200 bg-zinc-50 py-16 text-center">
+                    <Sparkles className="mb-4 h-10 w-10 text-zinc-300" />
+                    <p className="text-sm font-medium text-zinc-700">Nenhuma analise ainda</p>
+                    <p className="mt-2 max-w-md text-xs text-zinc-500">
+                      Gere a analise para mapear tom de voz, formatos, ganchos, CTA, storytelling e ideias que podem virar repertorio.
+                    </p>
+                  </div>
+                ) : null}
+
+                {analysis && !generatingAnalysis ? (
+                  <>
+                    <div className="grid gap-4 xl:grid-cols-[1.1fr_0.9fr]">
+                      <Card className="rounded-2xl border-zinc-200">
+                        <CardContent className="space-y-4 p-5">
+                          <div className="flex flex-wrap items-center justify-between gap-2">
+                            <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-zinc-400">Visao geral</p>
+                            <span className="text-[11px] text-zinc-400">Atualizada em {formatDateLabel(analysis.generatedAt)}</span>
+                          </div>
+                          <div className="grid gap-4 sm:grid-cols-2">
+                            <div>
+                              <p className="text-[11px] text-zinc-400">Tom de voz</p>
+                              <p className="mt-1 text-sm text-zinc-900">{analysis.overview.toneOfVoice}</p>
+                            </div>
+                            <div>
+                              <p className="text-[11px] text-zinc-400">Publico aparente</p>
+                              <p className="mt-1 text-sm text-zinc-900">{analysis.overview.apparentAudience}</p>
+                            </div>
+                            <div className="sm:col-span-2">
+                              <p className="text-[11px] text-zinc-400">Posicionamento</p>
+                              <p className="mt-1 text-sm text-zinc-900">{analysis.overview.positioning}</p>
+                            </div>
+                            <div className="sm:col-span-2">
+                              <p className="text-[11px] text-zinc-400">Estilo visual</p>
+                              <p className="mt-1 text-sm text-zinc-900">{analysis.overview.visualStyle}</p>
+                            </div>
+                          </div>
+                        </CardContent>
+                      </Card>
+
+                      <Card className="rounded-2xl border-zinc-200">
+                        <CardContent className="space-y-4 p-5">
+                          <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-zinc-400">Fontes capturadas</p>
+                          <div className="grid gap-3 sm:grid-cols-3">
+                            <div className="rounded-2xl border border-zinc-200 bg-zinc-50 p-3">
+                              <p className="text-[11px] text-zinc-400">Posts analisados</p>
+                              <p className="mt-1 text-lg font-semibold text-zinc-900">{analysis.sourceSnapshot.postsAnalyzed}</p>
+                            </div>
+                            <div className="rounded-2xl border border-zinc-200 bg-zinc-50 p-3">
+                              <p className="text-[11px] text-zinc-400">Reels / videos</p>
+                              <p className="mt-1 text-lg font-semibold text-zinc-900">{analysis.sourceSnapshot.reelsAnalyzed}</p>
+                            </div>
+                            <div className="rounded-2xl border border-zinc-200 bg-zinc-50 p-3">
+                              <p className="text-[11px] text-zinc-400">Feed</p>
+                              <p className="mt-1 text-lg font-semibold text-zinc-900">{analysis.sourceSnapshot.feedAnalyzed}</p>
+                            </div>
+                          </div>
+                          {analysis.sourceSnapshot.captureNotes.length ? (
+                            <div className="rounded-2xl border border-amber-200 bg-amber-50 p-3 text-xs leading-relaxed text-amber-700">
+                              {analysis.sourceSnapshot.captureNotes.join(' ')}
+                            </div>
+                          ) : null}
+                        </CardContent>
+                      </Card>
+                    </div>
+
+                    {analysis.practicalSuggestions.toContent.length || analysis.practicalSuggestions.toCreatorAi.length || analysis.practicalSuggestions.toReferenceBank.length ? (
+                      <Card className="rounded-2xl border-zinc-200">
+                        <CardContent className="grid gap-4 p-5 md:grid-cols-3">
+                          <div>
+                            <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-zinc-400">Para Conteudo</p>
+                            {analysis.practicalSuggestions.toContent.map((item) => (
+                              <p key={item} className="mt-2 text-sm leading-relaxed text-zinc-700">
+                                {item}
+                              </p>
+                            ))}
+                          </div>
+                          <div>
+                            <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-zinc-400">Para Creator AI</p>
+                            {analysis.practicalSuggestions.toCreatorAi.map((item) => (
+                              <p key={item} className="mt-2 text-sm leading-relaxed text-zinc-700">
+                                {item}
+                              </p>
+                            ))}
+                          </div>
+                          <div>
+                            <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-zinc-400">Para o Banco</p>
+                            {analysis.practicalSuggestions.toReferenceBank.map((item) => (
+                              <p key={item} className="mt-2 text-sm leading-relaxed text-zinc-700">
+                                {item}
+                              </p>
+                            ))}
+                          </div>
+                        </CardContent>
+                      </Card>
+                    ) : null}
+
+                    <div className="space-y-4">
+                      {analysis.sections.map((section) => (
+                        <Card key={section.id} className="rounded-2xl border-zinc-200">
+                          <CardContent className="space-y-4 p-5">
+                            <div>
+                              <p className="text-sm font-semibold text-zinc-900">{section.title}</p>
+                              <p className="mt-1 text-xs leading-relaxed text-zinc-500">{section.description}</p>
+                            </div>
+                            <div className="grid gap-3 xl:grid-cols-2">
+                              {section.items.map((insight) => (
+                                <InsightCard
+                                  key={insight.id}
+                                  insight={insight}
+                                  saved={savedInsightIds.has(insight.id)}
+                                  onToggleSave={() => handleInsightToggle(insight)}
+                                />
+                              ))}
+                            </div>
+                          </CardContent>
+                        </Card>
                       ))}
                     </div>
-                  </div>
-                )}
-                {competitor.notes && (
-                  <div>
-                    <p className="text-[11px] font-medium text-zinc-400 uppercase tracking-wide mb-2">Notas</p>
-                    <p className="whitespace-pre-wrap text-sm text-zinc-700 leading-relaxed">{competitor.notes}</p>
-                  </div>
-                )}
+                  </>
+                ) : null}
               </div>
-            )}
+            ) : null}
 
-            {activeTab === 'analysis' && (
+            {activeTab === 'references' ? (
               <div className="space-y-4">
-                {competitor.aiAnalysis ? (
-                  <div>
-                    <div className="flex items-center justify-between mb-3">
-                      <p className="text-xs font-medium text-zinc-500 flex items-center gap-1.5">
-                        <Brain className="h-3.5 w-3.5" /> Análise gerada por IA
-                      </p>
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={generateAiAnalysis}
-                        disabled={generatingAnalysis}
-                        className="flex items-center gap-1.5 text-xs"
-                      >
-                        {generatingAnalysis ? (
-                          <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                        ) : (
-                          <Brain className="h-3.5 w-3.5" />
-                        )}
-                        Regenerar
-                      </Button>
-                    </div>
-                    <div className="rounded-xl bg-zinc-50 p-4 text-sm text-zinc-700 leading-relaxed whitespace-pre-wrap">
-                      {competitor.aiAnalysis}
-                    </div>
-                  </div>
-                ) : (
-                  <div className="flex flex-col items-center justify-center py-12 text-center">
-                    <Brain className="h-10 w-10 text-zinc-300 mb-3" />
-                    <p className="text-sm font-medium text-zinc-600 mb-1">Nenhuma análise ainda</p>
-                    <p className="text-xs text-zinc-400 mb-6 max-w-xs">
-                      Gere uma análise estratégica com IA baseada no perfil e nas suas notas.
-                    </p>
-                    <Button
-                      onClick={generateAiAnalysis}
-                      disabled={generatingAnalysis}
-                      className="flex items-center gap-2"
-                    >
-                      {generatingAnalysis ? (
-                        <Loader2 className="h-4 w-4 animate-spin" />
-                      ) : (
-                        <Brain className="h-4 w-4" />
-                      )}
-                      {generatingAnalysis ? 'Gerando análise...' : 'Gerar análise'}
-                    </Button>
-                  </div>
-                )}
-              </div>
-            )}
-
-            {activeTab === 'references' && (
-              <div className="space-y-4">
-                <div className="flex items-center justify-between">
-                  <div className="flex gap-1">
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <div className="flex gap-1 rounded-xl bg-zinc-100 p-1">
                     <button
-                      onClick={() => setRefFilter('all')}
+                      type="button"
+                      onClick={() => setReferenceFilter('all')}
                       className={cn(
-                        'rounded-lg px-3 py-1.5 text-xs font-medium transition-colors',
-                        refFilter === 'all'
-                          ? 'bg-zinc-900 text-white'
-                          : 'text-zinc-500 hover:bg-zinc-100'
+                        'rounded-lg px-3 py-1.5 text-xs font-medium transition',
+                        referenceFilter === 'all' ? 'bg-white text-zinc-900 shadow-sm' : 'text-zinc-500 hover:text-zinc-700'
                       )}
                     >
-                      Todas ({competitorRefs.length})
+                      Todas ({competitorReferences.length})
                     </button>
                     <button
-                      onClick={() => setRefFilter('liked')}
+                      type="button"
+                      onClick={() => setReferenceFilter('liked')}
                       className={cn(
-                        'rounded-lg px-3 py-1.5 text-xs font-medium transition-colors flex items-center gap-1',
-                        refFilter === 'liked'
-                          ? 'bg-zinc-900 text-white'
-                          : 'text-zinc-500 hover:bg-zinc-100'
+                        'rounded-lg px-3 py-1.5 text-xs font-medium transition',
+                        referenceFilter === 'liked' ? 'bg-white text-zinc-900 shadow-sm' : 'text-zinc-500 hover:text-zinc-700'
                       )}
                     >
-                      <Heart className="h-3 w-3" /> Curtidas ({competitorRefs.filter((r) => r.liked).length})
+                      Curtidas ({competitorReferences.filter((reference) => reference.liked).length})
                     </button>
                   </div>
-                  <Button
-                    size="sm"
-                    onClick={() => setAddingReference(true)}
-                    className="flex items-center gap-1.5"
-                  >
-                    <Plus className="h-3.5 w-3.5" /> Adicionar
+
+                  <Button size="sm" onClick={() => setAddingReference(true)}>
+                    <Plus className="mr-1.5 h-3.5 w-3.5" />
+                    Adicionar
                   </Button>
                 </div>
 
-                {filteredRefs.length === 0 ? (
-                  <div className="flex flex-col items-center justify-center py-10 text-center">
-                    <BookOpen className="h-8 w-8 text-zinc-300 mb-2" />
-                    <p className="text-sm text-zinc-500">
-                      {refFilter === 'liked' ? 'Nenhuma referência curtida ainda.' : 'Nenhuma referência salva ainda.'}
-                    </p>
-                  </div>
-                ) : (
+                {filteredReferences.length ? (
                   <div className="space-y-3">
-                    {filteredRefs.map((ref) => (
+                    {filteredReferences.map((reference) => (
                       <ReferenceCard
-                        key={ref.id}
-                        ref={ref}
-                        onToggleLike={() => onToggleReferenceLike(ref.id)}
-                        onDelete={() => onDeleteReference(ref.id)}
+                        key={reference.id}
+                        reference={reference}
                         showCompetitor={false}
+                        onToggleLike={() => onToggleReferenceLike(reference)}
+                        onDelete={() => onDeleteReference(reference.id)}
                       />
                     ))}
                   </div>
+                ) : (
+                  <div className="flex flex-col items-center justify-center rounded-3xl border border-dashed border-zinc-200 bg-zinc-50 py-16 text-center">
+                    <BookOpen className="mb-4 h-10 w-10 text-zinc-300" />
+                    <p className="text-sm font-medium text-zinc-600">Nenhuma referencia salva ainda</p>
+                    <p className="mt-2 max-w-sm text-xs text-zinc-500">
+                      Curta insights da analise ou adicione referencias manuais para alimentar o banco desse perfil.
+                    </p>
+                  </div>
                 )}
               </div>
-            )}
+            ) : null}
           </div>
         </div>
       </div>
 
-      {editingProfile && (
+      {editingProfile ? (
         <CompetitorFormModal
+          workspace={workspace}
           initial={competitor}
-          onSave={(data) => {
-            onUpdateCompetitor({
-              ...competitor,
-              ...data,
+          onSave={async (data) => {
+            const response = await fetch(`/api/workspaces/${workspace}/competitors/${competitor.id}`, {
+              method: 'PATCH',
+              headers: { 'content-type': 'application/json' },
+              body: JSON.stringify(data)
             });
-            setEditingProfile(false);
+            const payload = (await response.json().catch(() => null)) as { competitor?: CompetitorRecord; error?: string } | null;
+
+            if (!response.ok || !payload?.competitor) {
+              throw new Error(payload?.error ?? 'Nao foi possivel atualizar o perfil.');
+            }
+
+            onUpdateCompetitor(payload.competitor);
+            toast.success('Perfil atualizado.');
           }}
           onClose={() => setEditingProfile(false)}
         />
-      )}
+      ) : null}
 
-      {addingReference && (
+      {addingReference ? (
         <AddReferenceModal
-          competitorId={competitorId}
           competitorName={competitor.name}
-          onSave={(data) => {
-            onAddReference(data);
-            setAddingReference(false);
+          onSave={async (data) => {
+            await onSaveReference({
+              competitorId: competitor.id,
+              competitorName: competitor.name,
+              title: data.title,
+              content: data.content,
+              hookType: data.hookType,
+              ctaType: data.ctaType,
+              format: data.format,
+              imageUrl: data.imageUrl,
+              notes: data.notes,
+              liked: data.liked,
+              category: 'manual',
+              source: 'manual',
+              sourceInsightId: '',
+              sourceUrl: ''
+            });
           }}
           onClose={() => setAddingReference(false)}
         />
-      )}
+      ) : null}
     </>
   );
 }
 
-// helper to avoid referencing competitor in JSX outside the modal
-const competitorId = '';
-
-// ─── ReferencesBank ───────────────────────────────────────────────────────────
-
 function ReferencesBank({
   references,
-  onToggleLike,
+  onToggleLike
 }: {
-  references: ContentReference[];
-  onToggleLike: (refId: string) => void;
+  references: ContentReferenceRecord[];
+  onToggleLike: (reference: ContentReferenceRecord) => Promise<void>;
 }) {
   const liked = useMemo(
-    () => [...references.filter((r) => r.liked)].sort((a, b) => b.savedAt.localeCompare(a.savedAt)),
+    () => [...references.filter((reference) => reference.liked)].sort((left, right) => right.savedAt.localeCompare(left.savedAt)),
     [references]
   );
 
-  if (liked.length === 0) {
+  if (!liked.length) {
     return (
       <div className="flex flex-col items-center justify-center py-20 text-center">
-        <Heart className="h-12 w-12 text-zinc-200 mb-4" />
-        <p className="text-sm font-medium text-zinc-500 mb-1">Banco de referências vazio</p>
-        <p className="text-xs text-zinc-400 max-w-xs">
-          Curta referências nos perfis dos concorrentes para salvá-las aqui.
-        </p>
+        <Heart className="mb-4 h-12 w-12 text-zinc-200" />
+        <p className="text-sm font-medium text-zinc-600">Banco de Referencias vazio</p>
+        <p className="mt-2 max-w-xs text-xs text-zinc-400">Curta insights das analises ou salve referencias manuais para construir repertorio reutilizavel.</p>
       </div>
     );
   }
 
   return (
-    <div className="space-y-3">
-      <div className="flex items-center gap-2 mb-4">
-        <Heart className="h-4 w-4 text-pink-500 fill-current" />
-        <span className="text-sm font-medium text-zinc-700">{liked.length} referência{liked.length !== 1 ? 's' : ''} curtida{liked.length !== 1 ? 's' : ''}</span>
+    <div className="space-y-4">
+      <div className="flex items-center gap-2">
+        <Heart className="h-4 w-4 fill-current text-pink-500" />
+        <span className="text-sm font-medium text-zinc-700">{liked.length} referencia{liked.length === 1 ? '' : 's'} curtida{liked.length === 1 ? '' : 's'}</span>
       </div>
-      <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
-        {liked.map((ref) => (
-          <ReferenceCard
-            key={ref.id}
-            ref={ref}
-            onToggleLike={() => onToggleLike(ref.id)}
-            showCompetitor={true}
-          />
+      <div className="grid gap-3 md:grid-cols-2">
+        {liked.map((reference) => (
+          <ReferenceCard key={reference.id} reference={reference} showCompetitor={true} onToggleLike={() => onToggleLike(reference)} />
         ))}
       </div>
     </div>
   );
 }
 
-// ─── Main CompetitorsWorkspace ────────────────────────────────────────────────
-
-export function CompetitorsWorkspace({ workspace }: { workspace: string }) {
-  const [competitors, setCompetitors] = useState<Competitor[]>(() => loadCompetitors(workspace));
-  const [references, setReferences] = useState<ContentReference[]>(() => loadReferences(workspace));
+export function CompetitorsWorkspace({
+  workspace,
+  initialCompetitors,
+  initialReferences
+}: {
+  workspace: string;
+  initialCompetitors: CompetitorRecord[];
+  initialReferences: ContentReferenceRecord[];
+}) {
+  const [competitors, setCompetitors] = useState<CompetitorRecord[]>(initialCompetitors);
+  const [references, setReferences] = useState<ContentReferenceRecord[]>(initialReferences);
   const [activeTab, setActiveTab] = useState<'profiles' | 'bank'>('profiles');
   const [search, setSearch] = useState('');
   const [addingCompetitor, setAddingCompetitor] = useState(false);
-  const [selectedCompetitor, setSelectedCompetitor] = useState<Competitor | null>(null);
+  const [selectedCompetitorId, setSelectedCompetitorId] = useState<string | null>(null);
 
-  // persist helpers
-  function persistCompetitors(updated: Competitor[]) {
-    setCompetitors(updated);
-    saveCompetitors(workspace, updated);
-  }
-
-  function persistReferences(updated: ContentReference[]) {
-    setReferences(updated);
-    saveReferences(workspace, updated);
-  }
-
-  function addCompetitor(data: CompetitorFormState) {
-    const newItem: Competitor = {
-      ...data,
-      id: crypto.randomUUID(),
-      aiAnalysis: '',
-      createdAt: new Date().toISOString(),
-    };
-    persistCompetitors([...competitors, newItem]);
-    setAddingCompetitor(false);
-    toast.success('Perfil adicionado!');
-  }
-
-  function updateCompetitor(updated: Competitor) {
-    const next = competitors.map((c) => (c.id === updated.id ? updated : c));
-    persistCompetitors(next);
-    // also update selected if open
-    setSelectedCompetitor((prev) => (prev?.id === updated.id ? updated : prev));
-    toast.success('Perfil atualizado!');
-  }
-
-  function addReference(competitorId: string, competitorName: string, data: ReferenceFormState) {
-    const newRef: ContentReference = {
-      ...data,
-      id: crypto.randomUUID(),
-      competitorId,
-      competitorName,
-      savedAt: new Date().toISOString(),
-    };
-    persistReferences([...references, newRef]);
-    toast.success('Referência salva!');
-  }
-
-  function toggleReferenceLike(refId: string) {
-    const next = references.map((r) => (r.id === refId ? { ...r, liked: !r.liked } : r));
-    persistReferences(next);
-  }
-
-  function deleteReference(refId: string) {
-    const next = references.filter((r) => r.id !== refId);
-    persistReferences(next);
-    toast.success('Referência removida.');
-  }
+  const selectedCompetitor = useMemo(
+    () => competitors.find((competitor) => competitor.id === selectedCompetitorId) ?? null,
+    [competitors, selectedCompetitorId]
+  );
 
   const filteredCompetitors = useMemo(() => {
-    const q = search.toLowerCase().trim();
-    if (!q) return competitors;
-    return competitors.filter(
-      (c) =>
-        c.name.toLowerCase().includes(q) ||
-        c.handle.toLowerCase().includes(q) ||
-        c.niche.toLowerCase().includes(q) ||
-        c.tags.some((t) => t.toLowerCase().includes(q))
+    const query = search.trim().toLowerCase();
+    if (!query) {
+      return competitors;
+    }
+
+    return competitors.filter((competitor) =>
+      [competitor.name, competitor.handle, competitor.niche, competitor.notes, competitor.tags.join(' ')]
+        .join(' ')
+        .toLowerCase()
+        .includes(query)
     );
   }, [competitors, search]);
+
+  function upsertCompetitor(nextCompetitor: CompetitorRecord) {
+    setCompetitors((current) => {
+      const existing = current.some((competitor) => competitor.id === nextCompetitor.id);
+      const next = existing
+        ? current.map((competitor) => (competitor.id === nextCompetitor.id ? nextCompetitor : competitor))
+        : [nextCompetitor, ...current];
+
+      return [...next].sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
+    });
+  }
+
+  function upsertReference(nextReference: ContentReferenceRecord) {
+    setReferences((current) => {
+      const existing = current.some((reference) => reference.id === nextReference.id);
+      const next = existing
+        ? current.map((reference) => (reference.id === nextReference.id ? nextReference : reference))
+        : [nextReference, ...current];
+
+      return [...next].sort((left, right) => right.savedAt.localeCompare(left.savedAt));
+    });
+  }
+
+  async function handleCreateCompetitor(data: CompetitorFormState) {
+    const response = await fetch(`/api/workspaces/${workspace}/competitors`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(data)
+    });
+    const payload = (await response.json().catch(() => null)) as { competitor?: CompetitorRecord; error?: string } | null;
+
+    if (!response.ok || !payload?.competitor) {
+      throw new Error(payload?.error ?? 'Nao foi possivel criar o perfil.');
+    }
+
+    upsertCompetitor(payload.competitor);
+    setSelectedCompetitorId(payload.competitor.id);
+    toast.success('Perfil salvo com persistencia real.');
+  }
+
+  async function handleUpdateCompetitor(nextCompetitor: CompetitorRecord) {
+    upsertCompetitor(nextCompetitor);
+  }
+
+  async function handleDeleteCompetitor(competitorId: string) {
+    const response = await fetch(`/api/workspaces/${workspace}/competitors/${competitorId}`, {
+      method: 'DELETE'
+    });
+
+    if (!response.ok) {
+      const payload = (await response.json().catch(() => null)) as { error?: string } | null;
+      throw new Error(payload?.error ?? 'Nao foi possivel apagar o perfil.');
+    }
+
+    setCompetitors((current) => current.filter((competitor) => competitor.id !== competitorId));
+    setReferences((current) => current.filter((reference) => reference.competitorId !== competitorId));
+    toast.success('Perfil removido.');
+  }
+
+  async function handleSaveReference(payload: Omit<ContentReferenceRecord, 'id' | 'savedAt'>) {
+    const response = await fetch(`/api/workspaces/${workspace}/competitors/references`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+    const result = (await response.json().catch(() => null)) as { reference?: ContentReferenceRecord; error?: string } | null;
+
+    if (!response.ok || !result?.reference) {
+      throw new Error(result?.error ?? 'Nao foi possivel salvar a referencia.');
+    }
+
+    upsertReference(result.reference);
+    toast.success('Insight salvo no Banco de Referencias.');
+  }
+
+  async function handleToggleReferenceLike(reference: ContentReferenceRecord) {
+    const response = await fetch(`/api/workspaces/${workspace}/competitors/references/${reference.id}`, {
+      method: 'PATCH',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ liked: !reference.liked })
+    });
+    const payload = (await response.json().catch(() => null)) as { reference?: ContentReferenceRecord; error?: string } | null;
+
+    if (!response.ok || !payload?.reference) {
+      throw new Error(payload?.error ?? 'Nao foi possivel atualizar a referencia.');
+    }
+
+    upsertReference(payload.reference);
+  }
+
+  async function handleDeleteReference(referenceId: string) {
+    const response = await fetch(`/api/workspaces/${workspace}/competitors/references/${referenceId}`, {
+      method: 'DELETE'
+    });
+
+    if (!response.ok) {
+      const payload = (await response.json().catch(() => null)) as { error?: string } | null;
+      throw new Error(payload?.error ?? 'Nao foi possivel apagar a referencia.');
+    }
+
+    setReferences((current) => current.filter((reference) => reference.id !== referenceId));
+    toast.success('Referencia removida.');
+  }
 
   return (
     <div className="flex flex-col gap-4 p-4 lg:p-6">
       <PageIntro
         eyebrow="Concorrentes"
-        title="Mapa de Referências"
-        description="Analise concorrentes, inspire-se em referências e construa seu banco de ideias."
+        title="Mapa de Referencias"
+        description="Capture sinais reais de perfis, transforme em insights acionaveis e alimente o banco interno de repertorio."
       />
 
-      {/* Tab bar */}
-      <div className="flex gap-1 rounded-xl bg-zinc-100 p-1 w-fit">
+      <div className="flex w-fit gap-1 rounded-xl bg-zinc-100 p-1">
         <button
+          type="button"
           onClick={() => setActiveTab('profiles')}
           className={cn(
-            'rounded-lg px-4 py-2 text-xs font-medium transition-colors',
-            activeTab === 'profiles' ? 'bg-white shadow-sm text-zinc-900' : 'text-zinc-500 hover:text-zinc-700'
+            'rounded-lg px-4 py-2 text-xs font-medium transition',
+            activeTab === 'profiles' ? 'bg-white text-zinc-900 shadow-sm' : 'text-zinc-500 hover:text-zinc-700'
           )}
         >
           Perfis ({competitors.length})
         </button>
         <button
+          type="button"
           onClick={() => setActiveTab('bank')}
           className={cn(
-            'rounded-lg px-4 py-2 text-xs font-medium transition-colors flex items-center gap-1.5',
-            activeTab === 'bank' ? 'bg-white shadow-sm text-zinc-900' : 'text-zinc-500 hover:text-zinc-700'
+            'inline-flex items-center gap-1.5 rounded-lg px-4 py-2 text-xs font-medium transition',
+            activeTab === 'bank' ? 'bg-white text-zinc-900 shadow-sm' : 'text-zinc-500 hover:text-zinc-700'
           )}
         >
-          <Heart className={cn('h-3.5 w-3.5', activeTab === 'bank' && 'text-pink-500')} />
-          Banco de Referências ({references.filter((r) => r.liked).length})
+          <Heart className={cn('h-3.5 w-3.5', activeTab === 'bank' && 'fill-current text-pink-500')} />
+          Banco de Referencias ({references.filter((reference) => reference.liked).length})
         </button>
       </div>
 
-      {activeTab === 'profiles' && (
+      {activeTab === 'profiles' ? (
         <div className="space-y-4">
-          <div className="flex items-center gap-3">
-            <div className="relative flex-1 max-w-sm">
+          <div className="flex flex-wrap items-center gap-3">
+            <div className="relative max-w-sm flex-1">
               <Search className="absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-zinc-400" />
-              <Input
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
-                placeholder="Buscar perfis..."
-                className="pl-9"
-              />
+              <Input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Buscar perfil, nicho, tag..." className="pl-9" />
             </div>
-            <Button onClick={() => setAddingCompetitor(true)} className="flex items-center gap-2 ml-auto">
-              <Plus className="h-4 w-4" />
-              Adicionar
+            <Button onClick={() => setAddingCompetitor(true)} className="ml-auto">
+              <Plus className="mr-2 h-4 w-4" />
+              Adicionar perfil
             </Button>
           </div>
 
-          {filteredCompetitors.length === 0 ? (
-            <div className="flex flex-col items-center justify-center py-20 text-center">
-              <Instagram className="h-12 w-12 text-zinc-200 mb-4" />
-              {competitors.length === 0 ? (
-                <>
-                  <p className="text-sm font-medium text-zinc-600 mb-1">Nenhum perfil ainda</p>
-                  <p className="text-xs text-zinc-400 mb-6 max-w-xs">
-                    Adicione concorrentes, referências e inspirações para mapear o seu mercado.
-                  </p>
-                  <Button onClick={() => setAddingCompetitor(true)} className="flex items-center gap-2">
-                    <Plus className="h-4 w-4" />
-                    Adicionar primeiro perfil
-                  </Button>
-                </>
-              ) : (
-                <p className="text-sm text-zinc-500">Nenhum resultado para "{search}"</p>
-              )}
+          {filteredCompetitors.length ? (
+            <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+              {filteredCompetitors.map((competitor) => (
+                <CompetitorCard
+                  key={competitor.id}
+                  competitor={competitor}
+                  referenceCount={references.filter((reference) => reference.competitorId === competitor.id && reference.liked).length}
+                  onClick={() => setSelectedCompetitorId(competitor.id)}
+                />
+              ))}
             </div>
           ) : (
-            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
-              {filteredCompetitors.map((c) => (
-                <CompetitorCard key={c.id} competitor={c} onClick={() => setSelectedCompetitor(c)} />
-              ))}
+            <div className="flex flex-col items-center justify-center rounded-3xl border border-dashed border-zinc-200 bg-zinc-50 py-20 text-center">
+              <Instagram className="mb-4 h-12 w-12 text-zinc-200" />
+              {competitors.length === 0 ? (
+                <>
+                  <p className="text-sm font-medium text-zinc-600">Nenhum perfil ainda</p>
+                  <p className="mt-2 max-w-sm text-xs text-zinc-400">
+                    Cadastre concorrentes, referencias e inspiracoes para transformar essa area em uma central real de inteligencia.
+                  </p>
+                </>
+              ) : (
+                <p className="text-sm text-zinc-500">Nenhum resultado para "{search}".</p>
+              )}
             </div>
           )}
         </div>
+      ) : (
+        <ReferencesBank references={references} onToggleLike={handleToggleReferenceLike} />
       )}
 
-      {activeTab === 'bank' && (
-        <ReferencesBank references={references} onToggleLike={toggleReferenceLike} />
-      )}
+      {addingCompetitor ? (
+        <CompetitorFormModal workspace={workspace} onSave={handleCreateCompetitor} onClose={() => setAddingCompetitor(false)} />
+      ) : null}
 
-      {addingCompetitor && (
-        <CompetitorFormModal onSave={addCompetitor} onClose={() => setAddingCompetitor(false)} />
-      )}
-
-      {selectedCompetitor && (
+      {selectedCompetitor ? (
         <CompetitorDetailModal
+          workspace={workspace}
           competitor={selectedCompetitor}
           references={references}
-          workspace={workspace}
-          onUpdateCompetitor={updateCompetitor}
-          onAddReference={(data) => addReference(selectedCompetitor.id, selectedCompetitor.name, data)}
-          onToggleReferenceLike={toggleReferenceLike}
-          onDeleteReference={deleteReference}
-          onClose={() => setSelectedCompetitor(null)}
+          onUpdateCompetitor={handleUpdateCompetitor}
+          onDeleteCompetitor={handleDeleteCompetitor}
+          onSaveReference={handleSaveReference}
+          onToggleReferenceLike={handleToggleReferenceLike}
+          onDeleteReference={handleDeleteReference}
+          onClose={() => setSelectedCompetitorId(null)}
         />
-      )}
+      ) : null}
     </div>
   );
 }

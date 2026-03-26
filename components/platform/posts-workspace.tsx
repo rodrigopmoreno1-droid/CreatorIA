@@ -1,117 +1,64 @@
 "use client";
 
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   ArrowLeft,
   ArrowRight,
   Calendar,
   CalendarRange,
   CheckCircle2,
-  ChevronDown,
-  Circle,
-  Clock,
   Film,
   Image as ImageIcon,
   Instagram,
   Layers,
   LayoutGrid,
-  Pencil,
+  Loader2,
   Plus,
+  RefreshCcw,
+  Sparkles,
   Tag,
-  Trash2,
-  X,
+  X
 } from 'lucide-react';
+import { toast } from 'sonner';
 
+import { PageIntro } from '@/components/platform/page-intro';
+import { ScriptEditorModal } from '@/components/platform/script-editor-modal';
+import { ScriptPreviewModal } from '@/components/platform/script-preview-modal';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
-import { PageIntro } from '@/components/platform/page-intro';
+import { CONTENT_FORMAT_ORDER, getContentFormatBadgeClass, getContentFormatLabel, type ContentFormatKey } from '@/lib/content-format-meta';
+import { buildEditableScript, type EditableScriptDraft } from '@/lib/script-drafts';
+import {
+  buildDefaultProductRules,
+  computeEndDateFromPreset,
+  daySpanFromRange,
+  generateSchedulePlan,
+  getDatesInRange,
+  mergeTemplateProductRules,
+  type PlannerConfig,
+  type PlannerMode,
+  type PlannerProductRule,
+  type ScheduleGenerationResult,
+  type SchedulePeriodPreset,
+  type ScheduleTemplate
+} from '@/lib/post-schedule-planner';
 import { cn } from '@/lib/utils';
-import type { ProductItem, ScriptItem } from '@/types/platform';
+import type { PlannerBatchItem, ProductItem, ScriptItem, ScriptStatus } from '@/types/platform';
 
-// ─── Types ───────────────────────────────────────────────────────────────────
+type WorkspaceTab = 'Calendário' | 'Feed' | 'Stories' | 'Rascunhos';
+type StatusFilter = 'all' | ScriptStatus;
+type ManualModalMode = 'new' | 'none';
 
-type PostChannel = 'Feed' | 'Reels' | 'Stories';
-type PostStatus = 'production' | 'ready' | 'scheduled' | 'posted';
-
-type PlannedPost = {
-  id: string;
+type ManualDraftState = {
   title: string;
-  channel: PostChannel;
-  status: PostStatus;
-  scheduledFor: string; // YYYY-MM-DD, or '' for drafts
+  contentType: ContentFormatKey;
+  subOption: string;
+  scheduledFor: string;
+  productId: string;
   caption: string;
-  imageUrl: string;
   notes: string;
-  productId?: string;
-  productName?: string;
-  scriptId?: string;
-  createdAt: string;
-};
-
-type PostFormState = Omit<PlannedPost, 'id' | 'createdAt'>;
-
-type WorkspaceTab = 'Tudo' | 'Feed' | 'Stories' | 'Rascunhos';
-
-type ScheduleRules = {
-  startDate: string;
-  endDate: string;
-  feedPerDay: number;
-  storiesPerDay: number;
-  selectedProductIds: string[];
-  productDaysPerWeek: Record<string, number>;
-};
-
-// ─── Constants ───────────────────────────────────────────────────────────────
-
-const CHANNEL_OPTIONS: { value: PostChannel; label: string }[] = [
-  { value: 'Feed', label: 'Feed' },
-  { value: 'Reels', label: 'Reels' },
-  { value: 'Stories', label: 'Stories' },
-];
-
-const STATUS_OPTIONS: { value: PostStatus; label: string }[] = [
-  { value: 'production', label: 'Em produção' },
-  { value: 'ready', label: 'Pronto' },
-  { value: 'scheduled', label: 'Agendado' },
-  { value: 'posted', label: 'Publicado' },
-];
-
-const STATUS_STYLES: Record<PostStatus, { dot: string; badge: string; border: string }> = {
-  production: {
-    dot: 'bg-amber-400',
-    badge: 'bg-amber-50 text-amber-700 border-amber-200',
-    border: 'border-l-amber-400',
-  },
-  ready: {
-    dot: 'bg-green-500',
-    badge: 'bg-green-50 text-green-700 border-green-200',
-    border: 'border-l-green-500',
-  },
-  scheduled: {
-    dot: 'bg-blue-500',
-    badge: 'bg-blue-50 text-blue-700 border-blue-200',
-    border: 'border-l-blue-500',
-  },
-  posted: {
-    dot: 'bg-zinc-400',
-    badge: 'bg-zinc-50 text-zinc-500 border-zinc-200',
-    border: 'border-l-zinc-400',
-  },
-};
-
-const STATUS_LABELS: Record<PostStatus, string> = {
-  production: 'Em produção',
-  ready: 'Pronto',
-  scheduled: 'Agendado',
-  posted: 'Publicado',
-};
-
-const CHANNEL_LABELS: Record<PostChannel, string> = {
-  Feed: 'Feed',
-  Reels: 'Reels',
-  Stories: 'Stories',
 };
 
 const PT_BR_MONTHS = [
@@ -121,30 +68,107 @@ const PT_BR_MONTHS = [
 
 const PT_BR_WEEKDAYS = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'];
 
-// ─── Storage Helpers ─────────────────────────────────────────────────────────
+const SCRIPT_STATUS_LABELS: Record<ScriptStatus, string> = {
+  draft: 'Rascunho',
+  approved: 'Aprovado',
+  production: 'Em produção',
+  recording: 'Gravando',
+  drive: 'No Drive',
+  editing: 'Em edição',
+  edited: 'Editado',
+  scheduled: 'Agendado',
+  posted: 'Postado'
+};
 
-function storageKey(workspace: string) {
-  return `creatorai:posts:${workspace}`;
-}
+const SCRIPT_STATUS_STYLES: Record<ScriptStatus, { dot: string; badge: string; border: string }> = {
+  draft: {
+    dot: 'bg-zinc-400',
+    badge: 'border-zinc-200 bg-zinc-50 text-zinc-600',
+    border: 'border-l-zinc-300'
+  },
+  approved: {
+    dot: 'bg-emerald-500',
+    badge: 'border-emerald-200 bg-emerald-50 text-emerald-700',
+    border: 'border-l-emerald-500'
+  },
+  production: {
+    dot: 'bg-amber-500',
+    badge: 'border-amber-200 bg-amber-50 text-amber-700',
+    border: 'border-l-amber-500'
+  },
+  recording: {
+    dot: 'bg-rose-500',
+    badge: 'border-rose-200 bg-rose-50 text-rose-700',
+    border: 'border-l-rose-500'
+  },
+  drive: {
+    dot: 'bg-sky-500',
+    badge: 'border-sky-200 bg-sky-50 text-sky-700',
+    border: 'border-l-sky-500'
+  },
+  editing: {
+    dot: 'bg-purple-500',
+    badge: 'border-purple-200 bg-purple-50 text-purple-700',
+    border: 'border-l-purple-500'
+  },
+  edited: {
+    dot: 'bg-indigo-500',
+    badge: 'border-indigo-200 bg-indigo-50 text-indigo-700',
+    border: 'border-l-indigo-500'
+  },
+  scheduled: {
+    dot: 'bg-blue-500',
+    badge: 'border-blue-200 bg-blue-50 text-blue-700',
+    border: 'border-l-blue-500'
+  },
+  posted: {
+    dot: 'bg-slate-500',
+    badge: 'border-slate-200 bg-slate-100 text-slate-700',
+    border: 'border-l-slate-500'
+  }
+};
+
+const DEFAULT_SUB_OPTIONS: Record<ContentFormatKey, string> = {
+  reels: '30s',
+  stories: '3',
+  video_curto: '60s',
+  carrossel: '5',
+  post: ''
+};
+
+const SUB_OPTIONS: Record<ContentFormatKey, ReadonlyArray<{ value: string; label: string }>> = {
+  reels: [
+    { value: '15s', label: '15s' },
+    { value: '30s', label: '30s' },
+    { value: '45s', label: '45s' },
+    { value: '60s', label: '1 min' }
+  ],
+  stories: [
+    { value: '1', label: '1 slide' },
+    { value: '2', label: '2 slides' },
+    { value: '3', label: '3 slides' },
+    { value: '5', label: '5 slides' }
+  ],
+  video_curto: [
+    { value: '30s', label: '30s' },
+    { value: '60s', label: '1 min' },
+    { value: '90s', label: '1,5 min' }
+  ],
+  carrossel: [
+    { value: '3', label: '3 páginas' },
+    { value: '5', label: '5 páginas' },
+    { value: '7', label: '7 páginas' },
+    { value: '10', label: '10 páginas' }
+  ],
+  post: []
+};
 
 function profileKey(workspace: string) {
   return `creatorai:instagram-profile:${workspace}`;
 }
 
-function loadPosts(workspace: string): PlannedPost[] {
-  if (typeof window === 'undefined') return [];
-  try {
-    const raw = localStorage.getItem(storageKey(workspace));
-    return raw ? (JSON.parse(raw) as PlannedPost[]) : [];
-  } catch {
-    return [];
-  }
-}
-
-function savePosts(workspace: string, posts: PlannedPost[]) {
-  try {
-    localStorage.setItem(storageKey(workspace), JSON.stringify(posts));
-  } catch {}
+function templateKey(workspace: string) {
+  return `creatorai:post-schedule-templates:${workspace}`;
 }
 
 function loadProfile(workspace: string): string {
@@ -162,682 +186,1020 @@ function saveProfile(workspace: string, handle: string) {
   } catch {}
 }
 
-function emptyForm(date?: string): PostFormState {
-  return {
-    title: '',
-    channel: 'Feed',
-    status: 'production',
-    scheduledFor: date ?? new Date().toISOString().slice(0, 10),
-    caption: '',
-    imageUrl: '',
-    notes: '',
-    productId: undefined,
-    productName: undefined,
-    scriptId: undefined,
-  };
+function loadTemplates(workspace: string): ScheduleTemplate[] {
+  if (typeof window === 'undefined') return [];
+  try {
+    const raw = localStorage.getItem(templateKey(workspace));
+    if (!raw) return [];
+
+    type LegacyPlannerProductRule = Omit<PlannerProductRule, 'storiesInPeriod'> & {
+      storiesInPeriod?: number;
+      storiesPerAppearance?: number;
+    };
+    type LegacyScheduleTemplate = Omit<ScheduleTemplate, 'productRules'> & {
+      productRules?: LegacyPlannerProductRule[];
+    };
+
+    return (JSON.parse(raw) as LegacyScheduleTemplate[]).map((template) => ({
+      ...template,
+      productRules: (template.productRules ?? []).map((rule) => ({
+        ...rule,
+        storiesInPeriod:
+          typeof rule.storiesInPeriod === 'number'
+            ? rule.storiesInPeriod
+            : Math.max(0, Number.parseInt(String(rule.storiesPerAppearance ?? 3), 10) || 0)
+      }))
+    }));
+  } catch {
+    return [];
+  }
 }
 
-function emptyDraftForm(): PostFormState {
-  return {
-    title: '',
-    channel: 'Feed',
-    status: 'production',
-    scheduledFor: '',
-    caption: '',
-    imageUrl: '',
-    notes: '',
-    productId: undefined,
-    productName: undefined,
-    scriptId: undefined,
-  };
+function saveTemplates(workspace: string, templates: ScheduleTemplate[]) {
+  try {
+    localStorage.setItem(templateKey(workspace), JSON.stringify(templates));
+  } catch {}
 }
 
-function newId() {
-  return `post_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+function cloneProductRules(rules: PlannerProductRule[]) {
+  return rules.map((rule) => ({
+    ...rule,
+    fixedWeekdays: [...rule.fixedWeekdays]
+  }));
+}
+
+function shiftDateByDays(isoDate: string, days: number) {
+  const date = new Date(`${isoDate}T12:00:00`);
+  date.setDate(date.getDate() + days);
+  return date.toISOString().slice(0, 10);
 }
 
 function formatDateBR(isoDate: string) {
-  if (!isoDate) return 'Rascunho';
+  if (!isoDate) return 'Sem data';
   const [y, m, d] = isoDate.split('-');
   return `${d}/${m}/${y}`;
 }
 
-// ─── Schedule Generation ──────────────────────────────────────────────────────
-
-function generateSchedule(rules: ScheduleRules, products: ProductItem[]): PlannedPost[] {
-  const { startDate, endDate, feedPerDay, storiesPerDay, selectedProductIds, productDaysPerWeek } = rules;
-
-  const days: string[] = [];
-  const cur = new Date(startDate + 'T12:00:00');
-  const end = new Date(endDate + 'T12:00:00');
-  while (cur <= end) {
-    days.push(cur.toISOString().slice(0, 10));
-    cur.setDate(cur.getDate() + 1);
-  }
-
-  const enabledProducts = products.filter(p => selectedProductIds.includes(p.id));
-  const posts: PlannedPost[] = [];
-
-  const productWeekUsage: Record<string, number> = {};
-  let weekNumber = 0;
-
-  days.forEach((day, dayIndex) => {
-    const currentWeek = Math.floor(dayIndex / 7);
-    if (currentWeek !== weekNumber) {
-      weekNumber = currentWeek;
-      Object.keys(productWeekUsage).forEach(k => { productWeekUsage[k] = 0; });
-    }
-
-    let productForDay: ProductItem | undefined;
-    if (enabledProducts.length > 0) {
-      for (let attempt = 0; attempt < enabledProducts.length; attempt++) {
-        const candidate = enabledProducts[(dayIndex + attempt) % enabledProducts.length];
-        const maxDays = productDaysPerWeek[candidate.id] ?? 7;
-        if ((productWeekUsage[candidate.id] ?? 0) < maxDays) {
-          productForDay = candidate;
-          productWeekUsage[candidate.id] = (productWeekUsage[candidate.id] ?? 0) + 1;
-          break;
-        }
-      }
-    }
-
-    for (let i = 0; i < feedPerDay; i++) {
-      posts.push({
-        id: `sched_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
-        title: productForDay ? `${i === 0 ? 'Reels' : 'Post'} — ${productForDay.name}` : `Post ${i + 1}`,
-        channel: i === 0 ? 'Reels' : 'Feed',
-        status: 'production',
-        scheduledFor: day,
-        caption: '',
-        imageUrl: '',
-        notes: '',
-        productId: productForDay?.id,
-        productName: productForDay?.name,
-        createdAt: new Date().toISOString(),
-      });
-    }
-
-    for (let i = 0; i < storiesPerDay; i++) {
-      posts.push({
-        id: `sched_story_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
-        title: productForDay ? `Stories — ${productForDay.name}` : `Stories ${i + 1}`,
-        channel: 'Stories',
-        status: 'production',
-        scheduledFor: day,
-        caption: '',
-        imageUrl: '',
-        notes: '',
-        productId: productForDay?.id,
-        productName: productForDay?.name,
-        createdAt: new Date().toISOString(),
-      });
-    }
-  });
-
-  return posts;
+function formatDateTimeBR(isoDate: string) {
+  if (!isoDate) return '';
+  return new Intl.DateTimeFormat('pt-BR', {
+    day: '2-digit',
+    month: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit'
+  }).format(new Date(isoDate));
 }
 
-// ─── Schedule Planner Modal ───────────────────────────────────────────────────
+function getScriptChannel(script: ScriptItem) {
+  if (script.contentType === 'stories') return 'Stories';
+  if (script.contentType === 'reels' || script.contentType === 'video_curto') return 'Reels';
+  return 'Feed';
+}
 
-function SchedulePlannerModal({
+function getScriptPreviewIcon(script: ScriptItem) {
+  if (script.contentType === 'stories') return Layers;
+  if (script.contentType === 'reels' || script.contentType === 'video_curto') return Film;
+  return ImageIcon;
+}
+
+function buildEmptyManualDraft(date: string): ManualDraftState {
+  return {
+    title: '',
+    contentType: 'reels',
+    subOption: DEFAULT_SUB_OPTIONS.reels,
+    scheduledFor: date,
+    productId: '',
+    caption: '',
+    notes: ''
+  };
+}
+
+function buildEmptyStorySlides(count: number) {
+  return Array.from({ length: Math.max(1, count) }, (_, index) => ({
+    objetivo: index === 0 ? 'Gancho' : index === count - 1 ? 'CTA' : 'Desenvolvimento',
+    textoTela: '',
+    falado: '',
+    visual: ''
+  }));
+}
+
+function buildEmptyCarrosselSlides(count: number) {
+  return Array.from({ length: Math.max(2, count) }, (_, index) => ({
+    numero: index + 1,
+    titulo: '',
+    subtitulo: '',
+    conteudo: '',
+    visual: ''
+  }));
+}
+
+function buildEmptyScriptStructure(contentType: ContentFormatKey, subOption: string) {
+  if (contentType === 'stories') {
+    return {
+      takes: [],
+      storySlides: buildEmptyStorySlides(Number.parseInt(subOption || '3', 10) || 3),
+      carrosselSlides: [],
+      postFields: null
+    };
+  }
+
+  if (contentType === 'carrossel') {
+    return {
+      takes: [],
+      storySlides: [],
+      carrosselSlides: buildEmptyCarrosselSlides(Number.parseInt(subOption || '5', 10) || 5),
+      postFields: null
+    };
+  }
+
+  if (contentType === 'post') {
+    return {
+      takes: [],
+      storySlides: [],
+      carrosselSlides: [],
+      postFields: {
+        conceito: '',
+        tituloPeca: '',
+        textoApoio: '',
+        direcaoVisual: ''
+      }
+    };
+  }
+
+  return {
+    takes: Array.from({ length: 5 }, () => ''),
+    storySlides: [],
+    carrosselSlides: [],
+    postFields: null
+  };
+}
+
+function formatBatchHeadline(batch: PlannerBatchItem) {
+  return batch.mode === 'replan'
+    ? `Replanejamento ${formatDateBR(batch.rangeStart)} → ${formatDateBR(batch.rangeEnd)}`
+    : `Cronograma ${formatDateBR(batch.rangeStart)} → ${formatDateBR(batch.rangeEnd)}`;
+}
+
+function getBatchTone(status: PlannerBatchItem['status']) {
+  if (status === 'completed') return 'border-emerald-200 bg-emerald-50 text-emerald-700';
+  if (status === 'error') return 'border-rose-200 bg-rose-50 text-rose-700';
+  if (status === 'running') return 'border-amber-200 bg-amber-50 text-amber-700';
+  return 'border-zinc-200 bg-zinc-50 text-zinc-600';
+}
+
+function ManualContentModal({
   products,
+  initialDate,
+  loading,
   onClose,
-  onGenerate,
+  onSave
 }: {
   products: ProductItem[];
+  initialDate: string;
+  loading: boolean;
   onClose: () => void;
-  onGenerate: (posts: PlannedPost[]) => void;
+  onSave: (draft: ManualDraftState) => Promise<void>;
 }) {
-  const today = new Date().toISOString().slice(0, 10);
-  const in7Days = new Date(Date.now() + 7 * 86400000).toISOString().slice(0, 10);
+  const [draft, setDraft] = useState<ManualDraftState>(() => buildEmptyManualDraft(initialDate));
 
-  const [periodPreset, setPeriodPreset] = useState<'7' | '15' | '30' | 'custom'>('7');
-  const [startDate, setStartDate] = useState(today);
-  const [endDate, setEndDate] = useState(in7Days);
-  const [feedPerDay, setFeedPerDay] = useState(1);
-  const [storiesPerDay, setStoriesPerDay] = useState(3);
-  const [selectedProductIds, setSelectedProductIds] = useState<string[]>(products.map(p => p.id));
-  const [productDaysPerWeek, setProductDaysPerWeek] = useState<Record<string, number>>(
-    Object.fromEntries(products.map(p => [p.id, 7]))
-  );
-
-  function applyPreset(preset: '7' | '15' | '30') {
-    const start = new Date();
-    const end = new Date();
-    end.setDate(end.getDate() + parseInt(preset) - 1);
-    setStartDate(start.toISOString().slice(0, 10));
-    setEndDate(end.toISOString().slice(0, 10));
-    setPeriodPreset(preset);
+  function setField<K extends keyof ManualDraftState>(key: K, value: ManualDraftState[K]) {
+    setDraft((current) => ({ ...current, [key]: value }));
   }
 
-  const numDays = useMemo(() => {
-    if (!startDate || !endDate) return 0;
-    const s = new Date(startDate + 'T12:00:00');
-    const e = new Date(endDate + 'T12:00:00');
-    const diff = Math.round((e.getTime() - s.getTime()) / 86400000) + 1;
-    return Math.max(0, diff);
-  }, [startDate, endDate]);
+  const subOptions = SUB_OPTIONS[draft.contentType];
 
-  const totalFeed = numDays * feedPerDay;
-  const totalStories = numDays * storiesPerDay;
-
-  function toggleProduct(id: string) {
-    setSelectedProductIds(prev =>
-      prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]
-    );
-  }
-
-  function handleGenerate() {
-    const rules: ScheduleRules = {
-      startDate,
-      endDate,
-      feedPerDay,
-      storiesPerDay,
-      selectedProductIds,
-      productDaysPerWeek,
-    };
-    const generated = generateSchedule(rules, products);
-    onGenerate(generated);
-  }
+  useEffect(() => {
+    setDraft((current) => ({
+      ...current,
+      subOption: DEFAULT_SUB_OPTIONS[draft.contentType]
+    }));
+  }, [draft.contentType]);
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
-      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg max-h-[90vh] overflow-y-auto">
-        <div className="flex items-center justify-between p-5 border-b">
-          <span className="text-sm font-semibold text-zinc-700">Planejar cronograma</span>
-          <button onClick={onClose} className="p-1.5 rounded-lg text-zinc-500 hover:bg-zinc-100">
-            <X className="w-4 h-4" />
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 backdrop-blur-sm">
+      <div className="w-full max-w-2xl rounded-3xl border border-border bg-white shadow-2xl">
+        <div className="flex items-center justify-between border-b border-border px-5 py-4">
+          <div>
+            <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-muted-foreground">Nova peça</p>
+            <h3 className="mt-1 text-lg font-semibold text-foreground">Criar rascunho manual</h3>
+          </div>
+          <button onClick={onClose} className="rounded-xl border border-border p-2 text-muted-foreground transition hover:bg-muted">
+            <X className="h-4 w-4" />
           </button>
         </div>
 
-        <div className="p-5 space-y-5">
-          {/* Period */}
-          <div>
-            <label className="block text-xs font-medium text-zinc-500 mb-2">Período</label>
-            <div className="flex gap-2 mb-3">
-              {(['7', '15', '30'] as const).map(p => (
-                <button
-                  key={p}
-                  onClick={() => applyPreset(p)}
-                  className={cn(
-                    'flex-1 py-1.5 text-xs font-medium rounded-lg border transition-colors',
-                    periodPreset === p
-                      ? 'bg-zinc-900 text-white border-zinc-900'
-                      : 'border-zinc-200 text-zinc-600 hover:bg-zinc-50'
-                  )}
-                >
-                  {p} dias
-                </button>
-              ))}
-              <button
-                onClick={() => setPeriodPreset('custom')}
-                className={cn(
-                  'flex-1 py-1.5 text-xs font-medium rounded-lg border transition-colors',
-                  periodPreset === 'custom'
-                    ? 'bg-zinc-900 text-white border-zinc-900'
-                    : 'border-zinc-200 text-zinc-600 hover:bg-zinc-50'
-                )}
+        <div className="space-y-4 px-5 py-5">
+          <div className="space-y-2">
+            <label className="text-sm font-medium text-foreground">Título</label>
+            <Input
+              value={draft.title}
+              onChange={(event) => setField('title', event.target.value)}
+              placeholder="Ex.: Reels de produto com virada de percepção"
+            />
+          </div>
+
+          <div className="grid gap-4 md:grid-cols-3">
+            <div className="space-y-2">
+              <label className="text-sm font-medium text-foreground">Formato</label>
+              <select
+                value={draft.contentType}
+                onChange={(event) => setField('contentType', event.target.value as ContentFormatKey)}
+                className="w-full rounded-xl border border-border bg-white px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-ring/20"
               >
-                Personalizado
-              </button>
-            </div>
-            <div className="grid grid-cols-2 gap-3">
-              <div>
-                <label className="block text-[11px] text-zinc-400 mb-1">Início</label>
-                <Input
-                  type="date"
-                  value={startDate}
-                  onChange={e => { setStartDate(e.target.value); setPeriodPreset('custom'); }}
-                />
-              </div>
-              <div>
-                <label className="block text-[11px] text-zinc-400 mb-1">Fim</label>
-                <Input
-                  type="date"
-                  value={endDate}
-                  onChange={e => { setEndDate(e.target.value); setPeriodPreset('custom'); }}
-                />
-              </div>
-            </div>
-          </div>
-
-          {/* Posts per day */}
-          <div className="grid grid-cols-2 gap-4">
-            <div>
-              <label className="block text-xs font-medium text-zinc-500 mb-1">Feed/Reels por dia</label>
-              <Input
-                type="number"
-                min={0}
-                max={10}
-                value={feedPerDay}
-                onChange={e => setFeedPerDay(Math.max(0, parseInt(e.target.value) || 0))}
-              />
-            </div>
-            <div>
-              <label className="block text-xs font-medium text-zinc-500 mb-1">Stories por dia</label>
-              <Input
-                type="number"
-                min={0}
-                max={20}
-                value={storiesPerDay}
-                onChange={e => setStoriesPerDay(Math.max(0, parseInt(e.target.value) || 0))}
-              />
-            </div>
-          </div>
-
-          {/* Products */}
-          <div>
-            <label className="block text-xs font-medium text-zinc-500 mb-2">Produtos</label>
-            {products.length === 0 ? (
-              <p className="text-xs text-zinc-400 italic">
-                Nenhum produto cadastrado. Adicione produtos para associar ao cronograma.
-              </p>
-            ) : (
-              <div className="space-y-2 max-h-40 overflow-y-auto">
-                {products.map(p => (
-                  <div key={p.id} className="flex items-center gap-3">
-                    <input
-                      type="checkbox"
-                      id={`prod-${p.id}`}
-                      checked={selectedProductIds.includes(p.id)}
-                      onChange={() => toggleProduct(p.id)}
-                      className="rounded"
-                    />
-                    <label htmlFor={`prod-${p.id}`} className="flex-1 text-sm text-zinc-700 cursor-pointer">
-                      {p.name}
-                    </label>
-                    <div className="flex items-center gap-1">
-                      <span className="text-[11px] text-zinc-400">dias/sem:</span>
-                      <select
-                        value={productDaysPerWeek[p.id] ?? 7}
-                        onChange={e => setProductDaysPerWeek(prev => ({ ...prev, [p.id]: parseInt(e.target.value) }))}
-                        className="text-xs border border-zinc-200 rounded px-1 py-0.5 bg-white focus:outline-none"
-                        disabled={!selectedProductIds.includes(p.id)}
-                      >
-                        {[1, 2, 3, 4, 5, 6, 7].map(n => (
-                          <option key={n} value={n}>{n}</option>
-                        ))}
-                      </select>
-                    </div>
-                  </div>
+                {CONTENT_FORMAT_ORDER.map((format) => (
+                  <option key={format} value={format}>
+                    {getContentFormatLabel(format)}
+                  </option>
                 ))}
-              </div>
-            )}
+              </select>
+            </div>
+
+            <div className="space-y-2">
+              <label className="text-sm font-medium text-foreground">Subopção</label>
+              <select
+                value={draft.subOption}
+                onChange={(event) => setField('subOption', event.target.value)}
+                disabled={!subOptions.length}
+                className="w-full rounded-xl border border-border bg-white px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-ring/20 disabled:opacity-50"
+              >
+                {!subOptions.length ? (
+                  <option value="">Sem subopção</option>
+                ) : (
+                  subOptions.map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))
+                )}
+              </select>
+            </div>
+
+            <div className="space-y-2">
+              <label className="text-sm font-medium text-foreground">Data planejada</label>
+              <Input
+                type="date"
+                value={draft.scheduledFor}
+                onChange={(event) => setField('scheduledFor', event.target.value)}
+              />
+            </div>
           </div>
 
-          {/* Preview */}
-          <div className="bg-zinc-50 rounded-xl p-4 border border-zinc-100">
-            <p className="text-xs font-medium text-zinc-500 mb-1">Resumo do cronograma</p>
-            <p className="text-sm text-zinc-700">
-              <span className="font-semibold">{totalFeed}</span> posts Feed/Reels +{' '}
-              <span className="font-semibold">{totalStories}</span> Stories ={' '}
-              <span className="font-semibold">{totalFeed + totalStories}</span> total no período de{' '}
-              <span className="font-semibold">{numDays}</span> dias
-            </p>
-          </div>
-
-          <div className="flex justify-end gap-2 pt-1">
-            <Button variant="outline" onClick={onClose}>Cancelar</Button>
-            <Button
-              onClick={handleGenerate}
-              disabled={numDays === 0 || (totalFeed + totalStories === 0)}
+          <div className="space-y-2">
+            <label className="text-sm font-medium text-foreground">Produto</label>
+            <select
+              value={draft.productId}
+              onChange={(event) => setField('productId', event.target.value)}
+              className="w-full rounded-xl border border-border bg-white px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-ring/20"
             >
-              Gerar cronograma
-            </Button>
+              <option value="">Sem produto</option>
+              {products.map((product) => (
+                <option key={product.id} value={product.id}>
+                  {product.name}
+                </option>
+              ))}
+            </select>
           </div>
+
+          <div className="space-y-2">
+            <label className="text-sm font-medium text-foreground">Legenda inicial</label>
+            <Textarea
+              value={draft.caption}
+              onChange={(event) => setField('caption', event.target.value)}
+              rows={4}
+              placeholder="Opcional. Você pode deixar uma observação inicial para esse rascunho."
+            />
+          </div>
+
+          <div className="space-y-2">
+            <label className="text-sm font-medium text-foreground">Notas internas</label>
+            <Textarea
+              value={draft.notes}
+              onChange={(event) => setField('notes', event.target.value)}
+              rows={3}
+              placeholder="Contexto, campanha, direção criativa..."
+            />
+          </div>
+        </div>
+
+        <div className="flex items-center justify-end gap-2 border-t border-border px-5 py-4">
+          <Button variant="outline" onClick={onClose} disabled={loading}>
+            Cancelar
+          </Button>
+          <Button onClick={() => onSave(draft)} disabled={loading || !draft.title.trim()}>
+            {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />}
+            Criar rascunho
+          </Button>
         </div>
       </div>
     </div>
   );
 }
 
-// ─── Post Detail / Edit Modal ─────────────────────────────────────────────────
-
-function PostModal({
-  post,
-  mode,
-  products,
-  scripts,
-  onClose,
-  onSave,
-  onDelete,
-  onSwitchEdit,
+function PlannerBatchesPanel({
+  batches,
+  onRefresh,
+  refreshing
 }: {
-  post: PlannedPost | null;
-  mode: 'view' | 'edit' | 'new';
-  initialDate?: string;
-  products: ProductItem[];
-  scripts: ScriptItem[];
-  onClose: () => void;
-  onSave: (data: PostFormState) => void;
-  onDelete?: () => void;
-  onSwitchEdit?: () => void;
+  batches: PlannerBatchItem[];
+  onRefresh: () => void;
+  refreshing: boolean;
 }) {
-  const isEditing = mode === 'edit' || mode === 'new';
-  const [form, setForm] = useState<PostFormState>(() =>
-    post
-      ? {
-          title: post.title,
-          channel: post.channel,
-          status: post.status,
-          scheduledFor: post.scheduledFor,
-          caption: post.caption,
-          imageUrl: post.imageUrl,
-          notes: post.notes,
-          productId: post.productId,
-          productName: post.productName,
-          scriptId: post.scriptId,
-        }
-      : emptyForm()
-  );
-
-  const [showScriptPicker, setShowScriptPicker] = useState(false);
-
-  const setField = <K extends keyof PostFormState>(k: K, v: PostFormState[K]) =>
-    setForm(prev => ({ ...prev, [k]: v }));
-
-  if (!post && mode === 'view') return null;
-
-  const styles = STATUS_STYLES[form.status];
-  const captionPreview = form.caption.length > 120 ? form.caption.slice(0, 120) + '…' : form.caption;
-
-  const availableScripts = scripts.filter(
-    s => s.status === 'approved' || s.status === 'draft'
-  );
-
-  function handleScriptImport(script: ScriptItem) {
-    setField('title', script.title);
-    setField('caption', script.caption);
-    setField('scriptId', script.id);
-    if (script.productId) {
-      setField('productId', script.productId);
-      setField('productName', script.productName ?? '');
-    }
-    setShowScriptPicker(false);
+  if (!batches.length) {
+    return null;
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
-      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl max-h-[90vh] overflow-y-auto">
-        {/* Header */}
-        <div className="flex items-center justify-between p-5 border-b">
-          <div className="flex items-center gap-2">
-            {mode === 'new' ? (
-              <span className="text-sm font-semibold text-zinc-700">Nova postagem</span>
-            ) : isEditing ? (
-              <span className="text-sm font-semibold text-zinc-700">Editar postagem</span>
-            ) : (
-              <div className="flex items-center gap-2">
-                <span className={cn('w-2 h-2 rounded-full', STATUS_STYLES[post!.status].dot)} />
-                <span className="text-sm font-semibold text-zinc-700">{post!.title || 'Sem título'}</span>
-              </div>
-            )}
+    <Card>
+      <CardContent className="space-y-3 p-5">
+        <div className="flex items-center justify-between gap-3">
+          <div>
+            <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-muted-foreground">Geração em background</p>
+            <h3 className="mt-1 text-sm font-semibold text-foreground">Cronogramas recentes</h3>
           </div>
-          <div className="flex items-center gap-1">
-            {!isEditing && onSwitchEdit && (
-              <button
-                onClick={onSwitchEdit}
-                className="p-1.5 rounded-lg text-zinc-500 hover:bg-zinc-100"
-                title="Editar"
-              >
-                <Pencil className="w-4 h-4" />
-              </button>
-            )}
-            {!isEditing && onDelete && (
-              <button
-                onClick={onDelete}
-                className="p-1.5 rounded-lg text-red-500 hover:bg-red-50"
-                title="Excluir"
-              >
-                <Trash2 className="w-4 h-4" />
-              </button>
-            )}
-            <button
-              onClick={onClose}
-              className="p-1.5 rounded-lg text-zinc-500 hover:bg-zinc-100"
-            >
-              <X className="w-4 h-4" />
-            </button>
-          </div>
+          <Button variant="outline" size="sm" onClick={onRefresh} disabled={refreshing}>
+            {refreshing ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCcw className="h-3.5 w-3.5" />}
+            Atualizar
+          </Button>
         </div>
 
-        <div className="p-5 space-y-5">
-          {isEditing ? (
-            <>
-              <div className="grid grid-cols-2 gap-4">
-                <div className="col-span-2">
-                  <label className="block text-xs font-medium text-zinc-500 mb-1">Título</label>
-                  <Input
-                    value={form.title}
-                    onChange={e => setField('title', e.target.value)}
-                    placeholder="Ex: Reels do produto X — antes e depois"
+        <div className="space-y-2">
+          {batches.slice(0, 4).map((batch) => {
+            const progress = batch.progressTotal > 0
+              ? Math.min(100, Math.round((batch.progressCompleted / batch.progressTotal) * 100))
+              : 0;
+
+            return (
+              <div key={batch.id} className="rounded-2xl border border-border bg-muted/20 p-4">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div>
+                    <p className="text-sm font-semibold text-foreground">{formatBatchHeadline(batch)}</p>
+                    <p className="mt-1 text-xs text-muted-foreground">
+                      {batch.reason || 'Sem contexto adicional informado.'}
+                    </p>
+                  </div>
+                  <span className={cn('rounded-full border px-3 py-1 text-[11px] font-medium', getBatchTone(batch.status))}>
+                    {batch.status === 'queued'
+                      ? 'Na fila'
+                      : batch.status === 'running'
+                        ? 'Processando'
+                        : batch.status === 'completed'
+                          ? 'Concluído'
+                          : 'Com erro'}
+                  </span>
+                </div>
+
+                <div className="mt-3 h-2 rounded-full bg-zinc-100">
+                  <div
+                    className={cn(
+                      'h-2 rounded-full transition-all',
+                      batch.status === 'error' ? 'bg-rose-500' : batch.status === 'completed' ? 'bg-emerald-500' : 'bg-zinc-900'
+                    )}
+                    style={{ width: `${progress}%` }}
                   />
                 </div>
 
+                <div className="mt-2 flex flex-wrap items-center gap-3 text-xs text-muted-foreground">
+                  <span>{batch.progressCompleted}/{batch.progressTotal} peças</span>
+                  {batch.summary?.generatedScripts !== undefined ? (
+                    <span>{batch.summary.generatedScripts} geradas</span>
+                  ) : null}
+                  {batch.summary?.failedScripts ? (
+                    <span>{batch.summary.failedScripts} com falha</span>
+                  ) : null}
+                  <span>Atualizado {formatDateTimeBR(batch.updatedAt)}</span>
+                </div>
+
+                {batch.errorMessage ? (
+                  <p className="mt-2 text-xs text-rose-600">{batch.errorMessage}</p>
+                ) : null}
+              </div>
+            );
+          })}
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+function SchedulePlannerModal({
+  workspace,
+  products,
+  selectedDate,
+  loading,
+  onClose,
+  onGenerate,
+}: {
+  workspace: string;
+  products: ProductItem[];
+  selectedDate: string | null;
+  loading: boolean;
+  onClose: () => void;
+  onGenerate: (config: PlannerConfig, preview: ScheduleGenerationResult) => Promise<void> | void;
+}) {
+  const today = new Date().toISOString().slice(0, 10);
+  const initialStartDate = selectedDate && selectedDate >= today ? selectedDate : today;
+  const [mode, setMode] = useState<PlannerMode>('create');
+  const [periodPreset, setPeriodPreset] = useState<SchedulePeriodPreset>('7');
+  const [startDate, setStartDate] = useState(initialStartDate);
+  const [endDate, setEndDate] = useState(computeEndDateFromPreset(initialStartDate, '7'));
+  const [feedPerDay, setFeedPerDay] = useState(1);
+  const [reason, setReason] = useState('');
+  const [productRules, setProductRules] = useState<PlannerProductRule[]>(() => buildDefaultProductRules(products));
+  const [templates, setTemplates] = useState<ScheduleTemplate[]>(() => loadTemplates(workspace));
+  const [templatePickerId, setTemplatePickerId] = useState('');
+  const [selectedTemplateId, setSelectedTemplateId] = useState('');
+  const [templateName, setTemplateName] = useState('');
+  const [templateFeedback, setTemplateFeedback] = useState<string | null>(null);
+
+  function persistTemplates(nextTemplates: ScheduleTemplate[]) {
+    setTemplates(nextTemplates);
+    saveTemplates(workspace, nextTemplates);
+  }
+
+  function applyPreset(nextPreset: Exclude<SchedulePeriodPreset, 'custom'>) {
+    setPeriodPreset(nextPreset);
+    setEndDate(computeEndDateFromPreset(startDate, nextPreset));
+  }
+
+  function setRule(productId: string, updater: Partial<PlannerProductRule> | ((current: PlannerProductRule) => PlannerProductRule)) {
+    setProductRules((current) =>
+      current.map((rule) => {
+        if (rule.productId !== productId) {
+          return rule;
+        }
+
+        return typeof updater === 'function' ? updater(rule) : { ...rule, ...updater };
+      })
+    );
+  }
+
+  function toggleWeekday(productId: string, weekday: number) {
+    setRule(productId, (current) => ({
+      ...current,
+      fixedWeekdays: current.fixedWeekdays.includes(weekday)
+        ? current.fixedWeekdays.filter((item) => item !== weekday)
+        : [...current.fixedWeekdays, weekday].sort((left, right) => left - right)
+    }));
+  }
+
+  function selectAllProducts() {
+    setProductRules((current) => current.map((rule) => ({ ...rule, enabled: true, paused: false })));
+  }
+
+  function deselectAllProducts() {
+    setProductRules((current) => current.map((rule) => ({ ...rule, enabled: false })));
+  }
+
+  function applyTemplate(template: ScheduleTemplate) {
+    setTemplatePickerId(template.id);
+    setSelectedTemplateId(template.id);
+    setTemplateName(template.name);
+    setFeedPerDay(template.feedPerDay);
+    setPeriodPreset(template.periodPreset);
+    setProductRules(mergeTemplateProductRules(template.productRules, products));
+    const nextEndDate =
+      template.periodPreset === 'custom'
+        ? shiftDateByDays(startDate, Math.max(0, template.daySpan - 1))
+        : computeEndDateFromPreset(startDate, template.periodPreset);
+    setEndDate(nextEndDate);
+    setTemplateFeedback(`Template "${template.name}" carregado.`);
+  }
+
+  function saveCurrentTemplate(duplicate = false) {
+    const name = templateName.trim();
+    if (!name) {
+      setTemplateFeedback('Dê um nome ao template antes de salvar.');
+      return;
+    }
+
+    const nowIso = new Date().toISOString();
+    const existingTemplate = templates.find((template) => template.id === selectedTemplateId);
+    const nextTemplate: ScheduleTemplate = {
+      id: duplicate || !selectedTemplateId ? `template_${Date.now()}_${Math.random().toString(36).slice(2, 7)}` : selectedTemplateId,
+      name: duplicate ? `${name} (cópia)` : name,
+      periodPreset,
+      daySpan: Math.max(1, daySpanFromRange(startDate, endDate)),
+      feedPerDay,
+      productRules: cloneProductRules(productRules),
+      createdAt: duplicate || !existingTemplate ? nowIso : existingTemplate.createdAt,
+      updatedAt: nowIso
+    };
+
+    const nextTemplates = [
+      nextTemplate,
+      ...templates.filter((template) => template.id !== nextTemplate.id)
+    ].sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
+
+    persistTemplates(nextTemplates);
+    setTemplatePickerId(nextTemplate.id);
+    setSelectedTemplateId(nextTemplate.id);
+    setTemplateName(nextTemplate.name);
+    setTemplateFeedback(duplicate ? 'Template duplicado com sucesso.' : 'Template salvo com sucesso.');
+  }
+
+  const enabledRules = useMemo(
+    () => productRules.filter((rule) => rule.enabled && !rule.paused),
+    [productRules]
+  );
+
+  const plannerConfig = useMemo<PlannerConfig>(() => ({
+    mode,
+    periodPreset,
+    startDate,
+    endDate,
+    feedPerDay,
+    reason,
+    templateId: selectedTemplateId || undefined,
+    productRules
+  }), [mode, periodPreset, startDate, endDate, feedPerDay, reason, selectedTemplateId, productRules]);
+
+  const preview = useMemo(
+    () => generateSchedulePlan(plannerConfig, products),
+    [plannerConfig, products]
+  );
+
+  const fixedWeekdayLabels = useMemo(
+    () => PT_BR_WEEKDAYS.map((label, index) => ({ label, index })),
+    []
+  );
+
+  const numDays = useMemo(
+    () => getDatesInRange(startDate, endDate).length,
+    [startDate, endDate]
+  );
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 backdrop-blur-sm">
+      <div className="max-h-[92vh] w-full max-w-6xl overflow-y-auto rounded-2xl bg-white shadow-2xl">
+        <div className="flex items-center justify-between border-b p-5">
+          <div>
+            <span className="text-sm font-semibold text-zinc-700">Planejar cronograma</span>
+            <p className="mt-1 text-xs text-zinc-400">
+              Gere peças reais em rascunho usando o mesmo motor de Conteúdo e acompanhe o processamento em background.
+            </p>
+          </div>
+          <button onClick={onClose} className="rounded-lg p-1.5 text-zinc-500 hover:bg-zinc-100">
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+
+        <div className="grid gap-5 p-5 xl:grid-cols-[1.08fr_0.92fr]">
+          <div className="space-y-5">
+            <div className="rounded-2xl border border-zinc-200 bg-zinc-50 p-4">
+              <div className="flex flex-wrap items-center justify-between gap-3">
                 <div>
-                  <label className="block text-xs font-medium text-zinc-500 mb-1">Canal</label>
-                  <select
-                    value={form.channel}
-                    onChange={e => setField('channel', e.target.value as PostChannel)}
-                    className="w-full text-sm border border-zinc-200 rounded-lg px-3 py-2 bg-white focus:outline-none focus:ring-2 focus:ring-zinc-900/10"
+                  <p className="text-xs font-semibold uppercase tracking-[0.18em] text-zinc-500">Templates</p>
+                  <p className="mt-1 text-sm text-zinc-600">
+                    Salve um modelo recorrente e preserve os dias fixos quando reutilizar o cronograma.
+                  </p>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    disabled={!templates.length || !templatePickerId}
+                    onClick={() => {
+                      const template = templates.find((item) => item.id === templatePickerId);
+                      if (template) {
+                        applyTemplate(template);
+                      }
+                    }}
                   >
-                    {CHANNEL_OPTIONS.map(o => (
-                      <option key={o.value} value={o.value}>{o.label}</option>
+                    Carregar template
+                  </Button>
+                  <Button variant="outline" size="sm" onClick={() => saveCurrentTemplate(false)}>
+                    {selectedTemplateId ? 'Atualizar template' : 'Salvar template'}
+                  </Button>
+                  <Button variant="outline" size="sm" onClick={() => saveCurrentTemplate(true)}>
+                    Duplicar
+                  </Button>
+                </div>
+              </div>
+
+              <div className="mt-4 grid gap-3 md:grid-cols-[1fr_220px]">
+                <div className="space-y-1.5">
+                  <label className="block text-[11px] font-medium text-zinc-500">Templates salvos</label>
+                  <select
+                    value={templatePickerId}
+                    onChange={(event) => setTemplatePickerId(event.target.value)}
+                    className="w-full rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-700 focus:outline-none focus:ring-2 focus:ring-zinc-900/10"
+                  >
+                    <option value="">Selecione um template</option>
+                    {templates.map((template) => (
+                      <option key={template.id} value={template.id}>
+                        {template.name}
+                      </option>
                     ))}
                   </select>
                 </div>
-
-                <div>
-                  <label className="block text-xs font-medium text-zinc-500 mb-1">Status</label>
-                  <select
-                    value={form.status}
-                    onChange={e => setField('status', e.target.value as PostStatus)}
-                    className="w-full text-sm border border-zinc-200 rounded-lg px-3 py-2 bg-white focus:outline-none focus:ring-2 focus:ring-zinc-900/10"
-                  >
-                    {STATUS_OPTIONS.map(o => (
-                      <option key={o.value} value={o.value}>{o.label}</option>
-                    ))}
-                  </select>
+                <div className="space-y-1.5">
+                  <label className="block text-[11px] font-medium text-zinc-500">Nome do template</label>
+                  <Input
+                    value={templateName}
+                    onChange={(event) => setTemplateName(event.target.value)}
+                    placeholder="Ex.: Semana padrão"
+                  />
                 </div>
+              </div>
 
+              {templateFeedback ? (
+                <div className="mt-3 flex items-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs text-emerald-700">
+                  <CheckCircle2 className="h-3.5 w-3.5" />
+                  {templateFeedback}
+                </div>
+              ) : null}
+            </div>
+
+            <div className="rounded-2xl border border-zinc-200 p-4">
+              <div className="flex flex-wrap gap-2">
+                {([
+                  { key: 'create', label: 'Novo cronograma' },
+                  { key: 'replan', label: 'Replanejar intervalo' }
+                ] as const).map((option) => (
+                  <button
+                    key={option.key}
+                    type="button"
+                    onClick={() => {
+                      setMode(option.key);
+                      if (option.key === 'replan' && startDate < today) {
+                        setStartDate(today);
+                        if (periodPreset !== 'custom') {
+                          setEndDate(computeEndDateFromPreset(today, periodPreset));
+                        }
+                      }
+                    }}
+                    className={cn(
+                      'rounded-lg border px-3 py-2 text-xs font-medium transition-colors',
+                      mode === option.key
+                        ? 'border-zinc-900 bg-zinc-900 text-white'
+                        : 'border-zinc-200 text-zinc-600 hover:bg-zinc-50'
+                    )}
+                  >
+                    {option.label}
+                  </button>
+                ))}
+              </div>
+
+              <div className="mt-4">
+                <label className="mb-2 block text-xs font-medium text-zinc-500">Período</label>
+                <div className="flex flex-wrap gap-2">
+                  {(['1', '7', '15', '30'] as const).map((preset) => (
+                    <button
+                      key={preset}
+                      type="button"
+                      onClick={() => applyPreset(preset)}
+                      className={cn(
+                        'rounded-lg border px-3 py-1.5 text-xs font-medium transition-colors',
+                        periodPreset === preset
+                          ? 'border-zinc-900 bg-zinc-900 text-white'
+                          : 'border-zinc-200 text-zinc-600 hover:bg-zinc-50'
+                      )}
+                    >
+                      {preset} dia{preset === '1' ? '' : 's'}
+                    </button>
+                  ))}
+                  <button
+                    type="button"
+                    onClick={() => setPeriodPreset('custom')}
+                    className={cn(
+                      'rounded-lg border px-3 py-1.5 text-xs font-medium transition-colors',
+                      periodPreset === 'custom'
+                        ? 'border-zinc-900 bg-zinc-900 text-white'
+                        : 'border-zinc-200 text-zinc-600 hover:bg-zinc-50'
+                    )}
+                  >
+                    Personalizado
+                  </button>
+                </div>
+              </div>
+
+              <div className="mt-4 grid gap-3 md:grid-cols-[1fr_1fr_180px]">
                 <div>
-                  <label className="block text-xs font-medium text-zinc-500 mb-1">Data</label>
+                  <label className="mb-1 block text-[11px] text-zinc-400">Início</label>
                   <Input
                     type="date"
-                    value={form.scheduledFor}
-                    onChange={e => setField('scheduledFor', e.target.value)}
+                    value={startDate}
+                    min={mode === 'replan' ? today : undefined}
+                    onChange={(event) => {
+                      const nextStartDate = event.target.value;
+                      setStartDate(nextStartDate);
+                      if (periodPreset !== 'custom') {
+                        setEndDate(computeEndDateFromPreset(nextStartDate, periodPreset));
+                      }
+                    }}
                   />
-                  <p className="text-[10px] text-zinc-400 mt-0.5">Deixe em branco para salvar como rascunho</p>
                 </div>
-
                 <div>
-                  <label className="block text-xs font-medium text-zinc-500 mb-1">URL da imagem (preview)</label>
+                  <label className="mb-1 block text-[11px] text-zinc-400">Fim</label>
                   <Input
-                    value={form.imageUrl}
-                    onChange={e => setField('imageUrl', e.target.value)}
-                    placeholder="https://..."
+                    type="date"
+                    value={endDate}
+                    min={startDate}
+                    onChange={(event) => {
+                      setEndDate(event.target.value);
+                      setPeriodPreset('custom');
+                    }}
                   />
                 </div>
+                <div>
+                  <label className="mb-1 block text-[11px] text-zinc-400">Peças de feed por dia</label>
+                  <Input
+                    type="number"
+                    min={0}
+                    max={10}
+                    value={feedPerDay}
+                    onChange={(event) => setFeedPerDay(Math.max(0, Number.parseInt(event.target.value, 10) || 0))}
+                  />
+                </div>
+              </div>
 
-                {/* Product selector */}
-                {products.length > 0 && (
-                  <div className="col-span-2">
-                    <label className="block text-xs font-medium text-zinc-500 mb-1">Produto</label>
-                    <select
-                      value={form.productId ?? ''}
-                      onChange={e => {
-                        const p = products.find(prod => prod.id === e.target.value);
-                        setField('productId', p?.id ?? '');
-                        setField('productName', p?.name ?? '');
-                      }}
-                      className="w-full text-sm border border-zinc-200 rounded-lg px-3 py-2 bg-white focus:outline-none focus:ring-2 focus:ring-zinc-900/10"
-                    >
-                      <option value="">Sem produto</option>
-                      {products.map(p => (
-                        <option key={p.id} value={p.id}>{p.name}</option>
-                      ))}
-                    </select>
-                  </div>
-                )}
+              <div className="mt-4">
+                <label className="mb-1 block text-xs font-medium text-zinc-500">Motivo / contexto do planejamento</label>
+                <Textarea
+                  value={reason}
+                  onChange={(event) => setReason(event.target.value)}
+                  rows={3}
+                  placeholder={
+                    mode === 'replan'
+                      ? 'Ex.: produto esgotado, nova campanha, ajuste de prioridade...'
+                      : 'Ex.: semana padrão, lançamento, campanha de emagrecimento...'
+                  }
+                />
+              </div>
+            </div>
 
-                {/* Script import (new mode only) */}
-                {availableScripts.length > 0 && mode === 'new' && (
-                  <div className="col-span-2">
-                    <label className="block text-xs font-medium text-zinc-500 mb-1">Importar de roteiro</label>
-                    {showScriptPicker ? (
-                      <div className="border border-zinc-200 rounded-lg overflow-hidden">
-                        <div className="flex items-center justify-between px-3 py-2 bg-zinc-50 border-b border-zinc-100">
-                          <span className="text-xs font-medium text-zinc-600">Selecione um roteiro</span>
-                          <button
-                            onClick={() => setShowScriptPicker(false)}
-                            className="text-zinc-400 hover:text-zinc-600"
-                          >
-                            <X className="w-3.5 h-3.5" />
-                          </button>
-                        </div>
-                        <div className="max-h-40 overflow-y-auto">
-                          {availableScripts.map(s => (
-                            <button
-                              key={s.id}
-                              onClick={() => handleScriptImport(s)}
-                              className="w-full text-left px-3 py-2 hover:bg-zinc-50 transition-colors border-b border-zinc-50 last:border-0"
-                            >
-                              <p className="text-xs font-medium text-zinc-800 truncate">{s.title}</p>
-                              {s.productName && (
-                                <p className="text-[10px] text-zinc-400">{s.productName} · {s.status}</p>
-                              )}
-                            </button>
-                          ))}
+            <div className="rounded-2xl border border-zinc-200 p-4">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div>
+                  <label className="block text-xs font-medium text-zinc-500">Produtos e regras operacionais</label>
+                  <p className="mt-1 text-sm text-zinc-600">
+                    Defina aparições, stories por produto, repetição e dias fixos. O cronograma vira rascunho rico, não placeholder.
+                  </p>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  <Button variant="outline" size="sm" onClick={selectAllProducts}>
+                    Selecionar todos
+                  </Button>
+                  <Button variant="outline" size="sm" onClick={deselectAllProducts}>
+                    Deselecionar todos
+                  </Button>
+                </div>
+              </div>
+
+              {products.length === 0 ? (
+                <p className="mt-4 text-sm italic text-zinc-400">Nenhum produto cadastrado ainda.</p>
+              ) : (
+                <div className="mt-4 space-y-3">
+                  {productRules.map((rule) => {
+                    const disabled = !rule.enabled;
+
+                    return (
+                      <div
+                        key={rule.productId}
+                        className={cn(
+                          'rounded-2xl border p-4 transition-colors',
+                          disabled ? 'border-zinc-200 bg-zinc-50/60' : 'border-zinc-200 bg-white'
+                        )}
+                      >
+                        <div className="flex flex-col gap-3 md:flex-row md:items-start">
+                          <div className="flex items-center gap-3 md:w-[240px]">
+                            <input
+                              type="checkbox"
+                              checked={rule.enabled}
+                              onChange={() => setRule(rule.productId, { enabled: !rule.enabled, paused: false })}
+                              className="rounded"
+                            />
+                            <div className="min-w-0">
+                              <p className="truncate text-sm font-semibold text-zinc-800">{rule.productName}</p>
+                              <p className="text-[11px] text-zinc-400">
+                                {rule.fixedWeekdays.length
+                                  ? `Dias fixos: ${rule.fixedWeekdays.map((weekday) => PT_BR_WEEKDAYS[weekday]).join(', ')}`
+                                  : 'Sem dias fixos: o restante será distribuído automaticamente.'}
+                              </p>
+                            </div>
+                          </div>
+
+                          <div className="flex-1 space-y-3">
+                            <div className="flex flex-wrap gap-2">
+                              <button
+                                type="button"
+                                onClick={() => setRule(rule.productId, (current) => ({ ...current, allDays: !current.allDays, enabled: true, paused: false }))}
+                                className={cn(
+                                  'rounded-full border px-3 py-1 text-[11px] font-medium transition-colors',
+                                  rule.allDays
+                                    ? 'border-zinc-900 bg-zinc-900 text-white'
+                                    : 'border-zinc-200 text-zinc-600 hover:bg-zinc-50'
+                                )}
+                              >
+                                Todos os dias
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => setRule(rule.productId, (current) => ({ ...current, paused: !current.paused, enabled: current.paused ? current.enabled : true }))}
+                                className={cn(
+                                  'rounded-full border px-3 py-1 text-[11px] font-medium transition-colors',
+                                  rule.paused
+                                    ? 'border-amber-500 bg-amber-500 text-white'
+                                    : 'border-zinc-200 text-zinc-600 hover:bg-zinc-50'
+                                )}
+                              >
+                                {rule.paused ? 'Pausado' : 'Ativo'}
+                              </button>
+                            </div>
+
+                            <div className="grid gap-3 md:grid-cols-3">
+                              <div>
+                                <label className="mb-1 block text-[11px] text-zinc-400">Aparições no período</label>
+                                <Input
+                                  type="number"
+                                  min={0}
+                                  value={rule.allDays ? numDays : rule.appearancesInPeriod}
+                                  disabled={disabled || rule.paused || rule.allDays}
+                                  onChange={(event) =>
+                                    setRule(rule.productId, {
+                                      appearancesInPeriod: Math.max(0, Number.parseInt(event.target.value, 10) || 0),
+                                      enabled: true
+                                    })
+                                  }
+                                />
+                              </div>
+                              <div>
+                                <label className="mb-1 block text-[11px] text-zinc-400">Stories por produto no período</label>
+                                <Input
+                                  type="number"
+                                  min={0}
+                                  max={12}
+                                  value={rule.storiesInPeriod}
+                                  disabled={disabled || rule.paused}
+                                  onChange={(event) =>
+                                    setRule(rule.productId, {
+                                      storiesInPeriod: Math.max(0, Number.parseInt(event.target.value, 10) || 0),
+                                      enabled: true
+                                    })
+                                  }
+                                />
+                              </div>
+                              <div>
+                                <label className="mb-1 block text-[11px] text-zinc-400">Repetição seguida</label>
+                                <select
+                                  value={rule.consecutiveRule}
+                                  disabled={disabled || rule.paused}
+                                  onChange={(event) =>
+                                    setRule(rule.productId, {
+                                      consecutiveRule: event.target.value as PlannerProductRule['consecutiveRule'],
+                                      enabled: true
+                                    })
+                                  }
+                                  className="w-full rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-700 focus:outline-none focus:ring-2 focus:ring-zinc-900/10"
+                                >
+                                  <option value="avoid">Evitar dias seguidos</option>
+                                  <option value="allow">Pode repetir</option>
+                                  <option value="force">Priorizar repetição</option>
+                                </select>
+                              </div>
+                            </div>
+
+                            <div>
+                              <label className="mb-1 block text-[11px] text-zinc-400">Dias fixos por semana (opcional)</label>
+                              <div className="flex flex-wrap gap-1.5">
+                                {fixedWeekdayLabels.map((weekday) => (
+                                  <button
+                                    key={`${rule.productId}-${weekday.index}`}
+                                    type="button"
+                                    disabled={disabled || rule.paused || rule.allDays}
+                                    onClick={() => toggleWeekday(rule.productId, weekday.index)}
+                                    className={cn(
+                                      'rounded-lg border px-2.5 py-1 text-[11px] font-medium transition-colors',
+                                      rule.fixedWeekdays.includes(weekday.index)
+                                        ? 'border-zinc-900 bg-zinc-900 text-white'
+                                        : 'border-zinc-200 text-zinc-600 hover:bg-zinc-50',
+                                      (disabled || rule.paused || rule.allDays) && 'cursor-not-allowed opacity-40'
+                                    )}
+                                  >
+                                    {weekday.label}
+                                  </button>
+                                ))}
+                              </div>
+                            </div>
+                          </div>
                         </div>
                       </div>
-                    ) : (
-                      <button
-                        onClick={() => setShowScriptPicker(true)}
-                        className="flex items-center gap-1.5 text-xs text-zinc-600 border border-zinc-200 rounded-lg px-3 py-2 hover:bg-zinc-50 transition-colors"
-                      >
-                        <Tag className="w-3.5 h-3.5" />
-                        Importar de roteiro aprovado
-                        {form.scriptId && <span className="ml-1 text-green-600">(importado)</span>}
-                      </button>
-                    )}
-                  </div>
-                )}
-
-                <div className="col-span-2">
-                  <label className="block text-xs font-medium text-zinc-500 mb-1">Legenda (caption)</label>
-                  <Textarea
-                    value={form.caption}
-                    onChange={e => setField('caption', e.target.value)}
-                    rows={4}
-                    placeholder="Escreva a legenda do post..."
-                  />
+                    );
+                  })}
                 </div>
+              )}
+            </div>
+          </div>
 
-                <div className="col-span-2">
-                  <label className="block text-xs font-medium text-zinc-500 mb-1">Notas internas</label>
-                  <Textarea
-                    value={form.notes}
-                    onChange={e => setField('notes', e.target.value)}
-                    rows={2}
-                    placeholder="Observações de produção, referências..."
-                  />
+          <div className="space-y-5">
+            <div className="rounded-2xl border border-zinc-200 bg-zinc-50 p-4">
+              <p className="text-xs font-semibold uppercase tracking-[0.18em] text-zinc-500">Resumo do cronograma</p>
+              <div className="mt-3 grid gap-3 sm:grid-cols-2">
+                <div className="rounded-xl border border-zinc-200 bg-white p-3">
+                  <p className="text-[11px] text-zinc-400">Período</p>
+                  <p className="mt-1 text-sm font-semibold text-zinc-800">{numDays} dia{numDays === 1 ? '' : 's'}</p>
+                  <p className="mt-1 text-xs text-zinc-500">
+                    {formatDateBR(startDate)} até {formatDateBR(endDate)}
+                  </p>
+                </div>
+                <div className="rounded-xl border border-zinc-200 bg-white p-3">
+                  <p className="text-[11px] text-zinc-400">Produtos ativos</p>
+                  <p className="mt-1 text-sm font-semibold text-zinc-800">{enabledRules.length}</p>
+                  <p className="mt-1 text-xs text-zinc-500">
+                    {productRules.filter((rule) => rule.enabled).length} selecionados · {productRules.filter((rule) => rule.paused).length} pausados
+                  </p>
+                </div>
+                <div className="rounded-xl border border-zinc-200 bg-white p-3">
+                  <p className="text-[11px] text-zinc-400">Peças de feed</p>
+                  <p className="mt-1 text-sm font-semibold text-zinc-800">{preview.summary.totalFeedPosts}</p>
+                  <p className="mt-1 text-xs text-zinc-500">Reels, carrossel, post estático e vídeo curto entram como rascunho.</p>
+                </div>
+                <div className="rounded-xl border border-zinc-200 bg-white p-3">
+                  <p className="text-[11px] text-zinc-400">Sequências de stories</p>
+                  <p className="mt-1 text-sm font-semibold text-zinc-800">{preview.summary.totalStoryPosts}</p>
+                  <p className="mt-1 text-xs text-zinc-500">Cada item já vira sequência editável com slides reais.</p>
                 </div>
               </div>
+            </div>
 
-              <div className="flex justify-end gap-2 pt-2">
-                <Button variant="outline" onClick={onClose}>Cancelar</Button>
-                <Button
-                  onClick={() => onSave(form)}
-                  disabled={!form.title.trim()}
-                >
-                  {mode === 'new' ? 'Criar postagem' : 'Salvar alterações'}
-                </Button>
+            <div className="rounded-2xl border border-zinc-200 p-4">
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <p className="text-xs font-semibold uppercase tracking-[0.18em] text-zinc-500">Distribuição por produto</p>
+                  <p className="mt-1 text-sm text-zinc-600">
+                    O cronograma respeita dias fixos e redistribui apenas o que continuar flexível.
+                  </p>
+                </div>
+                <span className="rounded-full border border-zinc-200 bg-zinc-50 px-3 py-1 text-[11px] font-medium text-zinc-500">
+                  {preview.summary.totalPosts} peças previstas
+                </span>
               </div>
-            </>
-          ) : (
-            post && (
-              <>
-                <div className="flex gap-4">
-                  <div
-                    className="w-24 flex-shrink-0 rounded-lg overflow-hidden bg-zinc-100 flex items-center justify-center"
-                    style={{ aspectRatio: '4/5' }}
-                  >
-                    {post.imageUrl ? (
-                      <img src={post.imageUrl} alt="" className="w-full h-full object-cover" />
-                    ) : (
-                      <ImageIcon className="w-6 h-6 text-zinc-300" />
-                    )}
-                  </div>
 
-                  <div className="flex-1 min-w-0 space-y-2">
-                    <div className="flex flex-wrap gap-1.5">
-                      <span className={cn('text-xs px-2 py-0.5 rounded-full border font-medium', styles.badge)}>
-                        {STATUS_LABELS[post.status]}
-                      </span>
-                      <span className="text-xs px-2 py-0.5 rounded-full border bg-zinc-50 text-zinc-600 border-zinc-200">
-                        {CHANNEL_LABELS[post.channel]}
-                      </span>
-                      <span className="text-xs px-2 py-0.5 rounded-full border bg-zinc-50 text-zinc-600 border-zinc-200 flex items-center gap-1">
-                        <Calendar className="w-3 h-3" />
-                        {formatDateBR(post.scheduledFor)}
-                      </span>
-                      {post.productName && (
-                        <span className="text-xs px-2 py-0.5 rounded-full border bg-violet-50 text-violet-600 border-violet-200">
-                          {post.productName}
+              <div className="mt-4 space-y-3">
+                {preview.summary.products.length ? (
+                  preview.summary.products.map((productSummary) => (
+                    <div key={productSummary.productId} className="rounded-xl border border-zinc-200 bg-zinc-50 p-3">
+                      <div className="flex items-center justify-between gap-3">
+                        <p className="text-sm font-semibold text-zinc-800">{productSummary.productName}</p>
+                        <span className="text-xs text-zinc-500">
+                          {productSummary.scheduledDates.length} dia{productSummary.scheduledDates.length === 1 ? '' : 's'} · {productSummary.storiesTotal} story{productSummary.storiesTotal === 1 ? '' : 's'} no período
                         </span>
-                      )}
+                      </div>
+                      <p className="mt-2 text-xs leading-5 text-zinc-500">
+                        {productSummary.fixedDates.length
+                          ? `Fixos: ${productSummary.fixedDates.map((date) => formatDateBR(date)).join(', ')}.`
+                          : 'Sem dias fixos.'}
+                      </p>
+                      <p className="mt-1 text-xs leading-5 text-zinc-500">
+                        Dias no período: {productSummary.scheduledDates.map((date) => formatDateBR(date)).join(', ')}
+                      </p>
                     </div>
-                    <p className="text-sm font-medium text-zinc-800">{post.title || 'Sem título'}</p>
-                    {post.caption && (
-                      <p className="text-xs text-zinc-500 leading-relaxed">{captionPreview}</p>
-                    )}
-                  </div>
-                </div>
-
-                {post.caption && post.caption.length > 120 && (
-                  <div>
-                    <p className="text-xs font-medium text-zinc-500 mb-1">Legenda completa</p>
-                    <p className="text-sm text-zinc-700 whitespace-pre-wrap leading-relaxed">{post.caption}</p>
+                  ))
+                ) : (
+                  <div className="rounded-xl border border-dashed border-zinc-200 bg-zinc-50 p-4 text-sm text-zinc-400">
+                    Ative pelo menos um produto para visualizar a distribuição.
                   </div>
                 )}
+              </div>
+            </div>
 
-                {post.notes && (
-                  <div>
-                    <p className="text-xs font-medium text-zinc-500 mb-1">Notas internas</p>
-                    <p className="text-sm text-zinc-600 whitespace-pre-wrap">{post.notes}</p>
-                  </div>
-                )}
-              </>
-            )
-          )}
+            <div className="flex justify-end gap-2">
+              <Button variant="outline" onClick={onClose} disabled={loading}>Cancelar</Button>
+              <Button
+                onClick={() => onGenerate(plannerConfig, preview)}
+                disabled={loading || numDays === 0 || preview.summary.totalPosts === 0}
+              >
+                {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
+                {mode === 'replan' ? 'Recriar intervalo' : 'Gerar cronograma'}
+              </Button>
+            </div>
+          </div>
         </div>
       </div>
     </div>
   );
 }
 
-// ─── Instagram Preview Panel ──────────────────────────────────────────────────
-
 function InstagramPreview({
-  posts,
+  scripts,
   profile,
   onProfileChange,
-  onPostClick,
+  onScriptClick,
 }: {
-  posts: PlannedPost[];
+  scripts: ScriptItem[];
   profile: string;
   onProfileChange: (val: string) => void;
-  onPostClick: (post: PlannedPost) => void;
+  onScriptClick: (script: ScriptItem) => void;
 }) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(profile);
 
-  const feedPosts = useMemo(
+  const feedScripts = useMemo(
     () =>
-      [...posts]
-        .filter(p => p.channel !== 'Stories' && p.scheduledFor !== '')
-        .sort((a, b) => b.scheduledFor.localeCompare(a.scheduledFor)),
-    [posts]
+      [...scripts]
+        .filter((script) => script.scheduledFor && script.contentType !== 'stories')
+        .sort((left, right) => right.scheduledFor.localeCompare(left.scheduledFor)),
+    [scripts]
   );
 
   function handleSave() {
@@ -846,778 +1208,996 @@ function InstagramPreview({
   }
 
   return (
-    <div className="flex flex-col h-full">
-      <div className="flex-1 overflow-y-auto bg-white rounded-2xl border border-zinc-200 shadow-sm">
-        {/* Profile header */}
-        <div className="px-4 pt-4 pb-3 border-b border-zinc-100">
-          <div className="flex items-center gap-3 mb-3">
-            <div className="w-14 h-14 rounded-full bg-gradient-to-br from-purple-400 via-pink-400 to-orange-400 flex items-center justify-center text-white">
-              <Instagram className="w-6 h-6" />
+    <div className="flex h-full flex-col">
+      <div className="flex-1 overflow-y-auto rounded-2xl border border-zinc-200 bg-white shadow-sm">
+        <div className="border-b border-zinc-100 px-4 pb-3 pt-4">
+          <div className="mb-3 flex items-center gap-3">
+            <div className="flex h-14 w-14 items-center justify-center rounded-full bg-gradient-to-br from-violet-400 via-fuchsia-400 to-orange-400 text-white">
+              <Instagram className="h-6 w-6" />
             </div>
-            <div className="flex-1 min-w-0">
+            <div className="min-w-0 flex-1">
               {editing ? (
                 <div className="flex gap-1">
                   <input
-                    className="flex-1 text-sm border border-zinc-300 rounded px-2 py-1 focus:outline-none focus:ring-1 focus:ring-zinc-400"
+                    className="flex-1 rounded px-2 py-1 text-sm ring-1 ring-zinc-300 focus:outline-none focus:ring-zinc-500"
                     value={draft}
-                    onChange={e => setDraft(e.target.value)}
+                    onChange={(event) => setDraft(event.target.value)}
                     placeholder="@seuperfil"
                     autoFocus
                   />
-                  <button
-                    onClick={handleSave}
-                    className="text-xs px-2 py-1 bg-zinc-900 text-white rounded"
-                  >
+                  <button onClick={handleSave} className="rounded bg-zinc-900 px-2 py-1 text-xs text-white">
                     OK
                   </button>
                 </div>
               ) : (
-                <button
-                  onClick={() => { setDraft(profile); setEditing(true); }}
-                  className="flex items-center gap-1 group"
-                >
-                  <span className="text-sm font-semibold text-zinc-900">
-                    {profile || 'Definir @perfil'}
-                  </span>
-                  <Pencil className="w-3 h-3 text-zinc-400 opacity-0 group-hover:opacity-100 transition-opacity" />
+                <button onClick={() => { setDraft(profile); setEditing(true); }} className="group flex items-center gap-1">
+                  <span className="text-sm font-semibold text-zinc-900">{profile || 'Definir @perfil'}</span>
                 </button>
               )}
-              <div className="flex items-center gap-3 text-xs text-zinc-500 mt-0.5">
-                <span><strong className="text-zinc-900">{feedPosts.length}</strong> posts</span>
+              <div className="mt-0.5 flex items-center gap-3 text-xs text-zinc-500">
+                <span><strong className="text-zinc-900">{feedScripts.length}</strong> peças no feed</span>
               </div>
             </div>
           </div>
         </div>
 
-        {/* Grid */}
-        {feedPosts.length === 0 ? (
-          <div className="flex flex-col items-center justify-center py-12 text-center px-4">
-            <LayoutGrid className="w-8 h-8 text-zinc-200 mb-2" />
-            <p className="text-xs text-zinc-400">Nenhuma postagem de Feed ou Reels ainda.</p>
-            <p className="text-xs text-zinc-300 mt-0.5">Adicione posts no calendário para ver o preview.</p>
+        {feedScripts.length === 0 ? (
+          <div className="flex flex-col items-center justify-center px-4 py-12 text-center">
+            <LayoutGrid className="mb-2 h-8 w-8 text-zinc-200" />
+            <p className="text-xs text-zinc-400">Nenhuma peça de feed agendada ainda.</p>
+            <p className="mt-0.5 text-xs text-zinc-300">Quando o cronograma gerar rascunhos com data, o preview aparece aqui.</p>
           </div>
         ) : (
           <div className="grid grid-cols-3 gap-px bg-zinc-200">
-            {feedPosts.map(post => (
-              <button
-                key={post.id}
-                onClick={() => onPostClick(post)}
-                className="relative bg-zinc-100 overflow-hidden group"
-                style={{ aspectRatio: '1/1' }}
-              >
-                {post.imageUrl ? (
-                  <img
-                    src={post.imageUrl}
-                    alt={post.title}
-                    className="w-full h-full object-cover"
-                    onError={e => { (e.target as HTMLImageElement).src = ''; }}
-                  />
-                ) : (
-                  <div className="w-full h-full bg-zinc-100 flex items-center justify-center">
-                    {post.channel === 'Reels' ? (
-                      <Film className="w-5 h-5 text-zinc-300" />
-                    ) : (
-                      <ImageIcon className="w-5 h-5 text-zinc-300" />
-                    )}
+            {feedScripts.map((script) => {
+              const Icon = getScriptPreviewIcon(script);
+              return (
+                <button
+                  key={script.id}
+                  onClick={() => onScriptClick(script)}
+                  className="group relative overflow-hidden bg-zinc-100"
+                  style={{ aspectRatio: '1/1' }}
+                >
+                  <div className="flex h-full w-full items-center justify-center bg-zinc-100">
+                    <Icon className="h-5 w-5 text-zinc-300" />
                   </div>
-                )}
 
-                <div className={cn(
-                  'absolute top-1 right-1 w-2.5 h-2.5 rounded-full border border-white shadow-sm',
-                  STATUS_STYLES[post.status].dot
-                )} />
+                  <div className={cn('absolute right-1 top-1 h-2.5 w-2.5 rounded-full border border-white shadow-sm', SCRIPT_STATUS_STYLES[script.status].dot)} />
 
-                {post.channel === 'Reels' && (
-                  <div className="absolute top-1 left-1">
-                    <Film className="w-3 h-3 text-white drop-shadow" />
+                  <div className="absolute left-1 top-1">
+                    <span className={cn('rounded-full border px-1.5 py-0.5 text-[9px] font-medium', getContentFormatBadgeClass(script.contentType))}>
+                      {getContentFormatLabel(script.contentType)}
+                    </span>
                   </div>
-                )}
 
-                <div className="absolute inset-0 bg-black/0 group-hover:bg-black/20 transition-colors flex items-center justify-center">
-                  <span className="text-white text-xs font-medium opacity-0 group-hover:opacity-100 transition-opacity text-center px-1 leading-tight line-clamp-2">
-                    {post.title}
-                  </span>
-                </div>
-              </button>
-            ))}
+                  <div className="absolute inset-0 flex items-center justify-center bg-black/0 transition-colors group-hover:bg-black/20">
+                    <span className="line-clamp-2 px-1 text-center text-xs font-medium text-white opacity-0 transition-opacity group-hover:opacity-100">
+                      {script.title}
+                    </span>
+                  </div>
+                </button>
+              );
+            })}
           </div>
         )}
-      </div>
-
-      {/* Legend */}
-      <div className="mt-3 flex flex-wrap gap-x-3 gap-y-1">
-        {Object.entries(STATUS_STYLES).map(([status, st]) => (
-          <div key={status} className="flex items-center gap-1">
-            <span className={cn('w-2 h-2 rounded-full', st.dot)} />
-            <span className="text-xs text-zinc-500">{STATUS_LABELS[status as PostStatus]}</span>
-          </div>
-        ))}
       </div>
     </div>
   );
 }
 
-// ─── Calendar ─────────────────────────────────────────────────────────────────
-
 function CalendarView({
-  posts,
+  scripts,
   year,
   month,
   selectedDate,
   onSelectDate,
   onPrevMonth,
   onNextMonth,
-  onNewPost,
+  onNewDraft,
   dragOver,
   onDragOver,
   onDrop,
   onDragStart,
-  onClickPost,
+  onClickScript,
 }: {
-  posts: PlannedPost[];
+  scripts: ScriptItem[];
   year: number;
   month: number;
   selectedDate: string | null;
   onSelectDate: (date: string) => void;
   onPrevMonth: () => void;
   onNextMonth: () => void;
-  onNewPost: (date: string) => void;
+  onNewDraft: (date: string) => void;
   dragOver: string | null;
   onDragOver: (date: string) => void;
   onDrop: (date: string) => void;
-  onDragStart: (postId: string) => void;
-  onClickPost?: (post: PlannedPost) => void;
+  onDragStart: (scriptId: string) => void;
+  onClickScript: (script: ScriptItem) => void;
 }) {
   const firstDay = new Date(year, month, 1).getDay();
   const daysInMonth = new Date(year, month + 1, 0).getDate();
   const today = new Date().toISOString().slice(0, 10);
 
-  // Only show scheduled posts (non-drafts)
-  const scheduledPosts = useMemo(() => posts.filter(p => p.scheduledFor !== ''), [posts]);
-
-  const postsByDate = useMemo(() => {
-    const map: Record<string, PlannedPost[]> = {};
-    scheduledPosts.forEach(p => {
-      if (!map[p.scheduledFor]) map[p.scheduledFor] = [];
-      map[p.scheduledFor].push(p);
+  const scriptsByDate = useMemo(() => {
+    const map: Record<string, ScriptItem[]> = {};
+    scripts.forEach((script) => {
+      if (!script.scheduledFor) return;
+      if (!map[script.scheduledFor]) map[script.scheduledFor] = [];
+      map[script.scheduledFor].push(script);
     });
     return map;
-  }, [scheduledPosts]);
+  }, [scripts]);
 
-  const cells: (null | number)[] = [
+  const cells: Array<number | null> = [
     ...Array(firstDay).fill(null),
-    ...Array.from({ length: daysInMonth }, (_, i) => i + 1),
+    ...Array.from({ length: daysInMonth }, (_, index) => index + 1)
   ];
 
   function dateStr(day: number) {
     return `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
   }
 
-  const selectedPosts = selectedDate ? (postsByDate[selectedDate] ?? []) : [];
+  const selectedScripts = selectedDate ? (scriptsByDate[selectedDate] ?? []) : [];
 
   return (
-    <div className="flex flex-col h-full">
-      <div className="flex items-center justify-between mb-4">
-        <button onClick={onPrevMonth} className="p-1.5 rounded-lg hover:bg-zinc-100 text-zinc-500">
-          <ArrowLeft className="w-4 h-4" />
+    <div className="flex h-full flex-col">
+      <div className="mb-4 flex items-center justify-between">
+        <button onClick={onPrevMonth} className="rounded-lg p-1.5 text-zinc-500 hover:bg-zinc-100">
+          <ArrowLeft className="h-4 w-4" />
         </button>
         <h3 className="text-sm font-semibold text-zinc-800">
           {PT_BR_MONTHS[month]} {year}
         </h3>
-        <button onClick={onNextMonth} className="p-1.5 rounded-lg hover:bg-zinc-100 text-zinc-500">
-          <ArrowRight className="w-4 h-4" />
+        <button onClick={onNextMonth} className="rounded-lg p-1.5 text-zinc-500 hover:bg-zinc-100">
+          <ArrowRight className="h-4 w-4" />
         </button>
       </div>
 
-      <div className="grid grid-cols-7 mb-1">
-        {PT_BR_WEEKDAYS.map(d => (
-          <div key={d} className="text-center text-[10px] font-medium text-zinc-400 py-1">
-            {d}
+      <div className="mb-1 grid grid-cols-7">
+        {PT_BR_WEEKDAYS.map((day) => (
+          <div key={day} className="py-1 text-center text-[10px] font-medium text-zinc-400">
+            {day}
           </div>
         ))}
       </div>
 
-      <div className="grid grid-cols-7 gap-px flex-1">
-        {cells.map((day, i) => {
-          if (!day) return <div key={`empty-${i}`} />;
-          const ds = dateStr(day);
-          const dayPosts = postsByDate[ds] ?? [];
-          const isToday = ds === today;
-          const isSelected = ds === selectedDate;
-          const isDragTarget = ds === dragOver;
+      <div className="grid flex-1 grid-cols-7 gap-px">
+        {cells.map((day, index) => {
+          if (!day) return <div key={`empty-${index}`} />;
+          const isoDate = dateStr(day);
+          const dayScripts = scriptsByDate[isoDate] ?? [];
+          const isToday = isoDate === today;
+          const isSelected = isoDate === selectedDate;
+          const isDragTarget = isoDate === dragOver;
 
           return (
             <div
-              key={ds}
-              onClick={() => onSelectDate(ds)}
-              onDragOver={e => { e.preventDefault(); onDragOver(ds); }}
-              onDrop={() => onDrop(ds)}
+              key={isoDate}
+              onClick={() => onSelectDate(isoDate)}
+              onDragOver={(event) => { event.preventDefault(); onDragOver(isoDate); }}
+              onDrop={() => onDrop(isoDate)}
               className={cn(
-                'min-h-[52px] rounded-lg p-1 cursor-pointer transition-colors relative',
+                'relative min-h-[58px] cursor-pointer rounded-lg p-1 transition-colors',
                 isSelected
                   ? 'bg-zinc-900 text-white'
                   : isToday
-                  ? 'bg-zinc-100'
-                  : isDragTarget
-                  ? 'bg-blue-50 ring-1 ring-blue-300'
-                  : 'hover:bg-zinc-50'
+                    ? 'bg-zinc-100'
+                    : isDragTarget
+                      ? 'bg-blue-50 ring-1 ring-blue-300'
+                      : 'hover:bg-zinc-50'
               )}
             >
               <span className={cn(
-                'text-xs font-medium leading-none block mb-1',
+                'mb-1 block text-xs font-medium leading-none',
                 isSelected ? 'text-white' : isToday ? 'text-zinc-900' : 'text-zinc-700'
               )}>
                 {day}
               </span>
 
               <div className="flex flex-wrap gap-0.5">
-                {dayPosts.slice(0, 5).map(p => (
+                {dayScripts.slice(0, 5).map((script) => (
                   <button
-                    key={p.id}
+                    key={script.id}
                     draggable
-                    onDragStart={e => { e.stopPropagation(); onDragStart(p.id); }}
-                    onClick={e => { e.stopPropagation(); onSelectDate(ds); }}
-                    title={p.title}
-                    className={cn(
-                      'w-2 h-2 rounded-full flex-shrink-0 cursor-grab',
-                      STATUS_STYLES[p.status].dot
-                    )}
+                    onDragStart={(event) => { event.stopPropagation(); onDragStart(script.id); }}
+                    onClick={(event) => { event.stopPropagation(); onClickScript(script); }}
+                    title={script.title}
+                    className={cn('h-2 w-2 rounded-full', SCRIPT_STATUS_STYLES[script.status].dot)}
                   />
                 ))}
-                {dayPosts.length > 5 && (
+                {dayScripts.length > 5 ? (
                   <span className={cn('text-[9px] leading-none', isSelected ? 'text-zinc-300' : 'text-zinc-400')}>
-                    +{dayPosts.length - 5}
+                    +{dayScripts.length - 5}
                   </span>
-                )}
+                ) : null}
               </div>
 
-              {!isSelected && (
+              {!isSelected ? (
                 <button
-                  onClick={e => { e.stopPropagation(); onNewPost(ds); }}
-                  className="absolute top-0.5 right-0.5 w-4 h-4 rounded text-zinc-300 hover:text-zinc-600 hover:bg-zinc-100 opacity-0 hover:opacity-100 group-hover:opacity-100 flex items-center justify-center transition-opacity"
-                  title="Novo post neste dia"
+                  onClick={(event) => { event.stopPropagation(); onNewDraft(isoDate); }}
+                  className="absolute right-0.5 top-0.5 flex h-4 w-4 items-center justify-center rounded text-zinc-300 transition hover:bg-zinc-100 hover:text-zinc-600"
+                  title="Nova peça neste dia"
                 >
-                  <Plus className="w-3 h-3" />
+                  <Plus className="h-3 w-3" />
                 </button>
-              )}
+              ) : null}
             </div>
           );
         })}
       </div>
 
-      {selectedDate && (
-        <div className="mt-4 border-t pt-4 space-y-2 max-h-52 overflow-y-auto">
-          <div className="flex items-center justify-between mb-2">
+      {selectedDate ? (
+        <div className="mt-4 max-h-56 space-y-2 overflow-y-auto border-t pt-4">
+          <div className="mb-2 flex items-center justify-between">
             <p className="text-xs font-semibold text-zinc-700">{formatDateBR(selectedDate)}</p>
-            <button
-              onClick={() => onNewPost(selectedDate)}
-              className="flex items-center gap-1 text-xs text-zinc-500 hover:text-zinc-800"
-            >
-              <Plus className="w-3 h-3" /> Novo post
+            <button onClick={() => onNewDraft(selectedDate)} className="flex items-center gap-1 text-xs text-zinc-500 hover:text-zinc-800">
+              <Plus className="h-3 w-3" />
+              Nova peça
             </button>
           </div>
 
-          {selectedPosts.length === 0 && (
-            <p className="text-xs text-zinc-400 italic">Nenhum post neste dia.</p>
+          {selectedScripts.length === 0 ? (
+            <p className="text-xs italic text-zinc-400">Nenhuma peça neste dia.</p>
+          ) : (
+            selectedScripts.map((script) => (
+              <button
+                key={script.id}
+                draggable
+                onDragStart={() => onDragStart(script.id)}
+                onClick={() => onClickScript(script)}
+                className={cn(
+                  'flex w-full items-center gap-2 rounded-lg border-l-2 bg-zinc-50 p-2 text-left transition hover:bg-zinc-100',
+                  SCRIPT_STATUS_STYLES[script.status].border
+                )}
+              >
+                <span className={cn('h-1.5 w-1.5 rounded-full', SCRIPT_STATUS_STYLES[script.status].dot)} />
+                <div className="min-w-0 flex-1">
+                  <p className="truncate text-xs font-medium text-zinc-800">{script.title}</p>
+                  <div className="mt-1 flex flex-wrap items-center gap-1.5">
+                    <span className={cn('rounded-full border px-2 py-0.5 text-[10px] font-medium', getContentFormatBadgeClass(script.contentType))}>
+                      {getContentFormatLabel(script.contentType)}
+                    </span>
+                    {script.productName ? (
+                      <span className="text-[10px] text-violet-600">{script.productName}</span>
+                    ) : null}
+                  </div>
+                </div>
+              </button>
+            ))
           )}
-
-          {selectedPosts.map(p => (
-            <div
-              key={p.id}
-              draggable
-              onDragStart={() => onDragStart(p.id)}
-              onClick={() => onClickPost?.(p)}
-              className={cn(
-                'flex items-center gap-2 p-2 rounded-lg border-l-2 bg-zinc-50 cursor-grab',
-                STATUS_STYLES[p.status].border
-              )}
-            >
-              <span className={cn('w-1.5 h-1.5 rounded-full flex-shrink-0', STATUS_STYLES[p.status].dot)} />
-              <div className="flex-1 min-w-0">
-                <p className="text-xs font-medium text-zinc-800 truncate">
-                  {p.title || 'Sem título'}
-                  {p.productName && (
-                    <span className="ml-1 text-[10px] font-normal text-violet-500">({p.productName})</span>
-                  )}
-                </p>
-                <p className="text-[10px] text-zinc-400">{CHANNEL_LABELS[p.channel]} · {STATUS_LABELS[p.status]}</p>
-              </div>
-            </div>
-          ))}
         </div>
-      )}
+      ) : null}
     </div>
   );
 }
 
-// ─── Post List Item ───────────────────────────────────────────────────────────
-
-function PostListItem({
-  post,
-  onClick,
+function ContentListItem({
+  script,
+  onClick
 }: {
-  post: PlannedPost;
+  script: ScriptItem;
   onClick: () => void;
 }) {
+  const Icon = getScriptPreviewIcon(script);
+
   return (
     <button
       onClick={onClick}
       className={cn(
-        'w-full text-left flex items-center gap-3 p-3 rounded-lg border-l-2 bg-white hover:bg-zinc-50 transition-colors',
-        STATUS_STYLES[post.status].border
+        'flex w-full items-center gap-3 rounded-xl border-l-2 bg-white p-3 text-left transition hover:bg-zinc-50',
+        SCRIPT_STATUS_STYLES[script.status].border
       )}
     >
-      <span className={cn('w-2 h-2 rounded-full flex-shrink-0', STATUS_STYLES[post.status].dot)} />
-      <div className="flex-1 min-w-0">
-        <p className="text-sm font-medium text-zinc-800 truncate">
-          {post.title || 'Sem título'}
-          {post.productName && (
-            <span className="ml-1.5 text-xs font-normal text-violet-500">({post.productName})</span>
-          )}
-        </p>
-        <p className="text-xs text-zinc-400 mt-0.5">
-          {CHANNEL_LABELS[post.channel]} · {STATUS_LABELS[post.status]}
-          {post.scheduledFor ? ` · ${formatDateBR(post.scheduledFor)}` : ''}
-        </p>
+      <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-zinc-50">
+        <Icon className="h-4 w-4 text-zinc-500" />
       </div>
-      <span className={cn('text-[10px] px-1.5 py-0.5 rounded border font-medium flex-shrink-0', STATUS_STYLES[post.status].badge)}>
-        {STATUS_LABELS[post.status]}
-      </span>
+      <div className="min-w-0 flex-1">
+        <p className="truncate text-sm font-medium text-zinc-800">{script.title}</p>
+        <div className="mt-1 flex flex-wrap items-center gap-1.5">
+          <span className={cn('rounded-full border px-2 py-0.5 text-[10px] font-medium', getContentFormatBadgeClass(script.contentType))}>
+            {getContentFormatLabel(script.contentType)}
+          </span>
+          <span className={cn('rounded-full border px-2 py-0.5 text-[10px] font-medium', SCRIPT_STATUS_STYLES[script.status].badge)}>
+            {SCRIPT_STATUS_LABELS[script.status]}
+          </span>
+          {script.scheduledFor ? (
+            <span className="text-[10px] text-zinc-500">{formatDateBR(script.scheduledFor)}</span>
+          ) : null}
+          {script.productName ? (
+            <span className="text-[10px] text-violet-600">{script.productName}</span>
+          ) : null}
+        </div>
+      </div>
     </button>
   );
 }
-
-// ─── Main Component ───────────────────────────────────────────────────────────
 
 export function PostsWorkspace({
   workspace,
   products = [],
   scripts = [],
+  plannerBatches = [],
 }: {
   workspace: string;
   products?: ProductItem[];
   scripts?: ScriptItem[];
+  plannerBatches?: PlannerBatchItem[];
 }) {
   const now = new Date();
 
-  const [posts, setPosts] = useState<PlannedPost[]>(() => loadPosts(workspace));
   const [profile, setProfile] = useState<string>(() => loadProfile(workspace));
-
-  // Calendar state
+  const [scriptsState, setScriptsState] = useState<ScriptItem[]>(scripts);
+  const [batchesState, setBatchesState] = useState<PlannerBatchItem[]>(plannerBatches);
+  const [refreshingWorkspace, setRefreshingWorkspace] = useState(false);
+  const [plannerSubmitting, setPlannerSubmitting] = useState(false);
+  const [manualModal, setManualModal] = useState<ManualModalMode>('none');
+  const [manualModalDate, setManualModalDate] = useState(now.toISOString().slice(0, 10));
+  const [creatingManual, setCreatingManual] = useState(false);
+  const [activeTab, setActiveTab] = useState<WorkspaceTab>('Calendário');
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>('all');
+  const [formatFilter, setFormatFilter] = useState<'all' | ContentFormatKey>('all');
+  const [filterProductId, setFilterProductId] = useState('');
   const [calYear, setCalYear] = useState(now.getFullYear());
   const [calMonth, setCalMonth] = useState(now.getMonth());
   const [selectedDate, setSelectedDate] = useState<string | null>(now.toISOString().slice(0, 10));
-
-  // View tabs
-  const [activeTab, setActiveTab] = useState<WorkspaceTab>('Tudo');
-  const [filterProductId, setFilterProductId] = useState<string>('');
-
-  // Toast
-  const [toast, setToast] = useState<string | null>(null);
-
-  // Modal state
-  type ModalState =
-    | { type: 'none' }
-    | { type: 'new'; date: string }
-    | { type: 'newDraft' }
-    | { type: 'view'; postId: string }
-    | { type: 'edit'; postId: string }
-    | { type: 'planner' };
-
-  const [modal, setModal] = useState<ModalState>({ type: 'none' });
-
-  // Drag state
-  const [draggingPostId, setDraggingPostId] = useState<string | null>(null);
+  const [viewingScript, setViewingScript] = useState<ScriptItem | null>(null);
+  const [editingScript, setEditingScript] = useState<EditableScriptDraft | null>(null);
+  const [busyScriptId, setBusyScriptId] = useState<string | null>(null);
+  const [draggingScriptId, setDraggingScriptId] = useState<string | null>(null);
   const [dragOverDate, setDragOverDate] = useState<string | null>(null);
+  const [plannerOpen, setPlannerOpen] = useState(false);
+  const batchStatusRef = useRef<Map<string, PlannerBatchItem['status']>>(new Map(plannerBatches.map((batch) => [batch.id, batch.status])));
 
-  const modalPost = useMemo(() => {
-    if (modal.type === 'view' || modal.type === 'edit') {
-      return posts.find(p => p.id === modal.postId) ?? null;
+  const activeBatches = useMemo(
+    () => batchesState.filter((batch) => batch.status === 'queued' || batch.status === 'running'),
+    [batchesState]
+  );
+
+  async function refreshWorkspaceData(silent = false) {
+    if (!silent) {
+      setRefreshingWorkspace(true);
     }
-    return null;
-  }, [modal, posts]);
 
-  // Filtered posts for list views
-  const filteredPosts = useMemo(() => {
-    let base = posts;
-    if (filterProductId) {
-      base = base.filter(p => p.productId === filterProductId);
+    try {
+      const [scriptsResponse, batchesResponse] = await Promise.all([
+        fetch(`/api/workspaces/${workspace}/scripts`, { cache: 'no-store' }),
+        fetch(`/api/workspaces/${workspace}/planner-batches`, { cache: 'no-store' })
+      ]);
+
+      const scriptsPayload = (await scriptsResponse.json().catch(() => null)) as { scripts?: ScriptItem[]; error?: string } | null;
+      const batchesPayload = (await batchesResponse.json().catch(() => null)) as { batches?: PlannerBatchItem[]; error?: string } | null;
+
+      if (!scriptsResponse.ok) {
+        throw new Error(scriptsPayload?.error ?? 'Não foi possível atualizar os conteúdos.');
+      }
+
+      if (!batchesResponse.ok) {
+        throw new Error(batchesPayload?.error ?? 'Não foi possível atualizar os lotes do cronograma.');
+      }
+
+      setScriptsState(scriptsPayload?.scripts ?? []);
+      setBatchesState(batchesPayload?.batches ?? []);
+    } catch (error) {
+      if (!silent) {
+        toast.error(error instanceof Error ? error.message : 'Não foi possível atualizar a página.');
+      }
+    } finally {
+      if (!silent) {
+        setRefreshingWorkspace(false);
+      }
     }
-    return base;
-  }, [posts, filterProductId]);
-
-  const feedListPosts = useMemo(
-    () => filteredPosts.filter(p => (p.channel === 'Feed' || p.channel === 'Reels') && p.scheduledFor !== '')
-      .sort((a, b) => b.scheduledFor.localeCompare(a.scheduledFor)),
-    [filteredPosts]
-  );
-
-  const storiesListPosts = useMemo(
-    () => filteredPosts.filter(p => p.channel === 'Stories' && p.scheduledFor !== '')
-      .sort((a, b) => b.scheduledFor.localeCompare(a.scheduledFor)),
-    [filteredPosts]
-  );
-
-  const draftPosts = useMemo(
-    () => filteredPosts.filter(p => p.scheduledFor === ''),
-    [filteredPosts]
-  );
-
-  // ── Stats ──
-  const totalByStatus = useMemo(() => {
-    const counts: Record<PostStatus, number> = { production: 0, ready: 0, scheduled: 0, posted: 0 };
-    posts.forEach(p => counts[p.status]++);
-    return counts;
-  }, [posts]);
-
-  const totalByChannel = useMemo(() => {
-    const counts: Record<PostChannel, number> = { Feed: 0, Reels: 0, Stories: 0 };
-    posts.filter(p => p.scheduledFor !== '').forEach(p => counts[p.channel]++);
-    return counts;
-  }, [posts]);
-
-  // ── Handlers ──
-
-  function showToast(msg: string) {
-    setToast(msg);
-    setTimeout(() => setToast(null), 3500);
   }
 
-  function handleProfileChange(val: string) {
-    setProfile(val);
-    saveProfile(workspace, val);
-  }
-
-  function handleSavePost(data: PostFormState) {
-    let updated: PlannedPost[];
-    if (modal.type === 'new' || modal.type === 'newDraft') {
-      const newPost: PlannedPost = {
-        ...data,
-        id: newId(),
-        createdAt: new Date().toISOString(),
-      };
-      updated = [...posts, newPost];
-      if (data.scheduledFor) setSelectedDate(data.scheduledFor);
-    } else if (modal.type === 'edit') {
-      const postId = (modal as { type: 'edit'; postId: string }).postId;
-      updated = posts.map(p => p.id === postId ? { ...p, ...data } : p);
-    } else {
+  useEffect(() => {
+    if (!activeBatches.length) {
       return;
     }
-    setPosts(updated);
-    savePosts(workspace, updated);
-    setModal({ type: 'none' });
+
+    const timer = window.setInterval(() => {
+      void refreshWorkspaceData(true);
+    }, 4000);
+
+    return () => window.clearInterval(timer);
+  }, [workspace, activeBatches.length]);
+
+  useEffect(() => {
+    const previous = batchStatusRef.current;
+
+    batchesState.forEach((batch) => {
+      const previousStatus = previous.get(batch.id);
+      if (!previousStatus) {
+        previous.set(batch.id, batch.status);
+        return;
+      }
+
+      if ((previousStatus === 'queued' || previousStatus === 'running') && batch.status === 'completed') {
+        toast.success(
+          batch.summary?.generatedScripts
+            ? `${batch.summary.generatedScripts} rascunho(s) do cronograma já estão disponíveis.`
+            : 'Cronograma processado com sucesso.'
+        );
+      }
+
+      if ((previousStatus === 'queued' || previousStatus === 'running') && batch.status === 'error') {
+        toast.error(batch.errorMessage || 'O cronograma terminou com erro.');
+      }
+
+      previous.set(batch.id, batch.status);
+    });
+  }, [batchesState]);
+
+  function handleProfileChange(value: string) {
+    setProfile(value);
+    saveProfile(workspace, value);
   }
 
-  function handleDeletePost() {
-    if (modal.type !== 'view' && modal.type !== 'edit') return;
-    const id = (modal as { type: 'view' | 'edit'; postId: string }).postId;
-    const updated = posts.filter(p => p.id !== id);
-    setPosts(updated);
-    savePosts(workspace, updated);
-    setModal({ type: 'none' });
+  async function handleCreateManualDraft(draft: ManualDraftState) {
+    setCreatingManual(true);
+
+    try {
+      const product = products.find((item) => item.id === draft.productId);
+      const emptyStructure = buildEmptyScriptStructure(draft.contentType, draft.subOption);
+      const response = await fetch(`/api/workspaces/${workspace}/scripts`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          title: draft.title.trim(),
+          status: 'draft',
+          productId: product?.id,
+          productName: product?.name,
+          contentType: draft.contentType,
+          subOption: draft.subOption,
+          caption: draft.caption,
+          notes: draft.notes,
+          scheduledFor: draft.scheduledFor,
+          dueDate: draft.scheduledFor,
+          category: 'Manual',
+          blockType: draft.contentType,
+          takes: emptyStructure.takes,
+          storySlides: emptyStructure.storySlides,
+          carrosselSlides: emptyStructure.carrosselSlides,
+          postFields: emptyStructure.postFields
+        })
+      });
+
+      const payload = (await response.json().catch(() => null)) as { scripts?: ScriptItem[]; error?: string } | null;
+
+      if (!response.ok || !payload?.scripts?.length) {
+        throw new Error(payload?.error ?? 'Não foi possível criar o rascunho.');
+      }
+
+      const createdScript = payload.scripts[0];
+      setScriptsState((current) => [createdScript, ...current]);
+      setManualModal('none');
+      setViewingScript(createdScript);
+      toast.success('Rascunho criado.');
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Não foi possível criar o rascunho.');
+    } finally {
+      setCreatingManual(false);
+    }
   }
 
-  function handleDrop(targetDate: string) {
-    if (!draggingPostId || !targetDate) return;
-    const updated = posts.map(p =>
-      p.id === draggingPostId ? { ...p, scheduledFor: targetDate } : p
-    );
-    setPosts(updated);
-    savePosts(workspace, updated);
-    setDraggingPostId(null);
-    setDragOverDate(null);
-    setSelectedDate(targetDate);
+  async function handlePlannerGenerate(config: PlannerConfig, preview: ScheduleGenerationResult) {
+    setPlannerSubmitting(true);
+
+    try {
+      const response = await fetch(`/api/workspaces/${workspace}/planner-batches`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ config })
+      });
+
+      const payload = (await response.json().catch(() => null)) as {
+        batch?: PlannerBatchItem;
+        preview?: { totalItems?: number };
+        error?: string;
+      } | null;
+
+      if (!response.ok || !payload?.batch) {
+        throw new Error(payload?.error ?? 'Não foi possível iniciar a geração do cronograma.');
+      }
+
+      setBatchesState((current) => [payload.batch!, ...current.filter((batch) => batch.id !== payload.batch!.id)]);
+      setPlannerOpen(false);
+      setSelectedDate(config.startDate);
+      toast.success(
+        preview.posts.length === 1
+          ? '1 peça foi colocada na fila de geração.'
+          : `${preview.posts.length} peças foram colocadas na fila de geração.`
+      );
+      void refreshWorkspaceData(true);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Não foi possível iniciar o cronograma.');
+    } finally {
+      setPlannerSubmitting(false);
+    }
   }
 
-  function handleGenerateSchedule(generated: PlannedPost[]) {
-    const updated = [...posts, ...generated];
-    setPosts(updated);
-    savePosts(workspace, updated);
-    setModal({ type: 'none' });
-    showToast(`${generated.length} posts criados para o cronograma.`);
+  async function handleApprove(scriptId: string) {
+    setBusyScriptId(scriptId);
+
+    try {
+      const response = await fetch(`/api/workspaces/${workspace}/scripts/${scriptId}`, {
+        method: 'PATCH',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ status: 'approved' })
+      });
+      const payload = (await response.json().catch(() => null)) as { script?: ScriptItem; error?: string } | null;
+
+      if (!response.ok || !payload?.script) {
+        throw new Error(payload?.error ?? 'Erro ao aprovar.');
+      }
+
+      setScriptsState((current) => current.map((script) => (script.id === payload.script!.id ? payload.script! : script)));
+      setViewingScript((current) => (current?.id === payload.script!.id ? payload.script! : current));
+      toast.success('Conteúdo aprovado e enviado para Produção.');
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Não foi possível aprovar.');
+    } finally {
+      setBusyScriptId(null);
+    }
   }
+
+  async function handleDelete(scriptId: string) {
+    setBusyScriptId(scriptId);
+
+    try {
+      const response = await fetch(`/api/workspaces/${workspace}/scripts/${scriptId}`, {
+        method: 'DELETE'
+      });
+      const payload = (await response.json().catch(() => null)) as { ok?: boolean; error?: string } | null;
+
+      if (!response.ok || !payload?.ok) {
+        throw new Error(payload?.error ?? 'Erro ao descartar.');
+      }
+
+      setScriptsState((current) => current.filter((script) => script.id !== scriptId));
+      setViewingScript((current) => (current?.id === scriptId ? null : current));
+      setEditingScript((current) => (current?.id === scriptId ? null : current));
+      toast.success('Conteúdo descartado.');
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Não foi possível descartar.');
+    } finally {
+      setBusyScriptId(null);
+    }
+  }
+
+  async function handleUpdateScript(script: EditableScriptDraft) {
+    setBusyScriptId(script.id);
+
+    try {
+      const existing = scriptsState.find((item) => item.id === script.id);
+      const response = await fetch(`/api/workspaces/${workspace}/scripts/${script.id}`, {
+        method: 'PATCH',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          title: script.title,
+          hook: script.hook,
+          spoken: script.spoken,
+          takes: script.takes,
+          cta: script.cta,
+          caption: script.caption,
+          prompt: script.prompt,
+          referenceContext: script.referenceContext,
+          productId: script.productId,
+          productName: script.productName,
+          contentType: script.contentType,
+          subOption: script.subOption,
+          storySlides: script.storySlides,
+          carrosselSlides: script.carrosselSlides,
+          postFields: script.postFields,
+          scheduledFor: existing?.scheduledFor,
+          plannerMeta: existing?.plannerMeta
+        })
+      });
+
+      const payload = (await response.json().catch(() => null)) as { script?: ScriptItem; error?: string } | null;
+
+      if (!response.ok || !payload?.script) {
+        throw new Error(payload?.error ?? 'Erro ao atualizar.');
+      }
+
+      setScriptsState((current) => current.map((item) => (item.id === payload.script!.id ? payload.script! : item)));
+      setViewingScript((current) => (current?.id === payload.script!.id ? payload.script! : current));
+      setEditingScript(null);
+      toast.success('Conteúdo atualizado.');
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Não foi possível atualizar.');
+    } finally {
+      setBusyScriptId(null);
+    }
+  }
+
+  async function handleMoveScriptToDate(scriptId: string, scheduledFor: string) {
+    setBusyScriptId(scriptId);
+
+    try {
+      const script = scriptsState.find((item) => item.id === scriptId);
+      if (!script) {
+        return;
+      }
+
+      const response = await fetch(`/api/workspaces/${workspace}/scripts/${scriptId}`, {
+        method: 'PATCH',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          scheduledFor,
+          plannerMeta: script.plannerMeta,
+          status: script.status
+        })
+      });
+
+      const payload = (await response.json().catch(() => null)) as { script?: ScriptItem; error?: string } | null;
+
+      if (!response.ok || !payload?.script) {
+        throw new Error(payload?.error ?? 'Não foi possível mover a peça.');
+      }
+
+      setScriptsState((current) => current.map((item) => (item.id === payload.script!.id ? payload.script! : item)));
+      setSelectedDate(scheduledFor);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Não foi possível mover a peça.');
+    } finally {
+      setBusyScriptId(null);
+      setDraggingScriptId(null);
+      setDragOverDate(null);
+    }
+  }
+
+  function openNewManualModal(date?: string) {
+    setManualModalDate(date ?? selectedDate ?? now.toISOString().slice(0, 10));
+    setManualModal('new');
+  }
+
+  const filteredScripts = useMemo(() => {
+    return scriptsState.filter((script) => {
+      if (filterProductId && script.productId !== filterProductId) {
+        return false;
+      }
+
+      if (statusFilter !== 'all' && script.status !== statusFilter) {
+        return false;
+      }
+
+      if (formatFilter !== 'all' && script.contentType !== formatFilter) {
+        return false;
+      }
+
+      return true;
+    });
+  }, [scriptsState, filterProductId, statusFilter, formatFilter]);
+
+  const scheduledScripts = useMemo(
+    () =>
+      filteredScripts
+        .filter((script) => script.scheduledFor)
+        .sort((left, right) => {
+          if (left.scheduledFor === right.scheduledFor) {
+            return right.updatedAt.localeCompare(left.updatedAt);
+          }
+          return left.scheduledFor.localeCompare(right.scheduledFor);
+        }),
+    [filteredScripts]
+  );
+
+  const feedScripts = useMemo(
+    () => [...scheduledScripts].filter((script) => script.contentType !== 'stories').sort((left, right) => right.scheduledFor.localeCompare(left.scheduledFor)),
+    [scheduledScripts]
+  );
+
+  const storiesScripts = useMemo(
+    () => [...scheduledScripts].filter((script) => script.contentType === 'stories').sort((left, right) => right.scheduledFor.localeCompare(left.scheduledFor)),
+    [scheduledScripts]
+  );
+
+  const draftScripts = useMemo(
+    () => filteredScripts.filter((script) => script.status === 'draft').sort((left, right) => right.updatedAt.localeCompare(left.updatedAt)),
+    [filteredScripts]
+  );
+
+  const statusCounts = useMemo(() => {
+    return scriptsState.reduce<Record<ScriptStatus, number>>((accumulator, script) => {
+      accumulator[script.status] += 1;
+      return accumulator;
+    }, {
+      draft: 0,
+      approved: 0,
+      production: 0,
+      recording: 0,
+      drive: 0,
+      editing: 0,
+      edited: 0,
+      scheduled: 0,
+      posted: 0
+    });
+  }, [scriptsState]);
+
+  const formatCounts = useMemo(() => {
+    return scriptsState.reduce<Record<ContentFormatKey, number>>((accumulator, script) => {
+      if ((CONTENT_FORMAT_ORDER as readonly string[]).includes(script.contentType)) {
+        accumulator[script.contentType as ContentFormatKey] += 1;
+      }
+      return accumulator;
+    }, {
+      reels: 0,
+      stories: 0,
+      video_curto: 0,
+      carrossel: 0,
+      post: 0
+    });
+  }, [scriptsState]);
 
   function prevMonth() {
-    if (calMonth === 0) { setCalYear(y => y - 1); setCalMonth(11); }
-    else setCalMonth(m => m - 1);
+    if (calMonth === 0) {
+      setCalYear((year) => year - 1);
+      setCalMonth(11);
+      return;
+    }
+    setCalMonth((month) => month - 1);
   }
 
   function nextMonth() {
-    if (calMonth === 11) { setCalYear(y => y + 1); setCalMonth(0); }
-    else setCalMonth(m => m + 1);
+    if (calMonth === 11) {
+      setCalYear((year) => year + 1);
+      setCalMonth(0);
+      return;
+    }
+    setCalMonth((month) => month + 1);
   }
 
-  const TABS: WorkspaceTab[] = ['Tudo', 'Feed', 'Stories', 'Rascunhos'];
+  const tabs: WorkspaceTab[] = ['Calendário', 'Feed', 'Stories', 'Rascunhos'];
 
   return (
-    <div className="flex flex-col h-full min-h-0 overflow-hidden">
+    <div className="flex h-full min-h-0 flex-col overflow-hidden">
       <PageIntro
         eyebrow="Postagens"
-        title="Planejamento de publicação"
-        description="Organize o calendário de conteúdo e visualize o feed antes de publicar."
+        title="Planejamento, aprovação e publicação"
+        description="O cronograma agora usa o mesmo motor de Conteúdo, gera rascunhos reais e já conversa com Produção."
       />
 
-      {/* Stats bar */}
-      <div className="flex items-center gap-3 px-6 pb-3 flex-wrap">
-        {/* Channel counts */}
-        <div className="flex items-center gap-1.5">
-          <ImageIcon className="w-3 h-3 text-zinc-400" />
-          <span className="text-xs text-zinc-500">{totalByChannel.Feed} Feed</span>
-        </div>
-        <div className="flex items-center gap-1.5">
-          <Film className="w-3 h-3 text-zinc-400" />
-          <span className="text-xs text-zinc-500">{totalByChannel.Reels} Reels</span>
-        </div>
-        <div className="flex items-center gap-1.5">
-          <Layers className="w-3 h-3 text-zinc-400" />
-          <span className="text-xs text-zinc-500">{totalByChannel.Stories} Stories</span>
-        </div>
-        <span className="text-zinc-200">|</span>
-        {(Object.entries(totalByStatus) as [PostStatus, number][]).map(([status, count]) => (
-          <div key={status} className="flex items-center gap-1.5">
-            <span className={cn('w-2 h-2 rounded-full', STATUS_STYLES[status].dot)} />
-            <span className="text-xs text-zinc-500">{count} {STATUS_LABELS[status].toLowerCase()}</span>
+      <div className="flex flex-wrap items-center gap-3 px-6 pb-3">
+        {CONTENT_FORMAT_ORDER.map((format) => (
+          <div key={format} className="flex items-center gap-1.5">
+            <span className={cn('rounded-full border px-2 py-0.5 text-[10px] font-medium', getContentFormatBadgeClass(format))}>
+              {getContentFormatLabel(format)}
+            </span>
+            <span className="text-xs text-zinc-500">{formatCounts[format]}</span>
           </div>
         ))}
+
+        <span className="text-zinc-200">|</span>
+
+        {(Object.entries(statusCounts) as Array<[ScriptStatus, number]>).map(([status, count]) => (
+          <div key={status} className="flex items-center gap-1.5">
+            <span className={cn('h-2 w-2 rounded-full', SCRIPT_STATUS_STYLES[status].dot)} />
+            <span className="text-xs text-zinc-500">{count} {SCRIPT_STATUS_LABELS[status].toLowerCase()}</span>
+          </div>
+        ))}
+
         <div className="ml-auto flex items-center gap-2">
-          <Button
-            size="sm"
-            variant="outline"
-            onClick={() => setModal({ type: 'planner' })}
-          >
-            <CalendarRange className="w-3.5 h-3.5 mr-1.5" />
+          <Button size="sm" variant="outline" onClick={() => setPlannerOpen(true)}>
+            <CalendarRange className="mr-1.5 h-3.5 w-3.5" />
             Planejar cronograma
           </Button>
-          <Button
-            size="sm"
-            onClick={() => {
-              if (activeTab === 'Rascunhos') {
-                setModal({ type: 'newDraft' });
-              } else {
-                setModal({ type: 'new', date: selectedDate ?? now.toISOString().slice(0, 10) });
-              }
-            }}
-          >
-            <Plus className="w-3.5 h-3.5 mr-1.5" />
-            Nova postagem
+          <Button size="sm" onClick={() => openNewManualModal()}>
+            <Plus className="mr-1.5 h-3.5 w-3.5" />
+            Nova peça
           </Button>
         </div>
       </div>
 
-      {/* Tab bar + filter */}
-      <div className="flex items-center gap-2 px-6 pb-3 border-b border-zinc-100 flex-wrap">
+      <div className="px-6 pb-4">
+        <PlannerBatchesPanel
+          batches={batchesState}
+          onRefresh={() => { void refreshWorkspaceData(); }}
+          refreshing={refreshingWorkspace}
+        />
+      </div>
+
+      <div className="flex flex-wrap items-center gap-2 border-b border-zinc-100 px-6 pb-3">
         <div className="flex items-center gap-1">
-          {TABS.map(tab => (
+          {tabs.map((tab) => (
             <button
               key={tab}
               onClick={() => setActiveTab(tab)}
               className={cn(
-                'px-3 py-1.5 text-xs font-medium rounded-lg transition-colors',
+                'rounded-lg px-3 py-1.5 text-xs font-medium transition-colors',
                 activeTab === tab
                   ? 'bg-zinc-900 text-white'
                   : 'text-zinc-500 hover:bg-zinc-100'
               )}
             >
               {tab}
-              {tab === 'Rascunhos' && draftPosts.length > 0 && (
-                <span className="ml-1 bg-zinc-600 text-white text-[10px] rounded-full px-1.5 py-0.5">
-                  {draftPosts.length}
+              {tab === 'Rascunhos' && draftScripts.length > 0 ? (
+                <span className="ml-1 rounded-full bg-zinc-600 px-1.5 py-0.5 text-[10px] text-white">
+                  {draftScripts.length}
                 </span>
-              )}
+              ) : null}
             </button>
           ))}
         </div>
 
-        {products.length > 0 && (
-          <div className="ml-auto">
-            <select
-              value={filterProductId}
-              onChange={e => setFilterProductId(e.target.value)}
-              className="text-xs border border-zinc-200 rounded-lg px-2 py-1.5 bg-white focus:outline-none focus:ring-2 focus:ring-zinc-900/10 text-zinc-600"
-            >
-              <option value="">Todos os produtos</option>
-              {products.map(p => (
-                <option key={p.id} value={p.id}>{p.name}</option>
-              ))}
-            </select>
-          </div>
-        )}
+        <div className="ml-auto flex flex-wrap items-center gap-2">
+          <select
+            value={statusFilter}
+            onChange={(event) => setStatusFilter(event.target.value as StatusFilter)}
+            className="rounded-lg border border-zinc-200 bg-white px-2 py-1.5 text-xs text-zinc-600 focus:outline-none focus:ring-2 focus:ring-zinc-900/10"
+          >
+            <option value="all">Todos os status</option>
+            {(Object.keys(SCRIPT_STATUS_LABELS) as ScriptStatus[]).map((status) => (
+              <option key={status} value={status}>
+                {SCRIPT_STATUS_LABELS[status]}
+              </option>
+            ))}
+          </select>
+
+          <select
+            value={formatFilter}
+            onChange={(event) => setFormatFilter(event.target.value as 'all' | ContentFormatKey)}
+            className="rounded-lg border border-zinc-200 bg-white px-2 py-1.5 text-xs text-zinc-600 focus:outline-none focus:ring-2 focus:ring-zinc-900/10"
+          >
+            <option value="all">Todos os formatos</option>
+            {CONTENT_FORMAT_ORDER.map((format) => (
+              <option key={format} value={format}>
+                {getContentFormatLabel(format)}
+              </option>
+            ))}
+          </select>
+
+          <select
+            value={filterProductId}
+            onChange={(event) => setFilterProductId(event.target.value)}
+            className="rounded-lg border border-zinc-200 bg-white px-2 py-1.5 text-xs text-zinc-600 focus:outline-none focus:ring-2 focus:ring-zinc-900/10"
+          >
+            <option value="">Todos os produtos</option>
+            {products.map((product) => (
+              <option key={product.id} value={product.id}>
+                {product.name}
+              </option>
+            ))}
+          </select>
+        </div>
       </div>
 
-      {/* Content area */}
-      {activeTab === 'Tudo' ? (
-        <div className="flex-1 min-h-0 grid grid-cols-[1fr_320px] gap-4 px-6 pb-6 pt-4 overflow-hidden">
+      {activeTab === 'Calendário' ? (
+        <div className="grid flex-1 min-h-0 grid-cols-[1fr_320px] gap-4 overflow-hidden px-6 pb-6 pt-4">
           <Card className="overflow-hidden">
-            <CardContent className="p-5 h-full overflow-y-auto">
+            <CardContent className="h-full overflow-y-auto p-5">
               <CalendarView
-                posts={posts}
+                scripts={scheduledScripts}
                 year={calYear}
                 month={calMonth}
                 selectedDate={selectedDate}
                 onSelectDate={setSelectedDate}
                 onPrevMonth={prevMonth}
                 onNextMonth={nextMonth}
-                onNewPost={date => setModal({ type: 'new', date })}
+                onNewDraft={openNewManualModal}
                 dragOver={dragOverDate}
                 onDragOver={setDragOverDate}
-                onDrop={handleDrop}
-                onDragStart={setDraggingPostId}
-                onClickPost={post => setModal({ type: 'view', postId: post.id })}
+                onDrop={(date) => { if (draggingScriptId) void handleMoveScriptToDate(draggingScriptId, date); }}
+                onDragStart={setDraggingScriptId}
+                onClickScript={setViewingScript}
               />
             </CardContent>
           </Card>
 
-          <div className="flex flex-col min-h-0 overflow-hidden">
+          <div className="min-h-0 overflow-hidden">
             <InstagramPreview
-              posts={posts}
+              scripts={feedScripts}
               profile={profile}
               onProfileChange={handleProfileChange}
-              onPostClick={post => setModal({ type: 'view', postId: post.id })}
+              onScriptClick={setViewingScript}
             />
           </div>
         </div>
       ) : (
-        <div className="flex-1 min-h-0 px-6 pb-6 pt-4 overflow-y-auto">
+        <div className="flex-1 min-h-0 overflow-y-auto px-6 pb-6 pt-4">
           <Card>
             <CardContent className="p-5">
-              {activeTab === 'Feed' && (
+              {activeTab === 'Feed' ? (
                 <>
-                  <p className="text-xs font-semibold text-zinc-500 mb-3">
-                    {feedListPosts.length} post{feedListPosts.length !== 1 ? 's' : ''} de Feed/Reels
+                  <p className="mb-3 text-xs font-semibold text-zinc-500">
+                    {feedScripts.length} peça{feedScripts.length !== 1 ? 's' : ''} de feed
                   </p>
-                  {feedListPosts.length === 0 ? (
-                    <p className="text-sm text-zinc-400 italic">Nenhum post de Feed ou Reels agendado.</p>
+                  {feedScripts.length === 0 ? (
+                    <p className="text-sm italic text-zinc-400">Nenhuma peça de feed para este filtro.</p>
                   ) : (
                     <div className="space-y-2">
-                      {feedListPosts.map(p => (
-                        <PostListItem
-                          key={p.id}
-                          post={p}
-                          onClick={() => setModal({ type: 'view', postId: p.id })}
-                        />
+                      {feedScripts.map((script) => (
+                        <ContentListItem key={script.id} script={script} onClick={() => setViewingScript(script)} />
                       ))}
                     </div>
                   )}
                 </>
-              )}
+              ) : null}
 
-              {activeTab === 'Stories' && (
+              {activeTab === 'Stories' ? (
                 <>
-                  <p className="text-xs font-semibold text-zinc-500 mb-3">
-                    {storiesListPosts.length} post{storiesListPosts.length !== 1 ? 's' : ''} de Stories
+                  <p className="mb-3 text-xs font-semibold text-zinc-500">
+                    {storiesScripts.length} sequência{storiesScripts.length !== 1 ? 's' : ''} de stories
                   </p>
-                  {storiesListPosts.length === 0 ? (
-                    <p className="text-sm text-zinc-400 italic">Nenhum Stories agendado.</p>
+                  {storiesScripts.length === 0 ? (
+                    <p className="text-sm italic text-zinc-400">Nenhuma sequência de stories para este filtro.</p>
                   ) : (
                     <div className="space-y-2">
-                      {storiesListPosts.map(p => (
-                        <PostListItem
-                          key={p.id}
-                          post={p}
-                          onClick={() => setModal({ type: 'view', postId: p.id })}
-                        />
+                      {storiesScripts.map((script) => (
+                        <ContentListItem key={script.id} script={script} onClick={() => setViewingScript(script)} />
                       ))}
                     </div>
                   )}
                 </>
-              )}
+              ) : null}
 
-              {activeTab === 'Rascunhos' && (
+              {activeTab === 'Rascunhos' ? (
                 <>
-                  <div className="flex items-center justify-between mb-3">
+                  <div className="mb-3 flex items-center justify-between">
                     <p className="text-xs font-semibold text-zinc-500">
-                      {draftPosts.length} rascunho{draftPosts.length !== 1 ? 's' : ''}
+                      {draftScripts.length} rascunho{draftScripts.length !== 1 ? 's' : ''}
                     </p>
-                    <button
-                      onClick={() => setModal({ type: 'newDraft' })}
-                      className="flex items-center gap-1 text-xs text-zinc-500 hover:text-zinc-800"
-                    >
-                      <Plus className="w-3 h-3" /> Novo rascunho
+                    <button onClick={() => openNewManualModal()} className="flex items-center gap-1 text-xs text-zinc-500 hover:text-zinc-800">
+                      <Plus className="h-3 w-3" />
+                      Novo rascunho
                     </button>
                   </div>
-                  {draftPosts.length === 0 ? (
-                    <p className="text-sm text-zinc-400 italic">Nenhum rascunho ainda.</p>
+                  {draftScripts.length === 0 ? (
+                    <p className="text-sm italic text-zinc-400">Nenhum rascunho para este filtro.</p>
                   ) : (
                     <div className="space-y-2">
-                      {draftPosts.map(p => (
-                        <PostListItem
-                          key={p.id}
-                          post={p}
-                          onClick={() => setModal({ type: 'view', postId: p.id })}
-                        />
+                      {draftScripts.map((script) => (
+                        <ContentListItem key={script.id} script={script} onClick={() => setViewingScript(script)} />
                       ))}
                     </div>
                   )}
                 </>
-              )}
+              ) : null}
             </CardContent>
           </Card>
         </div>
       )}
 
-      {/* Toast */}
-      {toast && (
-        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 bg-zinc-900 text-white text-sm px-4 py-2.5 rounded-xl shadow-lg">
-          {toast}
-        </div>
-      )}
-
-      {/* Modals */}
-      {modal.type === 'new' && (
-        <PostModal
-          post={null}
-          mode="new"
+      {manualModal === 'new' ? (
+        <ManualContentModal
           products={products}
-          scripts={scripts}
-          onClose={() => setModal({ type: 'none' })}
-          onSave={handleSavePost}
+          initialDate={manualModalDate}
+          loading={creatingManual}
+          onClose={() => setManualModal('none')}
+          onSave={handleCreateManualDraft}
         />
-      )}
+      ) : null}
 
-      {modal.type === 'newDraft' && (
-        <PostModal
-          post={{ ...emptyDraftForm(), id: '', createdAt: '' }}
-          mode="new"
-          products={products}
-          scripts={scripts}
-          onClose={() => setModal({ type: 'none' })}
-          onSave={data => handleSavePost({ ...data, scheduledFor: data.scheduledFor })}
-        />
-      )}
-
-      {modal.type === 'view' && modalPost && (
-        <PostModal
-          post={modalPost}
-          mode="view"
-          products={products}
-          scripts={scripts}
-          onClose={() => setModal({ type: 'none' })}
-          onSave={handleSavePost}
-          onDelete={handleDeletePost}
-          onSwitchEdit={() => setModal({ type: 'edit', postId: modalPost.id })}
-        />
-      )}
-
-      {modal.type === 'edit' && modalPost && (
-        <PostModal
-          post={modalPost}
-          mode="edit"
-          products={products}
-          scripts={scripts}
-          onClose={() => setModal({ type: 'none' })}
-          onSave={handleSavePost}
-          onDelete={handleDeletePost}
-        />
-      )}
-
-      {modal.type === 'planner' && (
+      {plannerOpen ? (
         <SchedulePlannerModal
+          workspace={workspace}
           products={products}
-          onClose={() => setModal({ type: 'none' })}
-          onGenerate={handleGenerateSchedule}
+          selectedDate={selectedDate}
+          loading={plannerSubmitting}
+          onClose={() => setPlannerOpen(false)}
+          onGenerate={handlePlannerGenerate}
         />
-      )}
+      ) : null}
+
+      {viewingScript ? (
+        <ScriptPreviewModal
+          script={viewingScript}
+          busy={busyScriptId === viewingScript.id}
+          onClose={() => setViewingScript(null)}
+          onEdit={() => setEditingScript(buildEditableScript(viewingScript))}
+          onApprove={viewingScript.status === 'draft' ? () => void handleApprove(viewingScript.id) : undefined}
+          onDiscard={() => void handleDelete(viewingScript.id)}
+        />
+      ) : null}
+
+      {editingScript ? (
+        <ScriptEditorModal
+          title="Editar conteúdo"
+          script={editingScript}
+          onChange={setEditingScript}
+          onClose={() => setEditingScript(null)}
+          onSave={() => void handleUpdateScript(editingScript)}
+          savingLabel={busyScriptId === editingScript.id ? 'Salvando...' : 'Salvar alterações'}
+        />
+      ) : null}
     </div>
   );
 }

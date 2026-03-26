@@ -44,6 +44,58 @@ export type ScriptStatus =
   | 'scheduled'
   | 'posted';
 
+export type ScriptPlannerMeta = {
+  source: 'planner';
+  batchId: string;
+  rangeStart: string;
+  rangeEnd: string;
+  mode: 'create' | 'replan';
+  reason: string;
+  templateId?: string;
+  productRuleId?: string;
+  fixedWeekdays?: number[];
+  fixedPlacement?: boolean;
+  storiesInPeriod?: number;
+  slotType?: 'feed' | 'stories';
+  slotIndex?: number;
+  sequenceSize?: number;
+};
+
+export type PlannerBatchStatus = 'queued' | 'running' | 'completed' | 'error';
+
+export type PlannerBatchSummary = {
+  totalDays: number;
+  totalFeedPosts: number;
+  totalStoryPosts: number;
+  totalPosts: number;
+  products: Array<{
+    productId: string;
+    productName: string;
+    scheduledDates: string[];
+    fixedDates: string[];
+    storiesTotal: number;
+  }>;
+  generatedScripts?: number;
+  failedScripts?: number;
+};
+
+export type PlannerBatchItem = {
+  id: string;
+  mode: 'create' | 'replan';
+  status: PlannerBatchStatus;
+  reason: string;
+  rangeStart: string;
+  rangeEnd: string;
+  progressTotal: number;
+  progressCompleted: number;
+  errorMessage: string;
+  summary: PlannerBatchSummary | null;
+  createdAt: string;
+  updatedAt: string;
+  startedAt: string;
+  completedAt: string;
+};
+
 export type RecordingField = {
   key: string;
   value: string;
@@ -89,6 +141,8 @@ export type ScriptItem = {
   carrosselSlides: CarrosselSlide[];
   postFields: PostFields | null;
   status: ScriptStatus;
+  scheduledFor: string;
+  plannerMeta: ScriptPlannerMeta | null;
   createdAt: string;
   updatedAt: string;
 };

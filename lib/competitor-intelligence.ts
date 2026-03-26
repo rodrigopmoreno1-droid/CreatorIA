@@ -1,0 +1,956 @@
+import type {
+  CompetitorAnalysis,
+  CompetitorCapturedPost,
+  CompetitorContentFormat,
+  CompetitorInsight,
+  CompetitorRecord,
+  CompetitorSourceSnapshot,
+  ContentReferenceRecord
+} from '@/types/competitor-intelligence';
+
+type RawInstagramNode = Record<string, unknown>;
+
+export type CompetitorAnalysisFacts = {
+  recurringThemes: string[];
+  formatMix: Array<{ format: CompetitorContentFormat; count: number; share: number }>;
+  hookPatterns: string[];
+  ctaPatterns: string[];
+  storytellingPatterns: string[];
+  toneHints: string[];
+  visualHints: string[];
+  cadenceLabel: string;
+  topAngles: string[];
+  topCaptions: string[];
+};
+
+export type CompetitorAnalysisInput = {
+  competitor: Pick<CompetitorRecord, 'id' | 'name' | 'handle' | 'website' | 'type' | 'niche' | 'notes' | 'logoUrl' | 'tags'>;
+  snapshot: CompetitorSourceSnapshot;
+  facts: CompetitorAnalysisFacts;
+};
+
+const INSTAGRAM_APP_ID = '936619743392459';
+const WEBSITE_USER_AGENT = 'Mozilla/5.0 (CreatorAI; +https://creator-ia.vercel.app)';
+const WORD_STOPLIST = new Set([
+  'a', 'o', 'os', 'as', 'de', 'do', 'da', 'dos', 'das', 'e', 'em', 'no', 'na', 'nos', 'nas', 'para', 'por', 'com',
+  'sem', 'uma', 'um', 'umas', 'uns', 'que', 'isso', 'essa', 'esse', 'esta', 'este', 'mais', 'menos', 'muito',
+  'muita', 'sobre', 'como', 'quando', 'onde', 'porque', 'entre', 'pra', 'pro', 'se', 'ao', 'aos', 'ou', 'the',
+  'and', 'for', 'with', 'your', 'you', 'this', 'that', 'from', 'are', 'our', 'their', 'its', 'just', 'into'
+]);
+
+function normalizeText(value: unknown) {
+  return typeof value === 'string' ? value.trim() : '';
+}
+
+function normalizeWhitespace(value: string) {
+  return value.replace(/\s+/g, ' ').trim();
+}
+
+function slugify(value: string) {
+  return value
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 48);
+}
+
+function buildInsightId(prefix: string, seed: string) {
+  return `${prefix}_${slugify(seed) || Math.random().toString(36).slice(2, 8)}`;
+}
+
+export function normalizeInstagramHandle(handle: string) {
+  return handle.replace(/^@/, '').trim().toLowerCase();
+}
+
+export function normalizeWebsiteUrl(website: string) {
+  const trimmed = website.trim();
+
+  if (!trimmed) {
+    return '';
+  }
+
+  if (/^https?:\/\//i.test(trimmed)) {
+    return trimmed;
+  }
+
+  return `https://${trimmed}`;
+}
+
+function toNumber(value: unknown) {
+  return typeof value === 'number' && Number.isFinite(value) ? value : 0;
+}
+
+function getObject(value: unknown) {
+  return value && typeof value === 'object' ? (value as Record<string, unknown>) : null;
+}
+
+function getNestedArray(value: unknown, path: string[]) {
+  let current: unknown = value;
+
+  for (const key of path) {
+    if (Array.isArray(current)) {
+      const index = Number.parseInt(key, 10);
+      current = Number.isNaN(index) ? undefined : current[index];
+      continue;
+    }
+
+    current = getObject(current)?.[key];
+  }
+
+  return Array.isArray(current) ? current : [];
+}
+
+function getNestedString(value: unknown, path: string[]) {
+  let current: unknown = value;
+
+  for (const key of path) {
+    if (Array.isArray(current)) {
+      const index = Number.parseInt(key, 10);
+      current = Number.isNaN(index) ? undefined : current[index];
+      continue;
+    }
+
+    current = getObject(current)?.[key];
+  }
+
+  return normalizeText(current);
+}
+
+function parseInstagramHeaders(handle: string) {
+  return {
+    'user-agent': 'Mozilla/5.0',
+    'x-ig-app-id': INSTAGRAM_APP_ID,
+    accept: '*/*',
+    'accept-language': 'en-US,en;q=0.9',
+    referer: `https://www.instagram.com/${handle}/`,
+    origin: 'https://www.instagram.com',
+    'sec-fetch-site': 'same-site',
+    'sec-fetch-mode': 'cors',
+    'sec-fetch-dest': 'empty'
+  };
+}
+
+function firstCaptionLine(caption: string) {
+  return normalizeWhitespace(
+    caption
+      .split('\n')
+      .map((line) => line.trim())
+      .find(Boolean) ?? ''
+  ).slice(0, 160);
+}
+
+function buildPostUrl(shortcode: string, format: CompetitorContentFormat) {
+  if (!shortcode) {
+    return '';
+  }
+
+  if (format === 'reels') {
+    return `https://www.instagram.com/reel/${shortcode}/`;
+  }
+
+  if (format === 'video') {
+    return `https://www.instagram.com/tv/${shortcode}/`;
+  }
+
+  return `https://www.instagram.com/p/${shortcode}/`;
+}
+
+function inferFormat(node: RawInstagramNode): CompetitorContentFormat {
+  const productType = normalizeText(node.product_type).toLowerCase();
+  const typename = normalizeText(node.__typename).toLowerCase();
+  const isVideo = Boolean(node.is_video);
+
+  if (productType === 'clips') {
+    return 'reels';
+  }
+
+  if (productType === 'igtv') {
+    return 'video';
+  }
+
+  if (typename === 'graphsidecar') {
+    return 'carrossel';
+  }
+
+  if (isVideo) {
+    return 'video';
+  }
+
+  if (typename === 'graphimage') {
+    return 'image';
+  }
+
+  return 'unknown';
+}
+
+function detectHookPattern(text: string) {
+  const lead = firstCaptionLine(text).toLowerCase();
+
+  if (!lead) {
+    return 'abertura direta';
+  }
+
+  if (/^pov[:\s-]/i.test(lead)) {
+    return 'POV';
+  }
+
+  if (/^\d+/.test(lead)) {
+    return 'lista numerada';
+  }
+
+  if (/\?/.test(lead)) {
+    return 'pergunta';
+  }
+
+  if (/(ningu[eé]m|quase ningu[eé]m|pouca gente)/i.test(lead)) {
+    return 'segredo';
+  }
+
+  if (/(erro|errado|pare de)/i.test(lead)) {
+    return 'erro comum';
+  }
+
+  if (/(antes|depois)/i.test(lead)) {
+    return 'antes e depois';
+  }
+
+  if (/^(como|how to|guia)/i.test(lead)) {
+    return 'tutorial';
+  }
+
+  if (/(eu |meu |minha |achei que|descobri|quando eu)/i.test(lead)) {
+    return 'relato pessoal';
+  }
+
+  return 'abertura direta';
+}
+
+function detectCtaPatterns(text: string) {
+  const source = text.toLowerCase();
+  const patterns = new Set<string>();
+
+  if (/(comenta|coment[eá]|deixa aqui nos comentarios|me conta)/i.test(source)) {
+    patterns.add('comentarios');
+  }
+  if (/(salva|guarda|save this|salve)/i.test(source)) {
+    patterns.add('salvar');
+  }
+  if (/(compartilha|manda para|envie para|share)/i.test(source)) {
+    patterns.add('compartilhar');
+  }
+  if (/(segue|follow|acompanha)/i.test(source)) {
+    patterns.add('seguir');
+  }
+  if (/(direct|dm|me chama|manda mensagem|whatsapp|link na bio)/i.test(source)) {
+    patterns.add('dm');
+  }
+  if (/(site|compre|garanta|reserve|saiba mais|acesse)/i.test(source)) {
+    patterns.add('conversao');
+  }
+
+  return [...patterns];
+}
+
+function detectStorytellingPatterns(text: string) {
+  const source = text.toLowerCase();
+  const patterns = new Set<string>();
+
+  if (/(eu |meu |minha |quando eu|ate que|descobri)/i.test(source)) {
+    patterns.add('historia pessoal');
+  }
+
+  if (/(antes|depois|mudou|transformou)/i.test(source)) {
+    patterns.add('transformacao');
+  }
+
+  if (/(problema|solucao|resultado|funcionou)/i.test(source)) {
+    patterns.add('problema-solucao');
+  }
+
+  if (/(bastidor|behind the scenes|por tras)/i.test(source)) {
+    patterns.add('bastidor');
+  }
+
+  if (/(cliente|prova|depoimento|resultado real)/i.test(source)) {
+    patterns.add('prova social');
+  }
+
+  return [...patterns];
+}
+
+function computeEngagementScore(metrics: { likes: number; comments: number; views: number }) {
+  return metrics.likes + metrics.comments * 12 + metrics.views * 0.03;
+}
+
+function mapInstagramNode(node: RawInstagramNode) {
+  const format = inferFormat(node);
+  const caption = getNestedString(node, ['edge_media_to_caption', 'edges', '0', 'node', 'text']);
+  const likes = toNumber(getObject(node.edge_media_preview_like)?.count || getObject(node.edge_liked_by)?.count);
+  const comments = toNumber(getObject(node.edge_media_to_comment)?.count);
+  const views = toNumber(node.video_view_count);
+  const metrics = {
+    likes,
+    comments,
+    views,
+    engagementScore: computeEngagementScore({ likes, comments, views })
+  };
+
+  const mapped: CompetitorCapturedPost = {
+    id: normalizeText(node.id),
+    shortcode: normalizeText(node.shortcode),
+    sourceUrl: buildPostUrl(normalizeText(node.shortcode), format),
+    format,
+    caption,
+    captionLead: firstCaptionLine(caption),
+    thumbnailUrl: normalizeText(node.thumbnail_src) || normalizeText(node.display_url),
+    mediaUrl: normalizeText(node.video_url) || normalizeText(node.display_url),
+    postedAt: (() => {
+      const timestamp = toNumber(node.taken_at_timestamp);
+      return timestamp ? new Date(timestamp * 1000).toISOString() : new Date().toISOString();
+    })(),
+    metrics,
+    accessibilityCaption: normalizeText(node.accessibility_caption),
+    hookPattern: detectHookPattern(caption),
+    ctaPatterns: detectCtaPatterns(caption),
+    storytellingPatterns: detectStorytellingPatterns(caption)
+  };
+
+  return mapped;
+}
+
+function uniquePosts(posts: CompetitorCapturedPost[]) {
+  const seen = new Set<string>();
+  const unique: CompetitorCapturedPost[] = [];
+
+  for (const post of posts) {
+    const key = post.id || post.shortcode || post.sourceUrl;
+    if (!key || seen.has(key)) {
+      continue;
+    }
+    seen.add(key);
+    unique.push(post);
+  }
+
+  return unique;
+}
+
+function resolveRelativeUrl(value: string, baseUrl: string) {
+  if (!value) {
+    return '';
+  }
+
+  try {
+    return new URL(value, baseUrl).toString();
+  } catch {
+    return value;
+  }
+}
+
+function extractMetaContent(html: string, key: string, attribute = 'property') {
+  const pattern = new RegExp(`<meta[^>]+${attribute}=["']${key}["'][^>]+content=["']([^"']+)["'][^>]*>`, 'i');
+  const alternate = new RegExp(`<meta[^>]+content=["']([^"']+)["'][^>]+${attribute}=["']${key}["'][^>]*>`, 'i');
+  const match = html.match(pattern) ?? html.match(alternate);
+  return normalizeText(match?.[1] ?? '');
+}
+
+function extractTitle(html: string) {
+  const match = html.match(/<title[^>]*>([^<]+)<\/title>/i);
+  return normalizeWhitespace(match?.[1] ?? '');
+}
+
+function extractFirstMatch(html: string, regex: RegExp) {
+  const match = html.match(regex);
+  return normalizeText(match?.[1] ?? '');
+}
+
+async function fetchWebsiteSnapshot(website: string) {
+  const normalized = normalizeWebsiteUrl(website);
+
+  if (!normalized) {
+    return null;
+  }
+
+  try {
+    const response = await fetch(normalized, {
+      headers: { 'user-agent': WEBSITE_USER_AGENT },
+      redirect: 'follow',
+      cache: 'no-store'
+    });
+
+    if (!response.ok) {
+      return null;
+    }
+
+    const finalUrl = response.url || normalized;
+    const html = await response.text();
+    const iconHref =
+      extractFirstMatch(html, /<link[^>]+rel=["'][^"']*(?:icon|shortcut icon)[^"']*["'][^>]+href=["']([^"']+)["']/i) ||
+      extractFirstMatch(html, /<link[^>]+href=["']([^"']+)["'][^>]+rel=["'][^"']*(?:icon|shortcut icon)[^"']*["']/i);
+    const ogImage = extractMetaContent(html, 'og:image');
+    const description = extractMetaContent(html, 'description', 'name') || extractMetaContent(html, 'og:description');
+    const title = extractTitle(html) || extractMetaContent(html, 'og:title');
+
+    return {
+      url: finalUrl,
+      title,
+      description,
+      iconUrl: resolveRelativeUrl(iconHref, finalUrl) || resolveRelativeUrl('/favicon.ico', finalUrl),
+      logoUrl: resolveRelativeUrl(ogImage, finalUrl) || resolveRelativeUrl(iconHref, finalUrl)
+    };
+  } catch {
+    return null;
+  }
+}
+
+async function fetchInstagramSnapshot(handle: string) {
+  const normalized = normalizeInstagramHandle(handle);
+
+  if (!normalized) {
+    return null;
+  }
+
+  try {
+    const response = await fetch(
+      `https://i.instagram.com/api/v1/users/web_profile_info/?username=${encodeURIComponent(normalized)}`,
+      {
+        headers: parseInstagramHeaders(normalized),
+        cache: 'no-store'
+      }
+    );
+
+    if (!response.ok) {
+      return null;
+    }
+
+    const payload = JSON.parse(await response.text()) as { data?: { user?: Record<string, unknown> } };
+    const user = payload.data?.user;
+
+    if (!user || normalizeText(user.username).toLowerCase() !== normalized) {
+      return null;
+    }
+
+    const timelinePosts = getNestedArray(user, ['edge_owner_to_timeline_media', 'edges'])
+      .map((entry) => getObject(entry)?.node)
+      .map((node) => (getObject(node) ? mapInstagramNode(getObject(node) as RawInstagramNode) : null))
+      .filter((post): post is CompetitorCapturedPost => Boolean(post));
+
+    const reelPosts = getNestedArray(user, ['edge_felix_video_timeline', 'edges'])
+      .map((entry) => getObject(entry)?.node)
+      .map((node) => (getObject(node) ? mapInstagramNode(getObject(node) as RawInstagramNode) : null))
+      .filter((post): post is CompetitorCapturedPost => Boolean(post));
+
+    const posts = uniquePosts([...timelinePosts, ...reelPosts]).sort((left, right) => right.postedAt.localeCompare(left.postedAt));
+
+    return {
+      handle: normalized,
+      bio: normalizeText(user.biography),
+      fullName: normalizeText(user.full_name),
+      followers: toNumber(getObject(user.edge_followed_by)?.count),
+      following: toNumber(getObject(user.edge_follow)?.count),
+      postsCount: toNumber(getObject(user.edge_owner_to_timeline_media)?.count),
+      reelsCount: toNumber(getObject(user.edge_felix_video_timeline)?.count),
+      verified: Boolean(user.is_verified),
+      externalUrl: normalizeText(user.external_url),
+      profilePicUrl: normalizeText(user.profile_pic_url_hd) || normalizeText(user.profile_pic_url),
+      posts
+    };
+  } catch {
+    return null;
+  }
+}
+
+function tokenize(text: string) {
+  return text
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .split(/[^a-z0-9]+/g)
+    .filter((token) => token.length >= 4 && !WORD_STOPLIST.has(token));
+}
+
+function topRepeatedTerms(texts: string[], limit = 8) {
+  const frequency = new Map<string, number>();
+
+  texts.forEach((text) => {
+    const uniqueTokens = new Set(tokenize(text));
+    uniqueTokens.forEach((token) => frequency.set(token, (frequency.get(token) ?? 0) + 1));
+  });
+
+  return [...frequency.entries()]
+    .sort((left, right) => right[1] - left[1] || left[0].localeCompare(right[0], 'pt-BR'))
+    .slice(0, limit)
+    .map(([token]) => token);
+}
+
+function topCounts(items: string[], limit = 5) {
+  const frequency = new Map<string, number>();
+
+  items.forEach((item) => {
+    const normalized = normalizeText(item);
+    if (!normalized) {
+      return;
+    }
+    frequency.set(normalized, (frequency.get(normalized) ?? 0) + 1);
+  });
+
+  return [...frequency.entries()]
+    .sort((left, right) => right[1] - left[1] || left[0].localeCompare(right[0], 'pt-BR'))
+    .slice(0, limit)
+    .map(([item]) => item);
+}
+
+function formatMix(posts: CompetitorCapturedPost[]) {
+  const counts = new Map<CompetitorContentFormat, number>();
+  posts.forEach((post) => counts.set(post.format, (counts.get(post.format) ?? 0) + 1));
+
+  return [...counts.entries()]
+    .map(([format, count]) => ({
+      format,
+      count,
+      share: posts.length ? count / posts.length : 0
+    }))
+    .sort((left, right) => right.count - left.count);
+}
+
+function cadenceLabel(posts: CompetitorCapturedPost[]) {
+  if (posts.length < 2) {
+    return 'cadencia ainda insuficiente para leitura confiavel';
+  }
+
+  const sorted = [...posts]
+    .map((post) => new Date(post.postedAt).getTime())
+    .filter((value) => Number.isFinite(value))
+    .sort((left, right) => right - left);
+
+  let totalDiff = 0;
+  for (let index = 0; index < sorted.length - 1; index += 1) {
+    totalDiff += Math.abs(sorted[index] - sorted[index + 1]);
+  }
+
+  const avgDays = totalDiff / Math.max(1, sorted.length - 1) / (1000 * 60 * 60 * 24);
+
+  if (avgDays <= 1.5) {
+    return 'publicacao praticamente diaria';
+  }
+  if (avgDays <= 3.5) {
+    return 'ritmo consistente de 2 a 4 publicacoes por semana';
+  }
+  if (avgDays <= 7) {
+    return 'cadencia semanal moderada';
+  }
+  return 'publicacao mais espaçada';
+}
+
+function toneHintsFromTexts(texts: string[]) {
+  const source = texts.join('\n').toLowerCase();
+  const hints = new Set<string>();
+
+  if (/(aprenda|descubra|guia|passo a passo|dicas|como)/i.test(source)) {
+    hints.add('educativo');
+  }
+  if (/(eu |meu |minha |voce |voces |a gente)/i.test(source)) {
+    hints.add('conversacional');
+  }
+  if (/(resultado|estrategia|metodo|especialista|estudo)/i.test(source)) {
+    hints.add('autoridade');
+  }
+  if (/(😂|🤣|meme|pov)/i.test(source)) {
+    hints.add('humor/trend');
+  }
+  if (/(sonho|transforma|mudou|minha vida|emocion)/i.test(source)) {
+    hints.add('emocional');
+  }
+  if (!hints.size) {
+    hints.add('direto');
+  }
+
+  return [...hints];
+}
+
+function visualHintsFromFormats(mix: Array<{ format: CompetitorContentFormat; count: number; share: number }>) {
+  const hints: string[] = [];
+  const dominant = mix[0];
+
+  if (!dominant) {
+    return ['sem volume suficiente para ler o estilo visual'];
+  }
+
+  if (dominant.format === 'reels' || dominant.format === 'video') {
+    hints.push('forte foco em video vertical');
+  }
+  if (mix.some((item) => item.format === 'carrossel' && item.share >= 0.2)) {
+    hints.push('usa carrosseis para aprofundar contexto');
+  }
+  if (mix.some((item) => item.format === 'image' && item.share >= 0.2)) {
+    hints.push('mantem posts estaticos para reforco visual');
+  }
+  if (!hints.length) {
+    hints.push('mistura formatos sem depender de um unico modelo');
+  }
+
+  return hints;
+}
+
+function topAnglesFromPosts(posts: CompetitorCapturedPost[]) {
+  const angles = new Set<string>();
+
+  posts.forEach((post) => {
+    if (post.hookPattern === 'POV' || post.hookPattern === 'relato pessoal') {
+      angles.add('narrativas em primeira pessoa');
+    }
+    if (post.hookPattern === 'lista numerada') {
+      angles.add('listas rapidas e objetivas');
+    }
+    if (post.storytellingPatterns.includes('transformacao')) {
+      angles.add('promessa de transformacao');
+    }
+    if (post.storytellingPatterns.includes('prova social')) {
+      angles.add('prova social e validacao externa');
+    }
+    if (post.ctaPatterns.includes('dm')) {
+      angles.add('CTA de conversa direta');
+    }
+  });
+
+  return [...angles].slice(0, 6);
+}
+
+export function buildCompetitorFacts(snapshot: CompetitorSourceSnapshot, competitor: CompetitorAnalysisInput['competitor']): CompetitorAnalysisFacts {
+  const posts = Array.isArray(snapshot.topPosts) ? snapshot.topPosts : [];
+  const captions = posts.map((post) => post.caption).filter(Boolean);
+  const mix = formatMix(posts);
+  const competitorTags = Array.isArray(competitor.tags) ? competitor.tags : [];
+
+  return {
+    recurringThemes: topRepeatedTerms([
+      ...captions,
+      snapshot.instagram?.bio ?? '',
+      competitor.notes,
+      competitor.niche,
+      competitorTags.join(' ')
+    ]),
+    formatMix: mix,
+    hookPatterns: topCounts(posts.map((post) => post.hookPattern), 5),
+    ctaPatterns: topCounts(posts.flatMap((post) => post.ctaPatterns), 5),
+    storytellingPatterns: topCounts(posts.flatMap((post) => post.storytellingPatterns), 5),
+    toneHints: toneHintsFromTexts([snapshot.instagram?.bio ?? '', ...captions, competitor.notes]),
+    visualHints: visualHintsFromFormats(mix),
+    cadenceLabel: cadenceLabel(posts),
+    topAngles: topAnglesFromPosts(posts),
+    topCaptions: posts
+      .slice(0, 6)
+      .map((post) => post.captionLead || post.caption)
+      .filter(Boolean)
+      .slice(0, 6)
+  };
+}
+
+function topPostsForSnapshot(posts: CompetitorCapturedPost[]) {
+  return [...posts]
+    .sort((left, right) => right.metrics.engagementScore - left.metrics.engagementScore)
+    .slice(0, 8);
+}
+
+export async function captureCompetitorSources(competitor: CompetitorAnalysisInput['competitor']) {
+  const [instagram, website] = await Promise.all([
+    competitor.handle ? fetchInstagramSnapshot(competitor.handle) : Promise.resolve(null),
+    competitor.website ? fetchWebsiteSnapshot(competitor.website) : Promise.resolve(null)
+  ]);
+
+  const instagramPosts = instagram?.posts ?? [];
+  const feedAnalyzed = instagramPosts.filter((post) => post.format !== 'reels' && post.format !== 'video').length;
+  const reelsAnalyzed = instagramPosts.filter((post) => post.format === 'reels' || post.format === 'video').length;
+  const captureNotes: string[] = [];
+
+  if (!instagram && competitor.handle) {
+    captureNotes.push('Nao foi possivel ler o perfil publico do Instagram informado.');
+  }
+  if (!website && competitor.website) {
+    captureNotes.push('Nao foi possivel ler o website informado.');
+  }
+  if (!instagramPosts.length) {
+    captureNotes.push('Nenhum post publico foi retornado pelo perfil no momento da captura.');
+  }
+
+  const snapshot: CompetitorSourceSnapshot = {
+    fetchedAt: new Date().toISOString(),
+    instagram: instagram
+      ? {
+          handle: instagram.handle,
+          bio: instagram.bio,
+          fullName: instagram.fullName,
+          followers: instagram.followers,
+          following: instagram.following,
+          postsCount: instagram.postsCount,
+          reelsCount: instagram.reelsCount,
+          verified: instagram.verified,
+          externalUrl: instagram.externalUrl,
+          profilePicUrl: instagram.profilePicUrl
+        }
+      : null,
+    website,
+    postsAnalyzed: instagramPosts.length,
+    reelsAnalyzed,
+    feedAnalyzed,
+    captureNotes,
+    topPosts: topPostsForSnapshot(instagramPosts)
+  };
+
+  return {
+    snapshot,
+    suggestedLogoUrl: website?.logoUrl || website?.iconUrl || instagram?.profilePicUrl || competitor.logoUrl || ''
+  };
+}
+
+function buildInsight(
+  kind: CompetitorInsight['kind'],
+  title: string,
+  summary: string,
+  rationale: string,
+  extra?: Partial<CompetitorInsight>
+): CompetitorInsight {
+  return {
+    id: buildInsightId(kind, `${title}-${summary}`),
+    kind,
+    title,
+    summary,
+    rationale,
+    tags: extra?.tags ?? [],
+    hookType: extra?.hookType ?? '',
+    ctaType: extra?.ctaType ?? '',
+    format: extra?.format ?? '',
+    sample: extra?.sample ?? '',
+    sourceUrl: extra?.sourceUrl ?? ''
+  };
+}
+
+function formatShareLabel(format: CompetitorContentFormat) {
+  switch (format) {
+    case 'reels':
+      return 'Reels';
+    case 'video':
+      return 'Video curto';
+    case 'carrossel':
+      return 'Carrossel';
+    case 'image':
+      return 'Post estatico';
+    default:
+      return 'Misto';
+  }
+}
+
+export function buildCompetitorAnalysisFallback(input: CompetitorAnalysisInput): CompetitorAnalysis {
+  const { competitor, facts, snapshot } = input;
+  const dominantFormat = facts.formatMix[0];
+  const topPost = snapshot.topPosts[0];
+  const hookPattern = facts.hookPatterns[0] ?? 'abertura direta';
+  const ctaPattern = facts.ctaPatterns[0] ?? 'comentarios';
+  const storytelling = facts.storytellingPatterns[0] ?? 'problema-solucao';
+  const topTheme = facts.recurringThemes[0] ?? competitor.niche ?? 'topico central do nicho';
+  const secondTheme = facts.recurringThemes[1] ?? 'tema adjacente';
+  const visualStyle = facts.visualHints.join(', ');
+  const tone = facts.toneHints.join(', ');
+  const audience = competitor.niche
+    ? `publico interessado em ${competitor.niche.toLowerCase()}`
+    : 'publico que acompanha conteudo de descoberta e repertorio';
+  const positioning = snapshot.website?.title || snapshot.instagram?.bio || competitor.notes || `marca de ${competitor.niche || 'conteudo'} com forte presenca em social`;
+
+  const sections = [
+    {
+      id: 'overview',
+      title: 'Visao geral da comunicacao',
+      description: 'Leitura objetiva do jeito que o perfil se posiciona e conversa.',
+      items: [
+        buildInsight('overview', 'Tom de voz', tone || 'direto e pratico', 'Sintetiza a forma como o perfil conversa repetidamente nas legendas e bio.', {
+          tags: facts.toneHints,
+          sample: snapshot.instagram?.bio ?? '',
+          sourceUrl: snapshot.instagram ? `https://www.instagram.com/${snapshot.instagram.handle}/` : ''
+        }),
+        buildInsight('overview', 'Posicionamento', positioning, 'Resume a proposta que fica mais evidente entre bio, site e temas recorrentes.', {
+          tags: competitor.tags,
+          sample: snapshot.website?.description || snapshot.instagram?.bio || competitor.notes,
+          sourceUrl: competitor.website || (snapshot.instagram ? `https://www.instagram.com/${snapshot.instagram.handle}/` : '')
+        }),
+        buildInsight('visual', 'Estilo visual aparente', visualStyle, 'Inferido pela mistura de formatos e pelo tipo de publicacao que domina o perfil.', {
+          format: dominantFormat ? formatShareLabel(dominantFormat.format) : '',
+          sourceUrl: topPost?.sourceUrl ?? ''
+        }),
+        buildInsight('overview', 'Publico aparente', audience, 'Estimativa baseada no nicho informado e nos temas mais recorrentes do perfil.', {
+          tags: facts.recurringThemes.slice(0, 4)
+        })
+      ]
+    },
+    {
+      id: 'patterns',
+      title: 'Padroes de conteudo',
+      description: 'O que aparece com mais frequencia no conteudo publicado.',
+      items: [
+        buildInsight('theme', 'Temas recorrentes', `Temas que mais se repetem: ${facts.recurringThemes.slice(0, 5).join(', ') || 'sem repeticao clara ainda'}.`, 'Ajuda a entender quais assuntos estruturam o repertorio do perfil.', {
+          tags: facts.recurringThemes.slice(0, 5),
+          sourceUrl: topPost?.sourceUrl ?? ''
+        }),
+        buildInsight('format', 'Formatos mais usados', dominantFormat ? `${formatShareLabel(dominantFormat.format)} lidera o mix com ${Math.round(dominantFormat.share * 100)}% das amostras analisadas.` : 'Nao houve volume suficiente para ler o mix de formatos.', 'Mostra onde o perfil concentra energia de publicacao.', {
+          format: dominantFormat ? formatShareLabel(dominantFormat.format) : '',
+          sourceUrl: topPost?.sourceUrl ?? ''
+        }),
+        buildInsight('hook', 'Tipo de abertura mais comum', hookPattern, 'Padrao detectado nos inicios das legendas e chamadas que mais aparecem no feed.', {
+          hookType: hookPattern,
+          sample: facts.topCaptions[0] ?? '',
+          sourceUrl: topPost?.sourceUrl ?? ''
+        }),
+        buildInsight('cta', 'CTA mais recorrente', ctaPattern, 'Mostra como o perfil normalmente tenta mover a audiencia para a proxima acao.', {
+          ctaType: ctaPattern,
+          sample: facts.topCaptions[1] ?? '',
+          sourceUrl: topPost?.sourceUrl ?? ''
+        }),
+        buildInsight('storytelling', 'Estrutura narrativa frequente', storytelling, 'Resume o padrao narrativo que mais se repete nas publicacoes observadas.', {
+          tags: facts.storytellingPatterns,
+          sourceUrl: topPost?.sourceUrl ?? ''
+        })
+      ]
+    },
+    {
+      id: 'ideas',
+      title: 'Ideias aproveitaveis',
+      description: 'O que vale transformar em repertorio para conteudo novo.',
+      items: [
+        buildInsight('idea', `Gancho para ${topTheme}`, `Abrir com ${hookPattern.toLowerCase()} conectando ${topTheme} com um problema concreto do publico.`, 'Traduz o padrao do perfil em um hook que pode ser adaptado sem copiar.', {
+          hookType: hookPattern,
+          format: dominantFormat ? formatShareLabel(dominantFormat.format) : 'Reels',
+          sample: topPost?.captionLead ?? '',
+          sourceUrl: topPost?.sourceUrl ?? ''
+        }),
+        buildInsight('idea', `CTA inspirado em ${ctaPattern}`, `Fechar com CTA de ${ctaPattern} depois de provar valor em um formato de ${formatShareLabel(dominantFormat?.format ?? 'reels').toLowerCase()}.`, 'Mantem a logica de conversao observada, mas aplicada ao seu contexto.', {
+          ctaType: ctaPattern,
+          format: formatShareLabel(dominantFormat?.format ?? 'reels')
+        }),
+        buildInsight('storytelling', 'Estrutura de storytelling', `Combinar ${storytelling.toLowerCase()} com o tema ${secondTheme} para dar contexto antes da oferta.`, 'Aproveita a narrativa dominante do perfil em um formato mais gravavel.', {
+          format: dominantFormat ? formatShareLabel(dominantFormat.format) : '',
+          sample: facts.topCaptions[2] ?? '',
+          sourceUrl: topPost?.sourceUrl ?? ''
+        }),
+        buildInsight('idea', 'Formato para testar', dominantFormat ? `Produzir ${formatShareLabel(dominantFormat.format)} focado em ${topTheme} com CTA de ${ctaPattern}.` : `Produzir conteudo curto focado em ${topTheme}.`, 'Direciona a referencia para uma acao concreta no calendario.', {
+          format: formatShareLabel(dominantFormat?.format ?? 'reels'),
+          sourceUrl: topPost?.sourceUrl ?? ''
+        })
+      ]
+    },
+    {
+      id: 'adaptation',
+      title: 'O que podemos aproveitar',
+      description: 'Aproveitamento seguro sem copiar formula pronta.',
+      items: [
+        buildInsight('adaptation', 'Vale adaptar', `A combinacao de ${topTheme} com ${hookPattern.toLowerCase()} e ${formatShareLabel(dominantFormat?.format ?? 'reels').toLowerCase()} tende a ser a melhor referencia para adaptar.`, 'Mostra o nucleo que parece mais forte no perfil.', {
+          tags: [topTheme, hookPattern],
+          sourceUrl: topPost?.sourceUrl ?? ''
+        }),
+        buildInsight('adaptation', 'Nao vale copiar', 'Evite reproduzir legenda, framing ou visual exatamente iguais. O valor esta no angulo e na estrutura, nao na copia literal.', 'Mantem a referencia util sem descaracterizar a marca.', {
+          tags: ['adaptacao', 'originalidade']
+        })
+      ]
+    },
+    {
+      id: 'actions',
+      title: 'Sugestoes praticas',
+      description: 'O que ja pode virar acao dentro da plataforma.',
+      items: [
+        buildInsight('action', 'Enviar para Conteudo', `Gerar uma pauta sobre ${topTheme} e outra sobre ${secondTheme}, mantendo ${hookPattern.toLowerCase()} como linha de abertura.`, 'Transforma a leitura em pauta acionavel.', {
+          format: formatShareLabel(dominantFormat?.format ?? 'reels')
+        }),
+        buildInsight('action', 'Enviar para Creator AI', `Pedir ao Creator AI ${formatShareLabel(dominantFormat?.format ?? 'reels')} com tom ${facts.toneHints[0] ?? 'direto'} e CTA de ${ctaPattern}.`, 'Ja sai pronto para virar prompt interno.', {
+          ctaType: ctaPattern,
+          hookType: hookPattern
+        }),
+        buildInsight('action', 'Salvar no banco', `Salvar ${hookPattern.toLowerCase()}, ${ctaPattern} e os temas ${topTheme} / ${secondTheme} como repertorio reutilizavel.`, 'Permite alimentar futuras geracoes com aprendizado reutilizavel.', {
+          tags: [topTheme, secondTheme, hookPattern, ctaPattern]
+        })
+      ]
+    }
+  ];
+
+  return {
+    generatedAt: new Date().toISOString(),
+    model: 'fallback-logic',
+    overview: {
+      toneOfVoice: tone || 'direto',
+      positioning,
+      apparentAudience: audience,
+      visualStyle
+    },
+    sections,
+    practicalSuggestions: {
+      toContent: sections[4]?.items.slice(0, 1).map((item) => item.summary) ?? [],
+      toCreatorAi: sections[4]?.items.slice(1, 2).map((item) => item.summary) ?? [],
+      toReferenceBank: sections[4]?.items.slice(2, 3).map((item) => item.summary) ?? []
+    },
+    sourceSnapshot: snapshot
+  };
+}
+
+export function summarizeCompetitorAnalysisInput(input: CompetitorAnalysisInput) {
+  const { competitor, snapshot, facts } = input;
+
+  return {
+    competitor: {
+      name: competitor.name,
+      type: competitor.type,
+      niche: competitor.niche,
+      notes: competitor.notes,
+      tags: competitor.tags
+    },
+    profile: {
+      instagram: snapshot.instagram,
+      website: snapshot.website,
+      postsAnalyzed: snapshot.postsAnalyzed,
+      reelsAnalyzed: snapshot.reelsAnalyzed,
+      feedAnalyzed: snapshot.feedAnalyzed,
+      captureNotes: snapshot.captureNotes
+    },
+    facts: {
+      recurringThemes: facts.recurringThemes,
+      formatMix: facts.formatMix.map((item) => `${formatShareLabel(item.format)} ${item.count}`),
+      hookPatterns: facts.hookPatterns,
+      ctaPatterns: facts.ctaPatterns,
+      storytellingPatterns: facts.storytellingPatterns,
+      toneHints: facts.toneHints,
+      visualHints: facts.visualHints,
+      cadenceLabel: facts.cadenceLabel,
+      topAngles: facts.topAngles
+    },
+    topSamples: snapshot.topPosts.slice(0, 6).map((post) => ({
+      format: formatShareLabel(post.format),
+      captionLead: post.captionLead,
+      hookPattern: post.hookPattern,
+      ctaPatterns: post.ctaPatterns,
+      storytellingPatterns: post.storytellingPatterns,
+      likes: post.metrics.likes,
+      comments: post.metrics.comments,
+      views: post.metrics.views,
+      sourceUrl: post.sourceUrl
+    }))
+  };
+}
+
+export function buildReferencePayloadFromInsight(
+  competitor: Pick<CompetitorRecord, 'id' | 'name'>,
+  insight: CompetitorInsight
+): Omit<ContentReferenceRecord, 'id' | 'savedAt'> {
+  return {
+    competitorId: competitor.id,
+    competitorName: competitor.name,
+    title: insight.title,
+    content: insight.summary,
+    hookType: insight.hookType || insight.kind,
+    ctaType: insight.ctaType || '',
+    format: insight.format || '',
+    imageUrl: '',
+    notes: insight.rationale,
+    liked: true,
+    category: insight.kind,
+    source: 'analysis',
+    sourceInsightId: insight.id,
+    sourceUrl: insight.sourceUrl
+  };
+}

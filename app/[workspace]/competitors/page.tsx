@@ -1,4 +1,5 @@
 import { CompetitorsWorkspace } from '@/components/platform/competitors-workspace';
+import { getWorkspaceCompetitors, getWorkspaceContentReferences } from '@/lib/platform-data';
 
 export default async function CompetitorsPage({
   params
@@ -6,5 +7,10 @@ export default async function CompetitorsPage({
   params: Promise<{ workspace: string }>;
 }) {
   const { workspace } = await params;
-  return <CompetitorsWorkspace workspace={workspace} />;
+  const [competitors, references] = await Promise.all([
+    getWorkspaceCompetitors(workspace),
+    getWorkspaceContentReferences(workspace)
+  ]);
+
+  return <CompetitorsWorkspace workspace={workspace} initialCompetitors={competitors} initialReferences={references} />;
 }

@@ -4,14 +4,24 @@ import type {
   AiConversation,
   AiMessage,
   CarrosselSlide,
+  PlannerBatchItem,
+  PlannerBatchSummary,
   PostFields,
   ProductItem,
   RecordingCard,
   RecordingColumnKey,
   RecordingField,
+  ScriptPlannerMeta,
   ScriptItem,
   StorySlide
 } from '@/types/platform';
+import type {
+  CompetitorAnalysis,
+  CompetitorAnalysisStatus,
+  CompetitorRecord,
+  CompetitorType,
+  ContentReferenceRecord
+} from '@/types/competitor-intelligence';
 
 type ProductRow = {
   id: string;
@@ -57,6 +67,50 @@ type AiMessageRow = {
   created_at: string;
 };
 
+type CompetitorRow = {
+  id: string;
+  company_id: string;
+  name: string;
+  handle: string | null;
+  niche: string | null;
+  website: string | null;
+  notes: string | null;
+  created_at: string;
+  updated_at: string;
+  profile_type?: string | null;
+  logo_url?: string | null;
+  tags?: unknown;
+  analysis_status?: string | null;
+  analysis_error?: string | null;
+  analysis?: unknown;
+  source_snapshot?: unknown;
+  last_analyzed_at?: string | null;
+};
+
+type ContentReferenceRow = {
+  id: string;
+  company_id: string;
+  competitor_id: string | null;
+  title: string;
+  content: string;
+  hook_type: string | null;
+  cta_type: string | null;
+  format: string | null;
+  image_url: string | null;
+  notes: string | null;
+  liked: boolean | null;
+  category: string | null;
+  source: string | null;
+  source_insight_id: string | null;
+  source_url: string | null;
+  metadata: unknown;
+  created_at: string;
+  updated_at: string;
+  competitors?: {
+    name?: string | null;
+  } | null;
+};
+
 type ScriptMetadata = {
   caption?: string;
   prompt?: string;
@@ -78,6 +132,26 @@ type ScriptMetadata = {
   postFields?: PostFields;
   assignee?: string;
   blockType?: string;
+  scheduledFor?: string;
+  plannerMeta?: ScriptPlannerMeta | null;
+};
+
+type PlannerBatchRow = {
+  id: string;
+  company_id: string;
+  mode: string | null;
+  status: string | null;
+  range_start: string;
+  range_end: string;
+  reason: string | null;
+  progress_total: number | null;
+  progress_completed: number | null;
+  error_message: string | null;
+  summary: unknown;
+  created_at: string;
+  updated_at: string;
+  started_at: string | null;
+  completed_at: string | null;
 };
 
 type WorkspaceDataAccess = {
@@ -97,6 +171,240 @@ function normalizeStringArray(value: unknown) {
   }
 
   return value.filter((item): item is string => typeof item === 'string' && item.trim().length > 0);
+}
+
+function normalizeJsonObject<T extends Record<string, unknown>>(value: unknown) {
+  return value && typeof value === 'object' && !Array.isArray(value) ? (value as T) : null;
+}
+
+function normalizePlannerMeta(value: unknown): ScriptPlannerMeta | null {
+  const meta = normalizeJsonObject<Record<string, unknown>>(value);
+
+  if (!meta || normalizeString(meta.source) !== 'planner') {
+    return null;
+  }
+
+  const batchId = normalizeString(meta.batchId);
+  const rangeStart = normalizeString(meta.rangeStart);
+  const rangeEnd = normalizeString(meta.rangeEnd);
+
+  if (!batchId || !rangeStart || !rangeEnd) {
+    return null;
+  }
+
+  return {
+    source: 'planner',
+    batchId,
+    rangeStart,
+    rangeEnd,
+    mode: normalizeString(meta.mode) === 'replan' ? 'replan' : 'create',
+    reason: normalizeString(meta.reason),
+    templateId: normalizeString(meta.templateId) || undefined,
+    productRuleId: normalizeString(meta.productRuleId) || undefined,
+    fixedWeekdays: (Array.isArray(meta.fixedWeekdays) ? meta.fixedWeekdays : [])
+      .filter((item): item is number => typeof item === 'number' && item >= 0 && item <= 6),
+    fixedPlacement: typeof meta.fixedPlacement === 'boolean' ? meta.fixedPlacement : undefined,
+    storiesInPeriod: typeof meta.storiesInPeriod === 'number' ? meta.storiesInPeriod : undefined,
+    slotType:
+      normalizeString(meta.slotType) === 'stories'
+        ? 'stories'
+        : normalizeString(meta.slotType) === 'feed'
+          ? 'feed'
+          : undefined,
+    slotIndex: typeof meta.slotIndex === 'number' ? meta.slotIndex : undefined,
+    sequenceSize: typeof meta.sequenceSize === 'number' ? meta.sequenceSize : undefined
+  };
+}
+
+function normalizePlannerBatchSummary(value: unknown): PlannerBatchSummary | null {
+  const summary = normalizeJsonObject<Record<string, unknown>>(value);
+
+  if (!summary) {
+    return null;
+  }
+
+  const rawProducts = Array.isArray(summary.products) ? summary.products : [];
+
+  return {
+    totalDays: typeof summary.totalDays === 'number' ? summary.totalDays : 0,
+    totalFeedPosts: typeof summary.totalFeedPosts === 'number' ? summary.totalFeedPosts : 0,
+    totalStoryPosts: typeof summary.totalStoryPosts === 'number' ? summary.totalStoryPosts : 0,
+    totalPosts: typeof summary.totalPosts === 'number' ? summary.totalPosts : 0,
+    generatedScripts: typeof summary.generatedScripts === 'number' ? summary.generatedScripts : undefined,
+    failedScripts: typeof summary.failedScripts === 'number' ? summary.failedScripts : undefined,
+    products: rawProducts
+      .map((item) => {
+        const product = normalizeJsonObject<Record<string, unknown>>(item);
+
+        if (!product) {
+          return null;
+        }
+
+        const productId = normalizeString(product.productId);
+        const productName = normalizeString(product.productName);
+
+        if (!productId || !productName) {
+          return null;
+        }
+
+        return {
+          productId,
+          productName,
+          scheduledDates: normalizeStringArray(product.scheduledDates),
+          fixedDates: normalizeStringArray(product.fixedDates),
+          storiesTotal: typeof product.storiesTotal === 'number' ? product.storiesTotal : 0
+        };
+      })
+      .filter((item): item is PlannerBatchSummary['products'][number] => Boolean(item))
+  };
+}
+
+function toPlannerBatchItem(row: PlannerBatchRow): PlannerBatchItem {
+  return {
+    id: row.id,
+    mode: row.mode === 'replan' ? 'replan' : 'create',
+    status:
+      row.status === 'running' || row.status === 'completed' || row.status === 'error'
+        ? row.status
+        : 'queued',
+    reason: row.reason ?? '',
+    rangeStart: row.range_start,
+    rangeEnd: row.range_end,
+    progressTotal: row.progress_total ?? 0,
+    progressCompleted: row.progress_completed ?? 0,
+    errorMessage: row.error_message ?? '',
+    summary: normalizePlannerBatchSummary(row.summary),
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    startedAt: row.started_at ?? '',
+    completedAt: row.completed_at ?? ''
+  };
+}
+
+function normalizeCompetitorSourceSnapshot(value: unknown): CompetitorAnalysis['sourceSnapshot'] | null {
+  const snapshot = normalizeJsonObject<Record<string, unknown>>(value);
+
+  if (!snapshot) {
+    return null;
+  }
+
+  const rawTopPosts = Array.isArray(snapshot.topPosts) ? snapshot.topPosts : [];
+
+  return {
+    fetchedAt: normalizeString(snapshot.fetchedAt),
+    instagram: normalizeJsonObject(snapshot.instagram) as CompetitorAnalysis['sourceSnapshot']['instagram'],
+    website: normalizeJsonObject(snapshot.website) as CompetitorAnalysis['sourceSnapshot']['website'],
+    postsAnalyzed: typeof snapshot.postsAnalyzed === 'number' ? snapshot.postsAnalyzed : 0,
+    reelsAnalyzed: typeof snapshot.reelsAnalyzed === 'number' ? snapshot.reelsAnalyzed : 0,
+    feedAnalyzed: typeof snapshot.feedAnalyzed === 'number' ? snapshot.feedAnalyzed : 0,
+    captureNotes: normalizeStringArray(snapshot.captureNotes),
+    topPosts: rawTopPosts as CompetitorAnalysis['sourceSnapshot']['topPosts']
+  };
+}
+
+function normalizeCompetitorAnalysis(value: unknown): CompetitorAnalysis | null {
+  const analysis = normalizeJsonObject<Record<string, unknown>>(value);
+
+  if (!analysis) {
+    return null;
+  }
+
+  const overview = normalizeJsonObject<Record<string, unknown>>(analysis.overview);
+  const practicalSuggestions = normalizeJsonObject<Record<string, unknown>>(analysis.practicalSuggestions);
+  const sourceSnapshot = normalizeCompetitorSourceSnapshot(analysis.sourceSnapshot);
+  const rawSections = Array.isArray(analysis.sections) ? analysis.sections : [];
+
+  if (!overview || !practicalSuggestions || !sourceSnapshot) {
+    return null;
+  }
+
+  const sections = rawSections
+    .map((section) => {
+      const record = normalizeJsonObject<Record<string, unknown>>(section);
+
+      if (!record) {
+        return null;
+      }
+
+      const rawItems = Array.isArray(record.items)
+        ? record.items
+        : Array.isArray(record.insights)
+          ? record.insights
+          : [];
+
+      const items = rawItems
+        .map((item) => {
+          const insight = normalizeJsonObject<Record<string, unknown>>(item);
+
+          if (!insight) {
+            return null;
+          }
+
+          const title = normalizeString(insight.title);
+          const summary = normalizeString(insight.summary);
+
+          if (!title || !summary) {
+            return null;
+          }
+
+          return {
+            id: normalizeString(insight.id),
+            kind: (normalizeString(insight.kind) || 'idea') as CompetitorAnalysis['sections'][number]['items'][number]['kind'],
+            title,
+            summary,
+            rationale: normalizeString(insight.rationale),
+            tags: normalizeStringArray(insight.tags),
+            hookType: normalizeString(insight.hookType),
+            ctaType: normalizeString(insight.ctaType),
+            format: normalizeString(insight.format),
+            sample: normalizeString(insight.sample),
+            sourceUrl: normalizeString(insight.sourceUrl)
+          };
+        })
+        .filter((item): item is CompetitorAnalysis['sections'][number]['items'][number] => Boolean(item));
+
+      if (!items.length) {
+        return null;
+      }
+
+      return {
+        id: normalizeString(record.id) || normalizeString(record.key),
+        title: normalizeString(record.title),
+        description: normalizeString(record.description),
+        items
+      };
+    })
+    .filter((section): section is CompetitorAnalysis['sections'][number] => Boolean(section?.title && section.items.length));
+
+  if (!sections.length) {
+    return null;
+  }
+
+  return {
+    generatedAt: normalizeString(analysis.generatedAt),
+    model: normalizeString(analysis.model),
+    overview: {
+      toneOfVoice: normalizeString(overview.toneOfVoice),
+      positioning: normalizeString(overview.positioning),
+      apparentAudience: normalizeString(overview.apparentAudience),
+      visualStyle: normalizeString(overview.visualStyle)
+    },
+    sections,
+    practicalSuggestions: {
+      toContent: normalizeStringArray(practicalSuggestions.toContent),
+      toCreatorAi: normalizeStringArray(practicalSuggestions.toCreatorAi),
+      toReferenceBank: normalizeStringArray(practicalSuggestions.toReferenceBank)
+    },
+    sourceSnapshot
+  };
+}
+
+function normalizeCompetitorType(value: unknown): CompetitorType {
+  return value === 'reference' || value === 'inspiration' ? value : 'competitor';
+}
+
+function normalizeCompetitorAnalysisStatus(value: unknown): CompetitorAnalysisStatus {
+  return value === 'running' || value === 'completed' || value === 'error' ? value : 'idle';
 }
 
 function normalizeRecordingFields(value: unknown): RecordingField[] {
@@ -213,7 +521,9 @@ export function parseScriptMetadata(storyboard: unknown): ScriptMetadata {
       assignee: normalizeString(raw.assignee) || undefined,
       blockType: normalizeString(raw.blockType) || undefined,
       contentType: normalizeString(raw.contentType) || undefined,
-      subOption: normalizeString(raw.subOption) || undefined
+      subOption: normalizeString(raw.subOption) || undefined,
+      scheduledFor: normalizeString(raw.scheduledFor) || undefined,
+      plannerMeta: normalizePlannerMeta(raw.plannerMeta)
     };
   }
 
@@ -241,6 +551,8 @@ export function buildScriptMetadata(input: {
   postFields?: PostFields | null;
   assignee?: string;
   blockType?: string;
+  scheduledFor?: string;
+  plannerMeta?: ScriptPlannerMeta | null;
 }) {
   return {
     caption: input.caption ?? '',
@@ -262,7 +574,9 @@ export function buildScriptMetadata(input: {
     carrosselSlides: input.carrosselSlides ?? [],
     postFields: input.postFields ?? null,
     assignee: input.assignee ?? '',
-    blockType: input.blockType ?? ''
+    blockType: input.blockType ?? '',
+    scheduledFor: input.scheduledFor ?? '',
+    plannerMeta: input.plannerMeta ?? null
   };
 }
 
@@ -316,6 +630,8 @@ export function toScriptItem(row: ScriptRow): ScriptItem {
       status === 'posted'
         ? status
         : 'approved',
+    scheduledFor: meta.scheduledFor ?? '',
+    plannerMeta: meta.plannerMeta ?? null,
     createdAt: row.created_at,
     updatedAt: row.updated_at
   };
@@ -379,6 +695,49 @@ export function toAiMessageItem(row: AiMessageRow): AiMessage {
   };
 }
 
+export function toCompetitorRecord(row: CompetitorRow): CompetitorRecord {
+  return {
+    id: row.id,
+    name: row.name,
+    handle: row.handle ?? '',
+    website: row.website ?? '',
+    type: normalizeCompetitorType(row.profile_type),
+    logoUrl: row.logo_url ?? '',
+    niche: row.niche ?? '',
+    notes: row.notes ?? '',
+    tags: normalizeStringArray(row.tags),
+    analysisStatus: normalizeCompetitorAnalysisStatus(row.analysis_status),
+    analysisError: row.analysis_error ?? '',
+    analysis: normalizeCompetitorAnalysis(row.analysis),
+    lastAnalyzedAt: row.last_analyzed_at ?? '',
+    createdAt: row.created_at,
+    updatedAt: row.updated_at
+  };
+}
+
+export function toContentReferenceItem(row: ContentReferenceRow): ContentReferenceRecord {
+  const metadata = normalizeJsonObject<Record<string, unknown>>(row.metadata) ?? {};
+
+  return {
+    id: row.id,
+    competitorId: row.competitor_id ?? '',
+    competitorName: row.competitors?.name ?? normalizeString(metadata.competitorName),
+    title: row.title,
+    content: row.content,
+    hookType: row.hook_type ?? '',
+    ctaType: row.cta_type ?? '',
+    format: row.format ?? '',
+    imageUrl: row.image_url ?? '',
+    notes: row.notes ?? '',
+    liked: Boolean(row.liked),
+    savedAt: row.created_at,
+    category: row.category ?? '',
+    source: row.source === 'analysis' ? 'analysis' : 'manual',
+    sourceInsightId: row.source_insight_id ?? '',
+    sourceUrl: row.source_url ?? ''
+  };
+}
+
 export async function resolveWorkspaceDataAccess(workspaceSlug: string): Promise<WorkspaceDataAccess | null> {
   const context = await getWorkspaceContextForSlug(workspaceSlug);
 
@@ -438,6 +797,70 @@ export async function getWorkspaceScripts(workspaceSlug: string) {
   }
 
   return (data ?? []).map((row) => toScriptItem(row as ScriptRow));
+}
+
+export async function getWorkspacePlannerBatches(workspaceSlug: string) {
+  const access = await resolveWorkspaceDataAccess(workspaceSlug);
+
+  if (!access) {
+    return [] as PlannerBatchItem[];
+  }
+
+  const { admin, context } = access;
+  const { data, error } = await admin
+    .from('content_planner_batches')
+    .select('id,company_id,mode,status,range_start,range_end,reason,progress_total,progress_completed,error_message,summary,created_at,updated_at,started_at,completed_at')
+    .eq('company_id', context.companyId)
+    .order('created_at', { ascending: false })
+    .limit(12);
+
+  if (error) {
+    throw new Error(error.message);
+  }
+
+  return (data ?? []).map((row) => toPlannerBatchItem(row as PlannerBatchRow));
+}
+
+export async function getWorkspaceCompetitors(workspaceSlug: string) {
+  const access = await resolveWorkspaceDataAccess(workspaceSlug);
+
+  if (!access) {
+    return [] as CompetitorRecord[];
+  }
+
+  const { admin, context } = access;
+  const { data, error } = await admin
+    .from('competitors')
+    .select('id,company_id,name,handle,niche,website,notes,created_at,updated_at,profile_type,logo_url,tags,analysis_status,analysis_error,analysis,source_snapshot,last_analyzed_at')
+    .eq('company_id', context.companyId)
+    .order('updated_at', { ascending: false });
+
+  if (error) {
+    throw new Error(error.message);
+  }
+
+  return (data ?? []).map((row) => toCompetitorRecord(row as CompetitorRow));
+}
+
+export async function getWorkspaceContentReferences(workspaceSlug: string) {
+  const access = await resolveWorkspaceDataAccess(workspaceSlug);
+
+  if (!access) {
+    return [] as ContentReferenceRecord[];
+  }
+
+  const { admin, context } = access;
+  const { data, error } = await admin
+    .from('content_references')
+    .select('id,company_id,competitor_id,title,content,hook_type,cta_type,format,image_url,notes,liked,category,source,source_insight_id,source_url,metadata,created_at,updated_at,competitors(name)')
+    .eq('company_id', context.companyId)
+    .order('created_at', { ascending: false });
+
+  if (error) {
+    throw new Error(error.message);
+  }
+
+  return (data ?? []).map((row) => toContentReferenceItem(row as ContentReferenceRow));
 }
 
 export async function getWorkspaceRecordings(workspaceSlug: string) {

@@ -5,26 +5,8 @@ import { X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
-import type { CarrosselSlide, PostFields, StorySlide } from '@/types/platform';
-
-export type EditableScriptDraft = {
-  id: string;
-  title: string;
-  hook: string;
-  spoken: string;
-  takes: string[];
-  cta: string;
-  caption: string;
-  prompt: string;
-  referenceContext: string;
-  productId?: string;
-  productName?: string;
-  contentType?: string;
-  subOption?: string;
-  storySlides?: StorySlide[];
-  carrosselSlides?: CarrosselSlide[];
-  postFields?: PostFields | null;
-};
+import type { EditableScriptDraft } from '@/lib/script-drafts';
+import type { CarrosselSlide, StorySlide } from '@/types/platform';
 
 function StorySlidesEditor({
   slides,

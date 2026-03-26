@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 
 import { buildScriptMetadata, resolveWorkspaceDataAccess, toScriptItem } from '@/lib/platform-data';
+import type { ScriptPlannerMeta } from '@/types/platform';
 
 type IncomingScript = {
   title?: string;
@@ -28,6 +29,8 @@ type IncomingScript = {
   postFields?: unknown;
   assignee?: string;
   blockType?: string;
+  scheduledFor?: string;
+  plannerMeta?: ScriptPlannerMeta | null;
 };
 
 const allowedStatuses = new Set(['draft', 'approved', 'production', 'recording', 'drive', 'editing', 'edited', 'scheduled', 'posted']);
@@ -70,7 +73,9 @@ function sanitizeScriptPayload(script: IncomingScript) {
       carrosselSlides: Array.isArray(script.carrosselSlides) ? (script.carrosselSlides as import('@/types/platform').CarrosselSlide[]) : [],
       postFields: (script.postFields && typeof script.postFields === 'object') ? script.postFields as import('@/types/platform').PostFields : null,
       assignee: script.assignee,
-      blockType: script.blockType
+      blockType: script.blockType,
+      scheduledFor: script.scheduledFor?.trim() || '',
+      plannerMeta: script.plannerMeta ?? null
     })
   };
 }

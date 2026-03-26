@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 
 import { buildScriptMetadata, parseScriptMetadata, resolveWorkspaceDataAccess, toScriptItem } from '@/lib/platform-data';
+import type { ScriptPlannerMeta } from '@/types/platform';
 
 const allowedStatuses = new Set(['draft', 'approved', 'production', 'recording', 'drive', 'editing', 'edited', 'scheduled', 'posted']);
 
@@ -30,6 +31,8 @@ type ScriptPatchBody = {
   postFields?: unknown;
   assignee?: string;
   blockType?: string;
+  scheduledFor?: string;
+  plannerMeta?: ScriptPlannerMeta | null;
 };
 
 export async function PATCH(
@@ -99,7 +102,9 @@ export async function PATCH(
       carrosselSlides: body.carrosselSlides === undefined ? existingMeta.carrosselSlides : (body.carrosselSlides as import('@/types/platform').CarrosselSlide[]),
       postFields: body.postFields === undefined ? existingMeta.postFields : (body.postFields as import('@/types/platform').PostFields | null),
       assignee: body.assignee ?? existingMeta.assignee,
-      blockType: body.blockType ?? existingMeta.blockType
+      blockType: body.blockType ?? existingMeta.blockType,
+      scheduledFor: body.scheduledFor === undefined ? existingMeta.scheduledFor : body.scheduledFor,
+      plannerMeta: body.plannerMeta === undefined ? existingMeta.plannerMeta : body.plannerMeta
     })
   };
 

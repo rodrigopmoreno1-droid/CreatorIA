@@ -11,9 +11,10 @@ import { Input } from '@/components/ui/input';
 import { ScriptPreviewModal } from '@/components/platform/script-preview-modal';
 import { Textarea } from '@/components/ui/textarea';
 import { PageIntro } from '@/components/platform/page-intro';
-import { ScriptEditorModal, type EditableScriptDraft } from '@/components/platform/script-editor-modal';
+import { ScriptEditorModal } from '@/components/platform/script-editor-modal';
 import { useSpeechCapture } from '@/hooks/use-speech-capture';
 import { CONTENT_FORMAT_ORDER, getContentFormatBadgeClass, getContentFormatLabel } from '@/lib/content-format-meta';
+import { buildEditableScript, buildScriptSavePayloads, type EditableScriptDraft } from '@/lib/script-drafts';
 import type { ProductItem, ScriptItem } from '@/types/platform';
 
 type ScriptStatusFilter = 'all' | 'draft' | 'approved' | 'production';
@@ -162,73 +163,6 @@ function MultiChipGroup({
       </div>
     </div>
   );
-}
-
-function padTakeList(takes: string[], minimum = 5) {
-  const nextTakes = [...takes];
-  while (nextTakes.length < minimum) {
-    nextTakes.push('');
-  }
-  return nextTakes;
-}
-
-function buildEditableScript(script: ScriptItem): EditableScriptDraft {
-  return {
-    id: script.id,
-    title: script.title,
-    hook: script.hook,
-    spoken: script.spoken,
-    takes: padTakeList(script.takes.length ? script.takes : []),
-    cta: script.cta,
-    caption: script.caption,
-    prompt: script.prompt,
-    referenceContext: script.referenceContext,
-    productId: script.productId,
-    productName: script.productName,
-    contentType: script.contentType,
-    subOption: script.subOption,
-    storySlides: script.storySlides.map((slide) => ({ ...slide })),
-    carrosselSlides: script.carrosselSlides.map((slide) => ({ ...slide })),
-    postFields: script.postFields ? { ...script.postFields } : null
-  };
-}
-
-function buildScriptSavePayloads(
-  payload: unknown,
-  context: { prompt: string; product?: ProductItem; contentType?: string; subOption?: string }
-) {
-  if (!Array.isArray(payload)) return [];
-
-  return payload
-    .map((item, index) => {
-      if (!item || typeof item !== 'object') return null;
-      const raw = item as Record<string, unknown>;
-      return {
-        title: typeof raw.title === 'string' ? raw.title : `Roteiro ${index + 1}`,
-        hook: typeof raw.hook === 'string' ? raw.hook : '',
-        spoken: typeof raw.spoken === 'string' ? raw.spoken : '',
-        takes: padTakeList(Array.isArray(raw.takes) ? raw.takes.filter((t): t is string => typeof t === 'string') : []),
-        cta: typeof raw.cta === 'string' ? raw.cta : '',
-        caption: typeof raw.caption === 'string' ? raw.caption : '',
-        prompt: context.prompt,
-        referenceContext: '',
-        productId: context.product?.id,
-        productName: context.product?.name,
-        contentType: context.contentType ?? 'reels',
-        subOption: context.subOption ?? '',
-        storySlides: Array.isArray(raw.storySlides) ? raw.storySlides : undefined,
-        carrosselSlides: Array.isArray(raw.carrosselSlides) ? raw.carrosselSlides : undefined,
-        postFields: raw.postFields && typeof raw.postFields === 'object' ? raw.postFields : undefined,
-        status: 'draft'
-      };
-    })
-    .filter(Boolean) as Array<{
-      title: string; hook: string; spoken: string; takes: string[];
-      cta: string; caption: string; prompt: string; referenceContext: string;
-      productId?: string; productName?: string; contentType: string; subOption: string;
-      storySlides?: unknown[]; carrosselSlides?: unknown[]; postFields?: unknown;
-      status: string;
-    }>;
 }
 
 const STATUS_LABELS: Record<string, string> = {

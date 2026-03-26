@@ -1,4 +1,5 @@
 import { createSupabaseAdminClient } from '@/lib/supabase/admin';
+import { buildCompetitorAnalysisFallback, summarizeCompetitorAnalysisInput, type CompetitorAnalysisInput } from '@/lib/competitor-intelligence';
 import { buildGenerationPlan, formatGenerationPlanForPrompt } from '@/lib/content-engine/planner';
 import { PRODUCT_IMPORT_BUCKET } from '@/lib/product-import-storage';
 
@@ -148,6 +149,7 @@ type ResolvedProductImportFile = {
 };
 
 import type { CarrosselSlide, PostFields, StorySlide } from '@/types/platform';
+import type { CompetitorAnalysis } from '@/types/competitor-intelligence';
 import type { GenerationPlan as ContentGenerationPlan } from '@/lib/content-engine/types';
 
 type ScriptDraftResponse = {
@@ -3610,6 +3612,59 @@ export async function analyzeCompetitors(input: CompetitorInput) {
   ], `${input.competitors.join(' ')} ${input.niche ?? ''} instagram reels tiktok trends`);
 
   return parseStructuredResponse(await callProvider(prompt), fallback);
+}
+
+function isStructuredCompetitorAnalysis(value: unknown): value is CompetitorAnalysis {
+  if (!value || typeof value !== 'object') {
+    return false;
+  }
+
+  const candidate = value as Record<string, unknown>;
+  return (
+    typeof candidate.generatedAt === 'string' &&
+    typeof candidate.model === 'string' &&
+    !!candidate.overview &&
+    Array.isArray(candidate.sections) &&
+    !!candidate.practicalSuggestions &&
+    !!candidate.sourceSnapshot
+  );
+}
+
+export async function organizeCompetitorAnalysis(input: CompetitorAnalysisInput): Promise<CompetitorAnalysis> {
+  const fallback = buildCompetitorAnalysisFallback(input);
+  const summary = summarizeCompetitorAnalysisInput(input);
+
+  const prompt = [
+    ...getCreatorAiBaseRules(),
+    'Voce organiza inteligencia competitiva para social media e creator economy.',
+    'Nao invente fatos. Use apenas os sinais capturados e inferencias prudentes.',
+    'Quero analise utilizavel para producao de conteudo, nao um texto generico.',
+    'Responda somente JSON valido.',
+    'Formato esperado:',
+    '{"generatedAt":"","model":"","overview":{"toneOfVoice":"","positioning":"","apparentAudience":"","visualStyle":""},"sections":[{"id":"","title":"","description":"","items":[{"id":"","kind":"","title":"","summary":"","rationale":"","tags":[""],"hookType":"","ctaType":"","format":"","sample":"","sourceUrl":""}]}],"practicalSuggestions":{"toContent":[""],"toCreatorAi":[""],"toReferenceBank":[""]},"sourceSnapshot":{"fetchedAt":"","instagram":null,"website":null,"postsAnalyzed":0,"reelsAnalyzed":0,"feedAnalyzed":0,"captureNotes":[""],"topPosts":[]}}',
+    'Crie secoes exatamente com estes ids: overview, patterns, ideas, adaptation, actions.',
+    'Cada secao deve ter de 2 a 5 itens realmente acionaveis.',
+    'Os itens de ideas, hook, cta e action devem soar como algo que um social media usaria na pratica.',
+    'Se houver sourceUrl no sample, preserve.',
+    `Dados capturados:\n${JSON.stringify(summary)}`
+  ].join('\n\n');
+
+  const response = await callProvider(prompt, {
+    maxTokens: 2200,
+    providerMode: 'balanced'
+  });
+
+  const parsed = parseStructuredResponse<CompetitorAnalysis>(response, fallback);
+
+  if (!isStructuredCompetitorAnalysis(parsed)) {
+    return fallback;
+  }
+
+  return {
+    ...parsed,
+    generatedAt: parsed.generatedAt || fallback.generatedAt,
+    model: parsed.model || 'hybrid-ai'
+  };
 }
 
 export async function suggestCalendar(input: CalendarInput) {

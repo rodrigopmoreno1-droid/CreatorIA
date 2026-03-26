@@ -1,5 +1,5 @@
 import { PostsWorkspace } from '@/components/platform/posts-workspace';
-import { getWorkspaceProducts, getWorkspaceScripts } from '@/lib/platform-data';
+import { getWorkspacePlannerBatches, getWorkspaceProducts, getWorkspaceScripts } from '@/lib/platform-data';
 
 export default async function PostsPage({
   params
@@ -7,9 +7,10 @@ export default async function PostsPage({
   params: Promise<{ workspace: string }>;
 }) {
   const { workspace } = await params;
-  const [products, scripts] = await Promise.all([
+  const [products, scripts, plannerBatches] = await Promise.all([
     getWorkspaceProducts(workspace),
     getWorkspaceScripts(workspace),
+    getWorkspacePlannerBatches(workspace)
   ]);
 
   return (
@@ -17,6 +18,7 @@ export default async function PostsPage({
       workspace={workspace}
       products={products}
       scripts={scripts}
+      plannerBatches={plannerBatches}
     />
   );
 }
