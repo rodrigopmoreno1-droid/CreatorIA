@@ -17,7 +17,7 @@ import { CONTENT_FORMAT_ORDER, getContentFormatBadgeClass, getContentFormatLabel
 import { buildEditableScript, buildScriptSavePayloads, type EditableScriptDraft } from '@/lib/script-drafts';
 import type { ProductItem, ScriptItem } from '@/types/platform';
 
-type ScriptStatusFilter = 'all' | 'draft' | 'approved' | 'production';
+type ScriptStatusFilter = 'all' | 'draft' | 'approved';
 type ScriptFormatFilter = 'all' | (typeof CONTENT_FORMAT_ORDER)[number];
 
 const CONTENT_TYPES = [
@@ -231,15 +231,11 @@ export function ScriptsWorkspace({
 
   const filteredScripts = useMemo(() => {
     return scripts.filter((script) => {
-      const matchesStatus =
-        statusFilter === 'all'
-          ? true
-          : statusFilter === 'production'
-            ? script.status !== 'draft' && script.status !== 'approved'
-            : script.status === statusFilter;
-
-      const matchesFormat = formatFilter === 'all' ? true : script.contentType === formatFilter;
-      return matchesStatus && matchesFormat;
+      // Conteúdo page only shows pre-production content
+      if (script.status !== 'draft' && script.status !== 'approved') return false;
+      if (statusFilter !== 'all' && script.status !== statusFilter) return false;
+      if (formatFilter !== 'all' && script.contentType !== formatFilter) return false;
+      return true;
     });
   }, [scripts, statusFilter, formatFilter]);
 
@@ -762,7 +758,7 @@ export function ScriptsWorkspace({
             </div>
             <div className="flex flex-wrap gap-1.5">
               <div className="flex flex-wrap gap-1.5">
-                {(['all', 'draft', 'approved', 'production'] as const).map((f) => (
+                {(['all', 'draft', 'approved'] as const).map((f) => (
                   <button
                     key={f}
                     type="button"
@@ -773,7 +769,7 @@ export function ScriptsWorkspace({
                         : 'border-border bg-white text-muted-foreground hover:border-foreground/40 hover:text-foreground'
                     }`}
                   >
-                    {f === 'all' ? 'Todos' : f === 'draft' ? 'Rascunho' : f === 'approved' ? 'Aprovado' : 'Em produção'}
+                    {f === 'all' ? 'Todos' : f === 'draft' ? 'Rascunho' : 'Aprovado'}
                   </button>
                 ))}
               </div>

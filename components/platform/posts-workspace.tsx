@@ -47,7 +47,7 @@ import {
 import { cn } from '@/lib/utils';
 import type { PlannerBatchItem, ProductItem, ScriptItem, ScriptStatus } from '@/types/platform';
 
-type WorkspaceTab = 'Calendário' | 'Feed' | 'Stories' | 'Rascunhos';
+type WorkspaceTab = 'Calendário' | 'Feed' | 'Stories' | 'Rascunhos' | 'Atrasados';
 type StatusFilter = 'all' | ScriptStatus;
 type ManualModalMode = 'new' | 'none';
 
@@ -77,7 +77,8 @@ const SCRIPT_STATUS_LABELS: Record<ScriptStatus, string> = {
   editing: 'Em edição',
   edited: 'Editado',
   scheduled: 'Agendado',
-  posted: 'Postado'
+  posted: 'Postado',
+  atrasado: 'Atrasado'
 };
 
 const SCRIPT_STATUS_STYLES: Record<ScriptStatus, { dot: string; badge: string; border: string }> = {
@@ -125,6 +126,11 @@ const SCRIPT_STATUS_STYLES: Record<ScriptStatus, { dot: string; badge: string; b
     dot: 'bg-slate-500',
     badge: 'border-slate-200 bg-slate-100 text-slate-700',
     border: 'border-l-slate-500'
+  },
+  atrasado: {
+    dot: 'bg-rose-500',
+    badge: 'border-rose-200 bg-rose-50 text-rose-700',
+    border: 'border-l-rose-500'
   }
 };
 
@@ -1715,6 +1721,40 @@ export function PostsWorkspace({
     }
   }
 
+  async function handleMarkPosted(scriptId: string) {
+    try {
+      const res = await fetch(`/api/workspaces/${workspace}/scripts/${scriptId}`, {
+        method: 'PATCH',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ status: 'posted' })
+      });
+      if (!res.ok) throw new Error();
+      setScriptsState(current =>
+        current.map(s => s.id === scriptId ? { ...s, status: 'posted' } : s)
+      );
+      toast.success('Conteúdo marcado como postado!');
+    } catch {
+      toast.error('Erro ao marcar como postado.');
+    }
+  }
+
+  async function handleReschedule(scriptId: string, scheduledFor: string) {
+    try {
+      const res = await fetch(`/api/workspaces/${workspace}/scripts/${scriptId}`, {
+        method: 'PATCH',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ status: 'scheduled', scheduledFor })
+      });
+      if (!res.ok) throw new Error();
+      setScriptsState(current =>
+        current.map(s => s.id === scriptId ? { ...s, status: 'scheduled', scheduledFor } : s)
+      );
+      toast.success('Reagendado!');
+    } catch {
+      toast.error('Erro ao reagendar.');
+    }
+  }
+
   async function handleScheduleScript(scriptId: string, scheduledFor: string) {
     try {
       const res = await fetch(`/api/workspaces/${workspace}/scripts/${scriptId}`, {
@@ -1919,6 +1959,14 @@ export function PostsWorkspace({
     [scriptsState]
   );
 
+  const today = new Date().toISOString().slice(0, 10);
+  const atrasadoScripts = useMemo(
+    () => scriptsState.filter(
+      (script) => script.status === 'scheduled' && script.scheduledFor && script.scheduledFor < today
+    ).sort((left, right) => left.scheduledFor.localeCompare(right.scheduledFor)),
+    [scriptsState, today]
+  );
+
   const statusCounts = useMemo(() => {
     return scriptsState.reduce<Record<ScriptStatus, number>>((accumulator, script) => {
       accumulator[script.status] += 1;
@@ -1932,7 +1980,8 @@ export function PostsWorkspace({
       editing: 0,
       edited: 0,
       scheduled: 0,
-      posted: 0
+      posted: 0,
+      atrasado: 0
     });
   }, [scriptsState]);
 
@@ -1969,7 +2018,7 @@ export function PostsWorkspace({
     setCalMonth((month) => month + 1);
   }
 
-  const tabs: WorkspaceTab[] = ['Calendário', 'Feed', 'Stories', 'Rascunhos'];
+  const tabs: WorkspaceTab[] = ['Calendário', 'Feed', 'Stories', 'Rascunhos', 'Atrasados'];
 
   return (
     <div className="flex h-full min-h-0 flex-col overflow-hidden">
@@ -2035,6 +2084,11 @@ export function PostsWorkspace({
               {tab === 'Rascunhos' && draftScripts.length > 0 ? (
                 <span className="ml-1 rounded-full bg-zinc-600 px-1.5 py-0.5 text-[10px] text-white">
                   {draftScripts.length}
+                </span>
+              ) : null}
+              {tab === 'Atrasados' && atrasadoScripts.length > 0 ? (
+                <span className="ml-1 rounded-full bg-rose-500 px-1.5 py-0.5 text-[10px] text-white">
+                  {atrasadoScripts.length}
                 </span>
               ) : null}
             </button>
@@ -2222,6 +2276,71 @@ export function PostsWorkspace({
                     <div className="space-y-2">
                       {draftScripts.map((script) => (
                         <ContentListItem key={script.id} script={script} onClick={() => setViewingScript(script)} />
+                      ))}
+                    </div>
+                  )}
+                </>
+              ) : null}
+
+              {activeTab === 'Atrasados' ? (
+                <>
+                  <div className="mb-3 flex items-center justify-between">
+                    <p className="text-xs font-semibold text-rose-500">
+                      {atrasadoScripts.length} conteúdo{atrasadoScripts.length !== 1 ? 's' : ''} atrasado{atrasadoScripts.length !== 1 ? 's' : ''}
+                    </p>
+                  </div>
+                  {atrasadoScripts.length === 0 ? (
+                    <p className="text-sm italic text-zinc-400">Nenhum conteúdo atrasado.</p>
+                  ) : (
+                    <div className="space-y-2">
+                      {atrasadoScripts.map((script) => (
+                        <div
+                          key={script.id}
+                          className="flex flex-wrap items-center gap-3 rounded-xl border border-rose-200 bg-rose-50/60 p-3"
+                        >
+                          <div className="min-w-0 flex-1">
+                            <p className="truncate text-sm font-medium text-zinc-800">{script.title}</p>
+                            <div className="mt-1 flex flex-wrap items-center gap-1.5">
+                              <span className={cn('rounded-full border px-2 py-0.5 text-[10px] font-medium', getContentFormatBadgeClass(script.contentType))}>
+                                {getContentFormatLabel(script.contentType)}
+                              </span>
+                              {script.productName ? (
+                                <span className="text-[10px] text-violet-600">{script.productName}</span>
+                              ) : null}
+                              {script.scheduledFor ? (
+                                <span className="text-[10px] font-medium text-rose-600">
+                                  Era {new Date(script.scheduledFor + 'T12:00:00').toLocaleDateString('pt-BR', { day: '2-digit', month: 'short' })}
+                                </span>
+                              ) : null}
+                            </div>
+                          </div>
+                          <div className="flex shrink-0 items-center gap-2">
+                            <input
+                              type="date"
+                              value={schedulingDates[script.id] ?? ''}
+                              onChange={(e) => setSchedulingDates((current) => ({ ...current, [script.id]: e.target.value }))}
+                              className="rounded-lg border border-zinc-200 bg-white px-2 py-1.5 text-xs text-zinc-700 focus:outline-none focus:ring-2 focus:ring-rose-200"
+                            />
+                            <button
+                              type="button"
+                              disabled={!schedulingDates[script.id]}
+                              onClick={() => {
+                                const date = schedulingDates[script.id];
+                                if (date) void handleReschedule(script.id, date);
+                              }}
+                              className="rounded-lg border border-zinc-200 bg-white px-3 py-1.5 text-[12px] font-medium text-zinc-700 transition hover:bg-zinc-50 disabled:cursor-not-allowed disabled:opacity-40"
+                            >
+                              Reagendar
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => void handleMarkPosted(script.id)}
+                              className="rounded-lg border border-rose-200 bg-rose-600 px-3 py-1.5 text-[12px] font-medium text-white transition hover:bg-rose-700"
+                            >
+                              Marcar como Postado
+                            </button>
+                          </div>
+                        </div>
                       ))}
                     </div>
                   )}

@@ -885,7 +885,7 @@ export async function getWorkspaceRecordings(workspaceSlug: string) {
     .from('scripts')
     .select('id,title,hook,spoken_text,cta,storyboard,status,created_at,updated_at')
     .eq('company_id', context.companyId)
-    .in('status', ['approved', 'production', 'recording', 'drive', 'editing', 'edited', 'scheduled', 'posted'])
+    .in('status', ['production', 'recording', 'drive', 'editing'])
     .order('updated_at', { ascending: false });
 
   if (error) {

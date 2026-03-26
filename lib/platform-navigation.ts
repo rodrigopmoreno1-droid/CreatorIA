@@ -84,16 +84,17 @@ export const platformNavigation: Array<{
   }
 ];
 
+/**
+ * Columns shown in the Produção kanban.
+ * Approved scripts enter here when moved from Conteúdo.
+ * Cards in 'editing' can be promoted to 'edited' → they move to Postagens.
+ */
 export const recordingColumns: Array<{
-  key: 'approved' | 'production' | 'recording' | 'drive' | 'editing' | 'edited' | 'scheduled' | 'posted';
+  key: 'production' | 'recording' | 'drive' | 'editing';
   label: string;
 }> = [
-  { key: 'approved', label: 'Aprovado' },
   { key: 'production', label: 'Em produção' },
   { key: 'recording', label: 'Gravando' },
   { key: 'drive', label: 'No Drive' },
   { key: 'editing', label: 'Em edição' },
-  { key: 'edited', label: 'Editado' },
-  { key: 'scheduled', label: 'Agendado' },
-  { key: 'posted', label: 'Postado' }
 ];

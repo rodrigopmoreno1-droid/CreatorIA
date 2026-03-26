@@ -483,6 +483,7 @@ function RecordingViewModal({
   onEdit,
   onDelete,
   deleting,
+  onMarkEdited,
   onPrev,
   onNext,
   hasPrev,
@@ -495,6 +496,7 @@ function RecordingViewModal({
   onEdit: () => void;
   onDelete: () => void;
   deleting: boolean;
+  onMarkEdited?: () => void;
   onPrev?: () => void;
   onNext?: () => void;
   hasPrev?: boolean;
@@ -637,6 +639,14 @@ function RecordingViewModal({
             {deleting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
             Remover bloco
           </Button>
+          {onMarkEdited && card.column === 'editing' ? (
+            <Button
+              onClick={onMarkEdited}
+              className="border-indigo-200 bg-indigo-600 text-white hover:bg-indigo-700"
+            >
+              Marcar como Editado → Postagens
+            </Button>
+          ) : null}
           <Button onClick={onClose}>Fechar</Button>
           {(onPrev || onNext) ? (
             <div className="flex items-center gap-2 ml-auto">
@@ -1246,6 +1256,25 @@ export function RecordingsWorkspace({
     }
   }
 
+  async function handleMarkEdited(cardId: string) {
+    setLoadingId(cardId);
+    try {
+      const res = await fetch(`/api/workspaces/${workspace}/scripts/${cardId}`, {
+        method: 'PATCH',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ status: 'edited' })
+      });
+      if (!res.ok) throw new Error();
+      setCards((current) => current.filter((c) => c.id !== cardId));
+      setViewingCardId(null);
+      toast.success('Conteúdo marcado como Editado. Agora aparece em Postagens.');
+    } catch {
+      toast.error('Erro ao atualizar status.');
+    } finally {
+      setLoadingId(null);
+    }
+  }
+
   async function deleteCard(card: RecordingCard) {
     setDeletingId(card.id);
 
@@ -1757,6 +1786,7 @@ export function RecordingsWorkspace({
           }}
           onDelete={() => requestDeleteCard(viewingCard!)}
           deleting={deletingId === viewingCard?.id}
+          onMarkEdited={viewingCard?.column === 'editing' ? () => handleMarkEdited(viewingCard.id) : undefined}
           onPrev={navToPrev}
           onNext={navToNext}
           hasPrev={viewingCardIndex > 0}

@@ -25,12 +25,13 @@ export function DashboardOverview({
   recordings: RecordingCard[];
   postsCount: number;
 }) {
-  const approvedCount = recordings.length;
-  const editedCount = recordings.filter((item) => item.column === 'edited').length;
-  const recentScripts = scripts.slice(0, 4);
+  const approvedCount = scripts.filter((s) => s.status === 'approved').length;
+  const editedCount = scripts.filter((s) => s.status === 'edited').length;
+  const inProductionCount = scripts.filter((s) => ['production', 'recording', 'drive', 'editing'].includes(s.status)).length;
+  const recentScripts = scripts.filter((s) => s.status === 'draft' || s.status === 'approved').slice(0, 4);
   const quickStats = [
-    { label: 'Roteiros ativos', value: formatCount(scripts.length), Icon: PenSquare },
-    { label: 'Fila de gravacao', value: formatCount(approvedCount), Icon: Video },
+    { label: 'Roteiros ativos', value: formatCount(scripts.filter(s => s.status === 'draft' || s.status === 'approved').length), Icon: PenSquare },
+    { label: 'Em produção', value: formatCount(inProductionCount), Icon: Video },
     { label: 'Posts no radar', value: formatCount(postsCount), Icon: CalendarDays }
   ];
 
@@ -91,11 +92,13 @@ export function DashboardOverview({
                 <Video className="h-4 w-4 text-foreground" />
                 <p className="mt-4 text-[10px] uppercase tracking-[0.18em] text-muted-foreground">Aprovados</p>
                 <p className="mt-1.5 text-[24px] font-semibold">{formatCount(approvedCount)}</p>
+                <p className="mt-1 text-[10px] text-muted-foreground">prontos p/ produção</p>
               </div>
               <div className="rounded-[18px] border border-border bg-muted/30 p-3.5">
                 <CalendarDays className="h-4 w-4 text-foreground" />
                 <p className="mt-4 text-[10px] uppercase tracking-[0.18em] text-muted-foreground">Editados</p>
                 <p className="mt-1.5 text-[24px] font-semibold">{formatCount(editedCount)}</p>
+                <p className="mt-1 text-[10px] text-muted-foreground">prontos p/ agendar</p>
               </div>
             </div>
 

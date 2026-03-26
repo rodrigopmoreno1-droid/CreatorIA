@@ -42,7 +42,17 @@ export type ScriptStatus =
   | 'editing'
   | 'edited'
   | 'scheduled'
-  | 'posted';
+  | 'posted'
+  | 'atrasado';
+
+/** Statuses that appear in the Conteúdo page */
+export const CONTENT_STATUSES: ScriptStatus[] = ['draft', 'approved'];
+
+/** Statuses that appear in the Produção kanban */
+export const PRODUCTION_STATUSES: ScriptStatus[] = ['production', 'recording', 'drive', 'editing'];
+
+/** Statuses that appear in the Postagens page */
+export const POSTING_STATUSES: ScriptStatus[] = ['edited', 'scheduled', 'posted', 'atrasado'];
 
 export type ScriptPlannerMeta = {
   source: 'planner';
