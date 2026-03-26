@@ -42,11 +42,11 @@ const PT_BR_WEEKDAYS_SHORT = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'];
 const PT_BR_WEEKDAYS_FULL  = ['Domingo', 'Segunda', 'Terça', 'Quarta', 'Quinta', 'Sexta', 'Sábado'];
 
 const FORMAT_COLORS: Record<ContentFormatKey, { pill: string; dot: string; block: string }> = {
-  reels:      { pill: 'bg-violet-100 text-violet-800 border-violet-200', dot: 'bg-violet-500', block: 'border-l-violet-400 bg-violet-50' },
-  stories:    { pill: 'bg-sky-100 text-sky-800 border-sky-200',          dot: 'bg-sky-500',    block: 'border-l-sky-400 bg-sky-50' },
-  video_curto:{ pill: 'bg-emerald-100 text-emerald-800 border-emerald-200', dot: 'bg-emerald-500', block: 'border-l-emerald-400 bg-emerald-50' },
-  carrossel:  { pill: 'bg-orange-100 text-orange-800 border-orange-200', dot: 'bg-orange-500', block: 'border-l-orange-400 bg-orange-50' },
-  post:       { pill: 'bg-slate-100 text-slate-700 border-slate-200',    dot: 'bg-slate-400',  block: 'border-l-slate-300 bg-slate-50' }
+  reels:      { pill: 'bg-violet-50 text-violet-700 border-violet-100', dot: 'bg-violet-500', block: 'border-violet-100 bg-violet-50/50' },
+  stories:    { pill: 'bg-sky-50 text-sky-700 border-sky-100',          dot: 'bg-sky-500',    block: 'border-sky-100 bg-sky-50/50' },
+  video_curto:{ pill: 'bg-emerald-50 text-emerald-700 border-emerald-100', dot: 'bg-emerald-500', block: 'border-emerald-100 bg-emerald-50/50' },
+  carrossel:  { pill: 'bg-orange-50 text-orange-700 border-orange-100', dot: 'bg-orange-500', block: 'border-orange-100 bg-orange-50/50' },
+  post:       { pill: 'bg-slate-50 text-slate-700 border-slate-100',    dot: 'bg-slate-400',  block: 'border-slate-100 bg-slate-50/60' }
 };
 
 const DEFAULT_SUB_OPTIONS: Record<ContentFormatKey, string> = {
@@ -109,6 +109,27 @@ function getBlockLabel(script: ScriptItem): string {
 
 function getFormatColors(contentType: string) {
   return FORMAT_COLORS[contentType as ContentFormatKey] ?? FORMAT_COLORS.post;
+}
+
+function getCalendarDateWeekday(isoDate: string) {
+  return new Date(`${isoDate}T12:00:00`).getDay();
+}
+
+function formatWeekdaysList(weekdays: number[]) {
+  return weekdays
+    .slice()
+    .sort((left, right) => left - right)
+    .map((weekday) => PT_BR_WEEKDAYS_FULL[weekday] ?? '')
+    .filter(Boolean)
+    .join(', ');
+}
+
+function getCalendarPrimaryLabel(script: ScriptItem) {
+  return script.productName?.trim() || script.title?.trim() || 'Sem produto';
+}
+
+function getCalendarFormatLabel(script: ScriptItem) {
+  return getContentFormatLabel(script.contentType);
 }
 
 function getWeekDates(weekStartIso: string): string[] {
@@ -207,12 +228,22 @@ function isScriptIncomplete(script: ScriptItem): boolean {
   return !script.spoken?.trim() && !script.hook?.trim();
 }
 
+type StoriesScheduleSlot = {
+  date: string;
+  productId: string;
+  productName: string;
+  slides: number;
+  fixedWeekdays: number[];
+  fixedPlacement: boolean;
+  storiesInPeriod: number;
+};
+
 /** Simple stories-only schedule generator — no AI, pure logic */
 function generateStoriesSchedule(
   startDate: string,
   daysInPeriod: number,
-  productConfigs: Array<{ productId: string; productName: string; appearances: number; slides: number }>
-): Array<{ date: string; productId: string; productName: string; slides: number }> {
+  productConfigs: Array<{ productId: string; productName: string; appearances: number; slides: number; fixedWeekdays: number[] }>
+): StoriesScheduleSlot[] {
   if (daysInPeriod < 1 || !productConfigs.length) return [];
 
   // Build all dates in range
@@ -223,24 +254,58 @@ function generateStoriesSchedule(
     return d.toISOString().slice(0, 10);
   });
 
+  const fixedSlots: StoriesScheduleSlot[] = [];
+  const flexibleConfigs = productConfigs.filter((config) => config.fixedWeekdays.length === 0);
+
+  for (const product of productConfigs) {
+    if (!product.fixedWeekdays.length) continue;
+    const fixedDates = dates.filter((date) => product.fixedWeekdays.includes(getCalendarDateWeekday(date)));
+    fixedDates.forEach((date) => {
+      fixedSlots.push({
+        date,
+        productId: product.productId,
+        productName: product.productName,
+        slides: product.slides,
+        fixedWeekdays: [...product.fixedWeekdays],
+        fixedPlacement: true,
+        storiesInPeriod: fixedDates.length
+      });
+    });
+  }
+
+  if (!flexibleConfigs.length) {
+    return fixedSlots.sort((left, right) => left.date.localeCompare(right.date) || left.productName.localeCompare(right.productName));
+  }
+
   // Interleave products round-robin
-  const maxApps = Math.max(...productConfigs.map((p) => p.appearances), 0);
-  const slots: Array<{ productId: string; productName: string; slides: number }> = [];
+  const maxApps = Math.max(...flexibleConfigs.map((p) => p.appearances), 0);
+  const slots: StoriesScheduleSlot[] = [];
   for (let i = 0; i < maxApps; i++) {
-    for (const prod of productConfigs) {
+    for (const prod of flexibleConfigs) {
       if (i < prod.appearances) {
-        slots.push({ productId: prod.productId, productName: prod.productName, slides: prod.slides });
+        slots.push({
+          date: '',
+          productId: prod.productId,
+          productName: prod.productName,
+          slides: prod.slides,
+          fixedWeekdays: [],
+          fixedPlacement: false,
+          storiesInPeriod: prod.appearances
+        });
       }
     }
   }
 
-  if (!slots.length) return [];
+  if (!slots.length) {
+    return fixedSlots.sort((left, right) => left.date.localeCompare(right.date) || left.productName.localeCompare(right.productName));
+  }
 
-  // Spread slots evenly across dates
-  return slots.map((slot, i) => ({
-    date: dates[Math.min(Math.floor(i * dates.length / slots.length), dates.length - 1)],
-    ...slot
+  const flexibleSlots = slots.map((slot, i) => ({
+    ...slot,
+    date: dates[Math.min(Math.floor(i * dates.length / slots.length), dates.length - 1)]
   }));
+
+  return [...fixedSlots, ...flexibleSlots].sort((left, right) => left.date.localeCompare(right.date) || left.productName.localeCompare(right.productName));
 }
 
 function buildEmptyNewEvent(date: string): NewEventDraft {
@@ -417,7 +482,7 @@ function MonthCalendarGrid({
               onDrop={(e) => { e.preventDefault(); onDrop(iso); }}
               className={cn(
                 'relative min-h-[90px] rounded-xl p-1.5 cursor-pointer transition-colors group',
-                isToday ? 'bg-zinc-100' : isDragOver ? 'bg-blue-50 ring-1 ring-blue-300' : 'hover:bg-zinc-50'
+                isToday ? 'bg-zinc-100' : isDragOver ? 'bg-zinc-50 ring-1 ring-zinc-200' : 'hover:bg-zinc-50'
               )}
             >
               <span className={cn(
@@ -442,17 +507,18 @@ function MonthCalendarGrid({
                       onDragEnd={onDragEnd}
                       onClick={(e) => { e.stopPropagation(); onClickScript(script); }}
                       className={cn(
-                        'group/block flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[10px] cursor-pointer transition-opacity',
-                        incomplete ? 'border border-dashed' : 'border',
-                        selectedScriptId === script.id ? 'ring-1 ring-zinc-900' : '',
-                        colors.pill,
-                        isPosted && 'opacity-60'
+                        'group/block flex items-center gap-1.5 rounded-md px-2 py-1 text-[10px] cursor-pointer transition-colors',
+                        incomplete
+                          ? 'border border-dashed border-zinc-300 bg-white/80'
+                          : `border ${colors.block}`,
+                        selectedScriptId === script.id ? 'ring-1 ring-zinc-200' : '',
+                        isPosted && 'opacity-70'
                       )}
+                      title={script.title}
                     >
                       <span className={cn('shrink-0 block h-1.5 w-1.5 rounded-full', colors.dot)} />
-                      <span className={cn('truncate flex-1 font-medium', isPosted && 'line-through')}>
-                        {getBlockLabel(script)}
-                        {script.productName ? ` · ${script.productName}` : ''}
+                      <span className={cn('truncate flex-1 font-medium text-zinc-800', isPosted && 'line-through text-zinc-500')}>
+                        {getCalendarPrimaryLabel(script)}
                       </span>
                       <button
                         onClick={(e) => { e.stopPropagation(); onTogglePosted(script); }}
@@ -560,7 +626,7 @@ function WeekCalendarGrid({
               onDrop={(e) => { e.preventDefault(); onDrop(iso); }}
               className={cn(
                 'min-h-[400px] p-2 space-y-2 cursor-pointer transition-colors',
-                isToday ? 'bg-zinc-50/60' : isDragOver ? 'bg-blue-50' : 'hover:bg-zinc-50/40'
+                isToday ? 'bg-zinc-50/60' : isDragOver ? 'bg-zinc-50' : 'hover:bg-zinc-50/40'
               )}
             >
               {dayScripts.map((script) => {
@@ -576,30 +642,29 @@ function WeekCalendarGrid({
                     onDragEnd={onDragEnd}
                     onClick={(e) => { e.stopPropagation(); onClickScript(script); }}
                     className={cn(
-                      'group rounded-xl border-l-4 p-2.5 cursor-pointer transition-all hover:shadow-sm',
-                      incomplete ? 'border border-dashed border-l-4' : 'border',
-                      colors.block,
+                      'group rounded-xl p-2.5 cursor-pointer transition-colors',
+                      incomplete
+                        ? 'border border-dashed border-zinc-300 bg-white/80'
+                        : `border ${colors.block}`,
                       isPosted && 'opacity-60',
-                      isSelected && 'ring-1 ring-zinc-900 shadow-sm'
+                      isSelected && 'ring-1 ring-zinc-200'
                     )}
+                    title={script.title}
                   >
                     <div className="flex items-start justify-between gap-1">
-                      <div className="min-w-0">
+                      <div className="min-w-0 space-y-1">
                         <span className={cn(
-                          'inline-flex items-center rounded-md border px-1.5 py-0.5 text-[10px] font-semibold mb-1',
+                          'inline-flex items-center rounded-full border px-1.5 py-0.5 text-[10px] font-semibold',
                           colors.pill
                         )}>
-                          {getBlockLabel(script)}
+                          {getCalendarFormatLabel(script)}
                         </span>
                         <p className={cn(
                           'text-xs font-medium text-zinc-800 leading-snug',
                           isPosted && 'line-through text-zinc-500'
                         )}>
-                          {script.title || '(sem título)'}
+                          {getCalendarPrimaryLabel(script)}
                         </p>
-                        {script.productName && (
-                          <p className="text-[10px] text-zinc-500 mt-0.5">{script.productName}</p>
-                        )}
                       </div>
                       <button
                         onClick={(e) => { e.stopPropagation(); onTogglePosted(script); }}
@@ -1225,6 +1290,7 @@ type StoriesSchedulerRow = {
   selected: boolean;
   appearances: number; // how many times this product posts stories in the period
   slides: number;      // slides per story sequence
+  fixedWeekdays: number[];
 };
 
 const PERIOD_PRESETS: Array<{ label: string; days: number }> = [
@@ -1262,7 +1328,8 @@ function CreateSchedulePanel({
       productName: p.name,
       selected: false,
       appearances: 3,
-      slides: 3
+      slides: 3,
+      fixedWeekdays: []
     }))
   );
   const [creating, setCreating] = useState(false);
@@ -1274,16 +1341,31 @@ function CreateSchedulePanel({
   }
 
   const selectedRows = rows.filter((r) => r.selected);
+  const plannedSlots = useMemo(
+    () => generateStoriesSchedule(
+      startDate,
+      periodDays,
+      selectedRows.map((r) => ({
+        productId: r.productId,
+        productName: r.productName,
+        appearances: r.appearances,
+        slides: r.slides,
+        fixedWeekdays: r.fixedWeekdays
+      }))
+    ),
+    [startDate, periodDays, selectedRows]
+  );
 
   const filteredRows = useMemo(
     () => rows.filter((r) => !productSearch || r.productName.toLowerCase().includes(productSearch.toLowerCase())),
     [rows, productSearch]
   );
 
-  const totalEvents = useMemo(
-    () => selectedRows.reduce((acc, r) => acc + r.appearances, 0),
-    [selectedRows]
-  );
+  const totalEvents = plannedSlots.length;
+
+  function toggleSelectedAll(nextSelected: boolean) {
+    setRows((prev) => prev.map((row) => ({ ...row, selected: nextSelected })));
+  }
 
   async function handleCreate() {
     if (!selectedRows.length) { toast.error('Selecione pelo menos um produto.'); return; }
@@ -1291,33 +1373,40 @@ function CreateSchedulePanel({
 
     setCreating(true);
     try {
-      const slots = generateStoriesSchedule(
-        startDate,
-        periodDays,
-        selectedRows.map((r) => ({
-          productId: r.productId,
-          productName: r.productName,
-          appearances: r.appearances,
-          slides: r.slides
-        }))
-      );
+      const slots = plannedSlots;
 
       if (!slots.length) {
         toast.error('Nenhum slot gerado. Verifique as configurações.');
         return;
       }
 
-      const scriptPayloads = slots.map((slot) => {
+      const batchId = `calendar_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+      const scriptPayloads = slots.map((slot, index) => {
         const subOpt = String(slot.slides);
         const structure = buildContentStructure('stories', subOpt);
         return {
-          title: `Stories (${slot.slides} slides) – ${slot.productName}`,
+          title: `Stories — ${slot.productName}`,
           contentType: 'stories',
           subOption: subOpt,
           scheduledFor: slot.date,
           status: 'draft',
           productId: slot.productId,
           productName: slot.productName,
+          plannerMeta: {
+            source: 'planner',
+            batchId,
+            rangeStart: startDate,
+            rangeEnd: endDate,
+            mode: 'create',
+            reason: 'Cronograma criado no calendário.',
+            productRuleId: slot.productId,
+            fixedWeekdays: slot.fixedWeekdays,
+            fixedPlacement: slot.fixedPlacement,
+            storiesInPeriod: slot.storiesInPeriod,
+            slotType: 'stories',
+            slotIndex: index,
+            sequenceSize: slot.slides
+          },
           ...structure
         };
       });
@@ -1400,6 +1489,23 @@ function CreateSchedulePanel({
             />
           </div>
 
+          <div className="mb-2 flex gap-2">
+            <button
+              type="button"
+              onClick={() => toggleSelectedAll(true)}
+              className="rounded-full border border-border px-3 py-1.5 text-[11px] font-medium text-muted-foreground transition-colors hover:bg-zinc-50 hover:text-foreground"
+            >
+              Selecionar todos
+            </button>
+            <button
+              type="button"
+              onClick={() => toggleSelectedAll(false)}
+              className="rounded-full border border-border px-3 py-1.5 text-[11px] font-medium text-muted-foreground transition-colors hover:bg-zinc-50 hover:text-foreground"
+            >
+              Deselecionar todos
+            </button>
+          </div>
+
           <div className="space-y-1 max-h-48 overflow-y-auto">
             {filteredRows.length === 0 ? (
               <p className="text-xs text-muted-foreground italic py-2">Nenhum produto encontrado.</p>
@@ -1431,7 +1537,7 @@ function CreateSchedulePanel({
             </p>
             <div className="space-y-3">
               {selectedRows.map((row) => (
-                <div key={row.productId} className="rounded-2xl border border-sky-200 bg-sky-50/50 p-3 space-y-3">
+                <div key={row.productId} className="rounded-2xl border border-zinc-200 bg-white p-3 space-y-3">
                   <div className="flex items-center gap-2">
                     <span className="h-2 w-2 rounded-full bg-sky-500 shrink-0" />
                     <p className="text-sm font-semibold text-foreground">{row.productName}</p>
@@ -1472,8 +1578,48 @@ function CreateSchedulePanel({
                       </div>
                     </div>
                   </div>
-                  <p className="text-[10px] text-sky-600 font-medium">
-                    → {row.appearances}× Stories ({row.slides} slides cada)
+                  <div className="space-y-2">
+                    <p className="text-[10px] font-medium uppercase tracking-[0.16em] text-muted-foreground">
+                      Dias fixos (opcional)
+                    </p>
+                    <div className="flex flex-wrap gap-2">
+                      {PT_BR_WEEKDAYS_FULL.map((weekday, weekdayIndex) => {
+                        const active = row.fixedWeekdays.includes(weekdayIndex);
+                        return (
+                          <button
+                            key={weekday}
+                            type="button"
+                            onClick={() => setRow(row.productId, {
+                              fixedWeekdays: active
+                                ? row.fixedWeekdays.filter((day) => day !== weekdayIndex)
+                                : [...row.fixedWeekdays, weekdayIndex].sort((left, right) => left - right)
+                            })}
+                            className={cn(
+                              'flex h-9 min-w-9 items-center justify-center rounded-full border px-2 text-[11px] font-medium transition-colors',
+                              active
+                                ? 'border-zinc-900 bg-zinc-900 text-white'
+                                : 'border-border bg-white text-muted-foreground hover:border-zinc-300 hover:bg-zinc-50 hover:text-foreground'
+                            )}
+                            title={weekday}
+                          >
+                            {weekday.slice(0, 3)}
+                          </button>
+                        );
+                      })}
+                    </div>
+                    <p className="text-[10px] text-zinc-500">
+                      Se marcar dias, este produto entra sempre nesses dias dentro do período. Sem marcação, a distribuição segue automática.
+                    </p>
+                    {row.fixedWeekdays.length > 0 && (
+                      <p className="text-[10px] font-medium text-zinc-700">
+                        Fixos: {formatWeekdaysList(row.fixedWeekdays)}
+                      </p>
+                    )}
+                  </div>
+                  <p className="text-[10px] font-medium text-zinc-600">
+                    {row.fixedWeekdays.length > 0
+                      ? `→ dias fixos: ${formatWeekdaysList(row.fixedWeekdays)}`
+                      : `→ ${row.appearances}× Stories (${row.slides} slides cada)`}
                   </p>
                 </div>
               ))}
