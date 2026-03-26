@@ -2,7 +2,7 @@
 
 import { useMemo, useState } from 'react';
 import Link from 'next/link';
-import { Bot, Loader2, Mic, PencilLine, Plus, Sparkles, Square, Trash2 } from 'lucide-react';
+import { Bot, CheckCircle2, Loader2, Mic, PencilLine, Plus, Sparkles, Square, Trash2, X } from 'lucide-react';
 import { toast } from 'sonner';
 
 import { Badge } from '@/components/ui/badge';
@@ -15,7 +15,7 @@ import { ScriptEditorModal, type EditableScriptDraft } from '@/components/platfo
 import { useSpeechCapture } from '@/hooks/use-speech-capture';
 import type { ProductItem, ScriptItem } from '@/types/platform';
 
-type GeneratedScript = EditableScriptDraft;
+type ScriptStatusFilter = 'all' | 'draft' | 'approved' | 'production';
 
 const CONTENT_TYPES = [
   { value: 'reels', label: 'Reels' },
@@ -186,40 +186,48 @@ function buildEditableScript(script: ScriptItem): EditableScriptDraft {
   };
 }
 
-function normalizeGeneratedScripts(
+function buildScriptSavePayloads(
   payload: unknown,
-  context: { prompt: string; referenceContext: string; product?: ProductItem }
+  context: { prompt: string; product?: ProductItem }
 ) {
-  if (!Array.isArray(payload)) {
-    return [] as GeneratedScript[];
-  }
+  if (!Array.isArray(payload)) return [];
 
-  const drafts: GeneratedScript[] = [];
-
-  payload.forEach((item, index) => {
-    if (!item || typeof item !== 'object') {
-      return;
-    }
-
-    const raw = item as Record<string, unknown>;
-
-    drafts.push({
-      id: `generated-${Date.now()}-${index}`,
-      title: typeof raw.title === 'string' ? raw.title : `Roteiro ${index + 1}`,
-      hook: typeof raw.hook === 'string' ? raw.hook : '',
-      spoken: typeof raw.spoken === 'string' ? raw.spoken : '',
-      takes: padTakeList(Array.isArray(raw.takes) ? raw.takes.filter((t): t is string => typeof t === 'string') : []),
-      cta: typeof raw.cta === 'string' ? raw.cta : '',
-      caption: typeof raw.caption === 'string' ? raw.caption : '',
-      prompt: context.prompt,
-      referenceContext: context.referenceContext,
-      productId: context.product?.id,
-      productName: context.product?.name
-    });
-  });
-
-  return drafts;
+  return payload
+    .map((item, index) => {
+      if (!item || typeof item !== 'object') return null;
+      const raw = item as Record<string, unknown>;
+      return {
+        title: typeof raw.title === 'string' ? raw.title : `Roteiro ${index + 1}`,
+        hook: typeof raw.hook === 'string' ? raw.hook : '',
+        spoken: typeof raw.spoken === 'string' ? raw.spoken : '',
+        takes: padTakeList(Array.isArray(raw.takes) ? raw.takes.filter((t): t is string => typeof t === 'string') : []),
+        cta: typeof raw.cta === 'string' ? raw.cta : '',
+        caption: typeof raw.caption === 'string' ? raw.caption : '',
+        prompt: context.prompt,
+        referenceContext: '',
+        productId: context.product?.id,
+        productName: context.product?.name,
+        status: 'draft'
+      };
+    })
+    .filter(Boolean) as Array<{
+      title: string; hook: string; spoken: string; takes: string[];
+      cta: string; caption: string; prompt: string; referenceContext: string;
+      productId?: string; productName?: string; status: string;
+    }>;
 }
+
+const STATUS_LABELS: Record<string, string> = {
+  draft: 'Rascunho',
+  approved: 'Aprovado',
+  production: 'Em produção',
+  recording: 'Gravando',
+  drive: 'No Drive',
+  editing: 'Em edição',
+  edited: 'Editado',
+  scheduled: 'Agendado',
+  posted: 'Postado'
+};
 
 function formatDateLabel(value: string) {
   return new Intl.DateTimeFormat('pt-BR', {
@@ -241,7 +249,6 @@ export function ScriptsWorkspace({
 }) {
   const [products] = useState(initialProducts);
   const [scripts, setScripts] = useState(initialScripts);
-  const [generatedScripts, setGeneratedScripts] = useState<GeneratedScript[]>([]);
 
   // Structured briefing state
   const [contentType, setContentType] = useState<string>('reels');
@@ -263,18 +270,23 @@ export function ScriptsWorkspace({
   });
 
   const [loadingGeneration, setLoadingGeneration] = useState(false);
-  const [savingDraftId, setSavingDraftId] = useState<string | null>(null);
   const [busyScriptId, setBusyScriptId] = useState<string | null>(null);
-  const [editingDraft, setEditingDraft] = useState<GeneratedScript | null>(null);
-  const [editingSaved, setEditingSaved] = useState<EditableScriptDraft | null>(null);
+  const [editingScript, setEditingScript] = useState<EditableScriptDraft | null>(null);
+  const [statusFilter, setStatusFilter] = useState<ScriptStatusFilter>('all');
 
   const selectedProduct = useMemo(
     () => products.find((p) => p.id === selectedProductId),
     [products, selectedProductId]
   );
 
-  const draftScripts = useMemo(() => scripts.filter((s) => s.status === 'draft'), [scripts]);
-  const approvedScripts = useMemo(() => scripts.filter((s) => s.status === 'approved'), [scripts]);
+  const filteredScripts = useMemo(() => {
+    if (statusFilter === 'all') return scripts;
+    if (statusFilter === 'production') return scripts.filter((s) => s.status !== 'draft' && s.status !== 'approved');
+    return scripts.filter((s) => s.status === statusFilter);
+  }, [scripts, statusFilter]);
+
+  const draftCount = useMemo(() => scripts.filter((s) => s.status === 'draft').length, [scripts]);
+  const approvedCount = useMemo(() => scripts.filter((s) => s.status === 'approved').length, [scripts]);
 
   function handleProductChange(productId: string) {
     setSelectedProductId(productId);
@@ -361,15 +373,16 @@ export function ScriptsWorkspace({
         ? [selectedProduct.benefits, selectedProduct.audience, selectedProduct.restrictions].filter(Boolean).join(' | ')
         : '';
 
-      const combinedPrompt = [extraContext.trim()].filter(Boolean).join(' ');
+      const combinedPrompt = extraContext.trim() || `${pain || benefit}`;
 
-      const response = await fetch('/api/ai', {
+      // Step 1 — call AI
+      const aiResponse = await fetch('/api/ai', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({
           action: 'generateScriptVariants',
           payload: {
-            prompt: combinedPrompt || `${pain || benefit}`,
+            prompt: combinedPrompt,
             productName: selectedProduct?.name,
             productContext,
             referenceContext: '',
@@ -384,24 +397,37 @@ export function ScriptsWorkspace({
         })
       });
 
-      const payload = (await response.json().catch(() => null)) as { content?: unknown; error?: string } | null;
+      const aiPayload = (await aiResponse.json().catch(() => null)) as { content?: unknown; error?: string } | null;
 
-      if (!response.ok) {
-        throw new Error(payload?.error ?? 'A IA não conseguiu gerar os roteiros.');
+      if (!aiResponse.ok) {
+        throw new Error(aiPayload?.error ?? 'A IA não conseguiu gerar os roteiros.');
       }
 
-      const nextScripts = normalizeGeneratedScripts(payload?.content, {
+      const toSave = buildScriptSavePayloads(aiPayload?.content, {
         prompt: combinedPrompt,
-        referenceContext: '',
         product: selectedProduct
       });
 
-      if (!nextScripts.length) {
+      if (!toSave.length) {
         throw new Error('A IA retornou um formato inválido. Tente novamente.');
       }
 
-      setGeneratedScripts(nextScripts);
-      toast.success('3 roteiros gerados para revisão.');
+      // Step 2 — auto-save to DB as drafts (persist on navigation)
+      const saveResponse = await fetch(`/api/workspaces/${workspace}/scripts`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ scripts: toSave })
+      });
+
+      const savePayload = (await saveResponse.json().catch(() => null)) as { scripts?: ScriptItem[]; error?: string } | null;
+
+      if (!saveResponse.ok || !savePayload?.scripts?.length) {
+        throw new Error(savePayload?.error ?? 'Não foi possível salvar os roteiros gerados.');
+      }
+
+      setScripts((current) => [...savePayload.scripts!, ...current]);
+      setStatusFilter('draft');
+      toast.success(`${savePayload.scripts!.length} roteiros salvos como rascunho.`);
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Não foi possível gerar os roteiros.';
       toast.error(message);
@@ -410,49 +436,42 @@ export function ScriptsWorkspace({
     }
   }
 
-  async function saveGeneratedScript(script: GeneratedScript) {
-    setSavingDraftId(script.id);
-
+  async function handleApprove(scriptId: string) {
+    setBusyScriptId(scriptId);
     try {
-      const response = await fetch(`/api/workspaces/${workspace}/scripts`, {
-        method: 'POST',
+      const response = await fetch(`/api/workspaces/${workspace}/scripts/${scriptId}`, {
+        method: 'PATCH',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({
-          title: script.title,
-          hook: script.hook,
-          spoken: script.spoken,
-          takes: script.takes,
-          cta: script.cta,
-          caption: script.caption,
-          prompt: script.prompt,
-          referenceContext: script.referenceContext,
-          productId: script.productId,
-          productName: script.productName,
-          status: 'draft'
-        })
+        body: JSON.stringify({ status: 'approved' })
       });
-
-      const payload = (await response.json().catch(() => null)) as { scripts?: ScriptItem[]; error?: string } | null;
-
-      if (!response.ok || !payload?.scripts?.length) {
-        throw new Error(payload?.error ?? 'Não foi possível salvar o roteiro.');
-      }
-
-      setScripts((current) => [...payload.scripts!, ...current]);
-      setGeneratedScripts((current) => current.filter((item) => item.id !== script.id));
-      setEditingDraft(null);
-      toast.success('Roteiro salvo na sua base.');
+      const payload = (await response.json().catch(() => null)) as { script?: ScriptItem; error?: string } | null;
+      if (!response.ok || !payload?.script) throw new Error(payload?.error ?? 'Erro ao aprovar.');
+      setScripts((current) => current.map((s) => (s.id === payload.script!.id ? payload.script! : s)));
+      toast.success('Roteiro aprovado e enviado para Produção.');
     } catch (error) {
-      const message = error instanceof Error ? error.message : 'Não foi possível salvar o roteiro.';
-      toast.error(message);
+      toast.error(error instanceof Error ? error.message : 'Não foi possível aprovar o roteiro.');
     } finally {
-      setSavingDraftId(null);
+      setBusyScriptId(null);
     }
   }
 
-  async function updateSavedScript(script: EditableScriptDraft, status?: 'draft' | 'approved') {
-    setBusyScriptId(script.id);
+  async function handleDiscard(scriptId: string) {
+    setBusyScriptId(scriptId);
+    try {
+      const response = await fetch(`/api/workspaces/${workspace}/scripts/${scriptId}`, { method: 'DELETE' });
+      const payload = (await response.json().catch(() => null)) as { ok?: boolean; error?: string } | null;
+      if (!response.ok || !payload?.ok) throw new Error(payload?.error ?? 'Erro ao descartar.');
+      setScripts((current) => current.filter((s) => s.id !== scriptId));
+      toast.success('Roteiro descartado.');
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Não foi possível descartar o roteiro.');
+    } finally {
+      setBusyScriptId(null);
+    }
+  }
 
+  async function updateScript(script: EditableScriptDraft) {
+    setBusyScriptId(script.id);
     try {
       const response = await fetch(`/api/workspaces/${workspace}/scripts/${script.id}`, {
         method: 'PATCH',
@@ -467,44 +486,16 @@ export function ScriptsWorkspace({
           prompt: script.prompt,
           referenceContext: script.referenceContext,
           productId: script.productId,
-          productName: script.productName,
-          status: status ?? undefined
+          productName: script.productName
         })
       });
-
       const payload = (await response.json().catch(() => null)) as { script?: ScriptItem; error?: string } | null;
-
-      if (!response.ok || !payload?.script) {
-        throw new Error(payload?.error ?? 'Não foi possível atualizar o roteiro.');
-      }
-
-      setScripts((current) => current.map((item) => (item.id === payload.script!.id ? payload.script! : item)));
-      setEditingSaved(null);
-      toast.success(status === 'approved' ? 'Roteiro aprovado.' : 'Roteiro atualizado.');
+      if (!response.ok || !payload?.script) throw new Error(payload?.error ?? 'Erro ao atualizar.');
+      setScripts((current) => current.map((s) => (s.id === payload.script!.id ? payload.script! : s)));
+      setEditingScript(null);
+      toast.success('Roteiro atualizado.');
     } catch (error) {
-      const message = error instanceof Error ? error.message : 'Não foi possível atualizar o roteiro.';
-      toast.error(message);
-    } finally {
-      setBusyScriptId(null);
-    }
-  }
-
-  async function deleteScript(scriptId: string) {
-    setBusyScriptId(scriptId);
-
-    try {
-      const response = await fetch(`/api/workspaces/${workspace}/scripts/${scriptId}`, { method: 'DELETE' });
-      const payload = (await response.json().catch(() => null)) as { ok?: boolean; error?: string } | null;
-
-      if (!response.ok || !payload?.ok) {
-        throw new Error(payload?.error ?? 'Não foi possível remover o roteiro.');
-      }
-
-      setScripts((current) => current.filter((item) => item.id !== scriptId));
-      toast.success('Roteiro removido.');
-    } catch (error) {
-      const message = error instanceof Error ? error.message : 'Não foi possível remover o roteiro.';
-      toast.error(message);
+      toast.error(error instanceof Error ? error.message : 'Não foi possível atualizar o roteiro.');
     } finally {
       setBusyScriptId(null);
     }
@@ -525,6 +516,7 @@ export function ScriptsWorkspace({
               setExtraContext('');
               voiceCapture.reset();
             }}
+            size="sm"
           >
             Limpar briefing
           </Button>
@@ -772,173 +764,140 @@ export function ScriptsWorkspace({
         </Card>
       </div>
 
-      {/* ── Roteiros gerados + base ── */}
-      <div className="grid gap-4 xl:grid-cols-[1.02fr_0.98fr]">
-        <Card className="rounded-[24px] border-border/90 bg-white/95">
-          <CardContent className="space-y-4 p-4 lg:p-5">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm font-semibold text-foreground">Gerados agora</p>
-                <p className="mt-1 text-[13px] text-muted-foreground">Revise e salve o que realmente valer seguir.</p>
-              </div>
-              <Badge variant="secondary" className="rounded-full">
-                {generatedScripts.length} variações
-              </Badge>
+      {/* ── Pipeline de roteiros ── */}
+      <Card className="rounded-[24px] border-border/90 bg-white/95">
+        <CardContent className="space-y-4 p-4 lg:p-5">
+          {/* Header + filters */}
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <p className="text-sm font-semibold text-foreground">Roteiros</p>
+              <p className="mt-0.5 text-[13px] text-muted-foreground">
+                {scripts.length} no total · {draftCount} rascunho{draftCount !== 1 ? 's' : ''} · {approvedCount} aprovado{approvedCount !== 1 ? 's' : ''}
+              </p>
             </div>
+            <div className="flex flex-wrap gap-1.5">
+              {(['all', 'draft', 'approved', 'production'] as const).map((f) => (
+                <button
+                  key={f}
+                  type="button"
+                  onClick={() => setStatusFilter(f)}
+                  className={`rounded-full border px-3 py-1 text-[12px] font-medium transition ${
+                    statusFilter === f
+                      ? 'border-foreground bg-foreground text-background'
+                      : 'border-border bg-white text-muted-foreground hover:border-foreground/40 hover:text-foreground'
+                  }`}
+                >
+                  {f === 'all' ? 'Todos' : f === 'draft' ? 'Rascunho' : f === 'approved' ? 'Aprovado' : 'Em produção'}
+                </button>
+              ))}
+            </div>
+          </div>
 
-            <div className="space-y-2.5">
-              {generatedScripts.length ? (
-                generatedScripts.map((script) => (
-                  <div key={script.id} className="rounded-[20px] border border-border bg-muted/20 p-3.5">
+          {/* Script cards */}
+          <div className="space-y-2.5">
+            {filteredScripts.length ? (
+              filteredScripts.map((script) => {
+                const isDraft = script.status === 'draft';
+                const isBusy = busyScriptId === script.id;
+                return (
+                  <div
+                    key={script.id}
+                    className={`rounded-[20px] border p-3.5 transition ${isDraft ? 'border-border bg-muted/20' : 'border-border bg-white'}`}
+                  >
                     <div className="flex items-start justify-between gap-3">
-                      <div className="min-w-0">
-                        <p className="truncate text-sm font-semibold text-foreground">{script.title}</p>
+                      <div className="min-w-0 flex-1">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <p className="truncate text-sm font-semibold text-foreground">{script.title}</p>
+                          <span className={`rounded-full border px-2 py-0.5 text-[11px] font-medium ${
+                            script.status === 'draft'
+                              ? 'border-amber-200 bg-amber-50 text-amber-700'
+                              : script.status === 'approved'
+                                ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
+                                : 'border-blue-200 bg-blue-50 text-blue-700'
+                          }`}>
+                            {STATUS_LABELS[script.status] ?? script.status}
+                          </span>
+                        </div>
                         <p className="mt-1.5 text-[13px] font-medium leading-5 text-foreground/80 line-clamp-2">
                           {script.hook}
                         </p>
                         <p className="mt-1.5 line-clamp-2 text-[12px] leading-5 text-muted-foreground">
                           {script.spoken}
                         </p>
-                      </div>
-                      <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-border bg-white">
-                        <Bot className="h-4 w-4" />
+                        <p className="mt-2 text-[12px] text-muted-foreground">
+                          {script.productName || 'Sem produto'} · {formatDateLabel(script.updatedAt)}
+                        </p>
                       </div>
                     </div>
+
                     <div className="mt-3 flex flex-wrap gap-2">
-                      <Button variant="outline" size="sm" onClick={() => setEditingDraft(script)}>
-                        <PencilLine className="h-4 w-4" />
-                        Editar
-                      </Button>
-                      <Button size="sm" onClick={() => saveGeneratedScript(script)} disabled={savingDraftId === script.id}>
-                        {savingDraftId === script.id ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
-                        Salvar
-                      </Button>
-                    </div>
-                  </div>
-                ))
-              ) : (
-                <div className="rounded-[20px] border border-dashed border-border bg-muted/20 p-4 text-[13px] leading-6 text-muted-foreground">
-                  Configure o briefing ao lado e clique em <strong>Gerar 3 roteiros</strong>. Cada variação terá um ângulo diferente: dor, prova e curiosidade.
-                </div>
-              )}
-            </div>
-          </CardContent>
-        </Card>
-
-        <Card className="rounded-[24px] border-border/90 bg-white/95">
-          <CardContent className="space-y-4 p-4 lg:p-5">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm font-semibold text-foreground">Base de roteiros</p>
-                <p className="mt-1 text-[13px] text-muted-foreground">Rascunhos e aprovados.</p>
-              </div>
-              <Badge variant="outline" className="rounded-full">
-                {scripts.length} no total
-              </Badge>
-            </div>
-
-            <div className="space-y-4">
-              {/* Rascunhos */}
-              <div className="space-y-2.5">
-                <div className="flex items-center justify-between">
-                  <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">Rascunhos</p>
-                  <span className="text-[12px] text-muted-foreground">{draftScripts.length}</span>
-                </div>
-                {draftScripts.length ? (
-                  draftScripts.map((script) => (
-                    <div key={script.id} className="rounded-[20px] border border-border bg-muted/20 p-3.5">
-                      <div className="flex items-start justify-between gap-3">
-                        <div className="min-w-0">
-                          <p className="truncate text-sm font-semibold text-foreground">{script.title}</p>
-                          <p className="mt-1.5 line-clamp-2 text-[13px] leading-5 text-muted-foreground">{script.hook}</p>
-                          <p className="mt-2 text-[12px] text-muted-foreground">
-                            {script.productName || 'Sem produto'} · {formatDateLabel(script.updatedAt)}
-                          </p>
-                        </div>
-                        <div className="flex items-center gap-1">
+                      {isDraft ? (
+                        <>
+                          <Button
+                            size="sm"
+                            onClick={() => handleApprove(script.id)}
+                            disabled={isBusy}
+                          >
+                            {isBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <CheckCircle2 className="h-3.5 w-3.5" />}
+                            Aprovar
+                          </Button>
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => setEditingScript(buildEditableScript(script))}
+                            disabled={isBusy}
+                          >
+                            <PencilLine className="h-3.5 w-3.5" />
+                            Editar
+                          </Button>
                           <button
                             type="button"
-                            onClick={() => setEditingSaved(buildEditableScript(script))}
-                            className="inline-flex h-9 w-9 items-center justify-center rounded-xl border border-border bg-white transition hover:bg-muted"
-                            aria-label="Editar roteiro"
+                            onClick={() => handleDiscard(script.id)}
+                            disabled={isBusy}
+                            className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-white px-3 py-1.5 text-[12px] font-medium text-rose-600 transition hover:bg-rose-50 disabled:opacity-40"
                           >
-                            <PencilLine className="h-4 w-4" />
+                            {isBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <X className="h-3.5 w-3.5" />}
+                            Descartar
                           </button>
-                          <button
-                            type="button"
-                            onClick={() => deleteScript(script.id)}
-                            className="inline-flex h-9 w-9 items-center justify-center rounded-xl border border-border bg-white text-rose-600 transition hover:bg-rose-50"
-                            aria-label="Remover roteiro"
-                          >
-                            {busyScriptId === script.id ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
-                          </button>
-                        </div>
-                      </div>
-                      <div className="mt-3 flex flex-wrap gap-2">
+                        </>
+                      ) : (
                         <Button
+                          variant="outline"
                           size="sm"
-                          onClick={() => updateSavedScript(buildEditableScript(script), 'approved')}
-                          disabled={busyScriptId === script.id}
+                          onClick={() => setEditingScript(buildEditableScript(script))}
+                          disabled={isBusy}
                         >
-                          {busyScriptId === script.id ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
-                          Aprovar
+                          <PencilLine className="h-3.5 w-3.5" />
+                          Editar
                         </Button>
-                      </div>
+                      )}
                     </div>
-                  ))
-                ) : (
-                  <div className="rounded-[18px] border border-dashed border-border bg-muted/20 p-3.5 text-[13px] text-muted-foreground">
-                    Nenhum rascunho salvo ainda.
                   </div>
-                )}
+                );
+              })
+            ) : (
+              <div className="rounded-[20px] border border-dashed border-border bg-muted/20 p-5 text-center text-[13px] leading-6 text-muted-foreground">
+                {statusFilter === 'all'
+                  ? 'Configure o briefing e clique em Gerar 3 roteiros. Cada variação tem um ângulo diferente e é salva automaticamente.'
+                  : statusFilter === 'draft'
+                    ? 'Nenhum rascunho ainda. Gere roteiros no briefing acima.'
+                    : statusFilter === 'approved'
+                      ? 'Nenhum roteiro aprovado ainda.'
+                      : 'Nenhum roteiro em produção ainda.'}
               </div>
+            )}
+          </div>
+        </CardContent>
+      </Card>
 
-              {/* Aprovados */}
-              <div className="space-y-2.5">
-                <div className="flex items-center justify-between">
-                  <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">Aprovados</p>
-                  <span className="text-[12px] text-muted-foreground">{approvedScripts.length}</span>
-                </div>
-                {approvedScripts.length ? (
-                  approvedScripts.map((script) => (
-                    <div key={script.id} className="rounded-[20px] border border-border bg-white p-3.5">
-                      <p className="text-sm font-semibold text-foreground">{script.title}</p>
-                      <p className="mt-1.5 line-clamp-2 text-[13px] leading-5 text-muted-foreground">{script.hook}</p>
-                      <p className="mt-2 text-[12px] text-muted-foreground">
-                        {script.productName || 'Sem produto'} · pronto para gravação
-                      </p>
-                    </div>
-                  ))
-                ) : (
-                  <div className="rounded-[18px] border border-dashed border-border bg-muted/20 p-3.5 text-[13px] text-muted-foreground">
-                    Roteiros aprovados aparecem aqui e seguem para Produção.
-                  </div>
-                )}
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-      </div>
-
-      {editingDraft ? (
+      {editingScript ? (
         <ScriptEditorModal
-          title="Editar roteiro gerado"
-          script={editingDraft}
-          onChange={setEditingDraft}
-          onClose={() => setEditingDraft(null)}
-          onSave={() => saveGeneratedScript(editingDraft)}
-          savingLabel={savingDraftId === editingDraft.id ? 'Salvando...' : 'Salvar roteiro'}
-        />
-      ) : null}
-
-      {editingSaved ? (
-        <ScriptEditorModal
-          title="Editar roteiro salvo"
-          script={editingSaved}
-          onChange={setEditingSaved}
-          onClose={() => setEditingSaved(null)}
-          onSave={() => updateSavedScript(editingSaved)}
-          savingLabel={busyScriptId === editingSaved.id ? 'Atualizando...' : 'Atualizar roteiro'}
+          title="Editar roteiro"
+          script={editingScript}
+          onChange={setEditingScript}
+          onClose={() => setEditingScript(null)}
+          onSave={() => updateScript(editingScript)}
+          savingLabel={busyScriptId === editingScript.id ? 'Atualizando...' : 'Atualizar roteiro'}
         />
       ) : null}
     </div>

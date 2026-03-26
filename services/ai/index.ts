@@ -2060,7 +2060,9 @@ function resolveDurationLabel(duration?: string) {
     '15s': '15 segundos — spoken com no maximo 35 palavras. Ultra direto. So o essencial.',
     '30s': '30 segundos — spoken com 65 a 80 palavras. Uma ideia clara, sem enrolacao.',
     '45s': '45 segundos — spoken com 95 a 115 palavras. Da para desenvolver um exemplo curto.',
-    '60s': '60 segundos — spoken com 130 a 150 palavras. Historia rapida ou passo a passo.'
+    '60s': '60 segundos — spoken com 130 a 150 palavras. Historia rapida ou passo a passo.',
+    '90s': '90 segundos — spoken com 180 a 220 palavras. Mini-historia com situacao, virada e revelacao.',
+    '3min': '3 minutos — spoken com 400 a 500 palavras. Estrutura completa: situacao → tentativas → problema real → solucao → resultado → CTA.'
   };
   return map[duration ?? ''] ?? '30 segundos — spoken com 65 a 80 palavras.';
 }
@@ -2122,29 +2124,37 @@ export async function generateScriptVariants(input: ScriptVariantInput) {
   const objectiveLabel = resolveObjectivesLabel(input.objectives, input.objective);
   const isTrend = input.tones?.includes('trend') || input.tone === 'trend';
 
+  const painOrTopic = input.pain ?? input.prompt;
+  const benefitOrTopic = input.benefit ?? input.prompt;
+
   const fallback = Array.from({ length: 3 }, (_, index) => ({
-    title: `Roteiro ${index + 1} - ${productLabel}`,
+    title: `Roteiro ${index + 1} — ${productLabel}`,
     hook:
       index === 0
-        ? `Voce ja tentou resolver ${(input.pain ?? input.prompt).toLowerCase()} e nao funcionou?`
+        ? `Fiz isso por meses sem resultado. Ate descobrir o que eu estava errando.`
         : index === 1
-          ? `Ninguem te contou que da pra ${(input.benefit ?? input.prompt).toLowerCase()} sem complicar.`
-          : `${productLabel} nao e o que voce acha que e — e melhor.`,
+          ? `Ninguem te conta o motivo real de ${painOrTopic.toLowerCase().slice(0, 40)}.`
+          : `Parei de fazer o obvio. O que aconteceu depois mudou tudo.`,
     spoken:
       index === 0
-        ? `Eu sei como e ficar travado em ${(input.pain ?? input.prompt).toLowerCase()}. Ja passei por isso. O que mudou tudo foi quando eu comecei a usar ${productLabel}. Simples, rapido e sem enrolacao.`
+        ? `Tentei de tudo pra resolver ${painOrTopic.toLowerCase().slice(0, 60)}. Gastei tempo, dinheiro, energia. Nada funcionava de verdade. Ate que uma coisa especifica mudou minha abordagem. Eu descobri que o problema nao era o que eu achava que era. Era [X]. E quando eu corrigi isso com ${productLabel}, o resultado veio rapido. Em semanas, nao meses.`
         : index === 1
-          ? `Sabe aquela sensacao de ${(input.pain ?? input.prompt).toLowerCase()}? ${productLabel} foi feito exatamente pra isso. Resultado real, sem complicacao.`
-          : `Se voce quer ${(input.benefit ?? input.prompt).toLowerCase()}, precisa conhecer ${productLabel}. Testei, funcionou, e agora eu recomendo.`,
+          ? `Existe um motivo especifico pelo qual a maioria das pessoas nao consegue ${benefitOrTopic.toLowerCase().slice(0, 60)}. E nao e forca de vontade. E uma informacao que ningem explica direito. Vou te contar em 30 segundos o que levei meses pra entender. Depois que voce sabe isso, ${productLabel} faz muito mais sentido.`
+          : `Passei por uma fase em que ${painOrTopic.toLowerCase().slice(0, 50)} era meu problema principal. Testei o que todo mundo recomenda. Nao funcionou. Testei o contrario. Funcionou. ${productLabel} foi parte do que funcionou, mas o que realmente mudou foi a minha logica sobre o problema.`,
     takes: [
-      'Abertura: enquadra a dor ou situacao em 1 frase',
-      'Contexto: por que isso importa agora',
-      'Virada: apresenta a solucao de forma natural',
-      'Prova ou exemplo concreto',
-      'CTA claro e especifico'
+      'Close no rosto, expressao de quem esta contando algo importante',
+      'Corte para momento de tensao ou situacao especifica',
+      'Virada: expressao de surpresa ou descoberta',
+      'Resultado visual ou texto na tela com dado especifico',
+      'CTA com energia, olho na camera'
     ],
-    cta: 'Comenta aqui embaixo se voce ja passou por isso.',
-    caption: `${(input.pain ?? input.prompt).slice(0, 60)}.\n\nA solucao existe e e mais simples do que parece.\n\n#reels #${productLabel.toLowerCase().replace(/\s+/g, '')} #marketingdigital #conteudo`
+    cta:
+      index === 0
+        ? 'Salva esse video pra nao esquecer o que eu falei aqui.'
+        : index === 1
+          ? 'Marca alguem que precisa saber disso.'
+          : 'Comenta embaixo se voce ja passou por isso — quero ler.',
+    caption: `${painOrTopic.slice(0, 55)}? Existe uma razao especifica pra isso.\n\nA maioria nao sabe. Eu so descobri quando parei de fazer o que todo mundo faz.\n\n#reels #${productLabel.toLowerCase().replace(/\s+/g, '')} #conteudo #dica`
   }));
 
   const webQuery = buildSocialTrendQuery(
@@ -2155,45 +2165,84 @@ export async function generateScriptVariants(input: ScriptVariantInput) {
   );
 
   const prompt = await buildCreatorAiPrompt([
-    '=== MISSAO ===',
-    'Voce e um roteirista especialista em conteudo de alta performance para social media brasileiro.',
-    'Sua unica funcao aqui e criar roteiros que PRENDEM atencao, geram retencao e convertem.',
-    'NAO escreva texto de IA generica. Escreva como um creator real fala no video.',
+    '=== PAPEL ===',
+    'Voce e um creator brasileiro com mais de 1 milhao de seguidores.',
+    'Voce sabe fazer videos que as pessoas assistem ate o final, salvam e compartilham.',
+    'Voce NUNCA escreve propaganda. Voce cria conteudo que as pessoas querem ver.',
+    'Voce pensa como creator, storyteller e social media — nao como redator de publicidade.',
     '',
     '=== FORMATO DE RESPOSTA ===',
-    'Responda somente JSON valido.',
-    'Retorne exatamente um array com 3 objetos.',
+    'Responda somente JSON valido. Array com exatamente 3 objetos.',
     'Formato: [{"title":"","hook":"","spoken":"","takes":["","","","",""],"cta":"","caption":""}]',
     '',
-    '=== REGRAS INEGOCIAVEIS ===',
-    '1. HOOK: primeira frase do video. Deve prender em 3 segundos. Sem "ola", sem "hoje vou falar", sem apresentacao. Comeca direto na dor, provocacao, dado chocante ou situacao real.',
-    '2. SPOKEN: como a pessoa VAI FALAR no video. Linguagem oral, natural, com virgulas e pausas. Sem bullets, sem headers, sem linguagem escrita. Respeite o limite de palavras da duracao.',
-    '3. TAKES: 5 descricoes de cena/take para o editor. Cada take e uma instrucao visual curta, nao texto falado.',
-    '4. CTA: uma chamada unica, especifica e nao generica. Alinhada ao objetivo.',
-    '5. CAPTION: legenda pronta para postar. Abertura forte (nao repete o hook palavra por palavra), 2 a 4 linhas de valor, CTA, hashtags relevantes ao nicho.',
+    '=== MENTALIDADE AO ESCREVER ===',
+    'Antes de escrever, pergunte: "Uma pessoa real assistiria esse video ate o final?" Se a resposta nao for SIM imediato, reescreva.',
+    'O produto e a solucao natural da historia — nunca o centro dela.',
+    'A historia vem primeiro. O produto entra como revelacao, nao como apresentacao.',
+    'Seja especifico. "Perdi 6kg em 8 semanas sem cortar carboidrato" e melhor que "emagreci".',
+    'Crie tensao. Use "mas entao aconteceu algo que eu nao esperava" ou equivalente.',
     '',
-    '=== BRIEFING DO CLIENTE ===',
+    '=== REGRAS DO HOOK (PRIMEIROS 3 SEGUNDOS) ===',
+    'O hook e a unica frase que decide se a pessoa fica ou vai embora.',
+    'NUNCA comece com: pergunta ("Voce ja tentou?"), "Ola", "Hoje vou falar", saudacao ou apresentacao.',
+    'Formatos que funcionam (escolha um diferente por variacao):',
+    '  - Statement contrariante curto: "A maioria das pessoas faz isso errado."',
+    '  - Inicio de historia especifica: "Fiz [X] por [tempo] sem resultado. Ate descobrir [Y]."',
+    '  - Curiosity gap: "O que ninguem te conta sobre [tema]."',
+    '  - Dado surpreendente: "[numero ou fato inesperado] — e isso muda tudo."',
+    '  - Contraste/virada: "Parei de fazer [coisa obvia]. Resultado: [resultado inesperado]."',
+    '  - POV especifico: "POV: [situacao exata que o publico vive]"',
+    'Maximo 12 palavras. Sem ponto de interrogacao.',
+    '',
+    '=== REGRAS DO SPOKEN ===',
+    'Linguagem oral pura. Virgulas para pausas naturais. Ponto para parada completa.',
+    'Zero bullets, headers ou linguagem escrita.',
+    'PROIBIDO usar: "eu sei como e", "ja passei por isso", "o que mudou tudo foi quando", "produto incrivel".',
+    'Frases curtas. Ritmo de conversa. Como se estivesse contando para um amigo, nao gravando.',
+    'Respeite o limite de palavras da duracao.',
+    '',
+    '=== REGRAS DOS TAKES ===',
+    'Takes sao instrucoes VISUAIS para o editor, nao texto falado.',
+    'Cada take descreve o que a camera ve ou o que aparece na tela.',
+    'Exemplos: "Close no rosto, expressao de surpresa", "Corte para tela do celular com resultado", "Texto na tela: [frase]", "B-roll: produto em uso no dia a dia".',
+    '',
+    '=== REGRAS DA CAPTION ===',
+    'Abertura forte que complementa (nao repete) o hook.',
+    '2 a 4 linhas curtas de valor real.',
+    'CTA alinhado ao objetivo.',
+    'Hashtags relevantes ao nicho — especificas, nao genericas.',
+    '',
+    '=== BRIEFING ===',
     `Tipo de conteudo: ${contentTypeLabel}`,
-    input.subOption ? `Especificacao de formato: ${input.subOption}` : null,
+    input.subOption ? `Especificacao: ${input.subOption}` : null,
     `Duracao alvo: ${durationLabel}`,
-    `${toneLabel}`,
-    `${objectiveLabel}`,
-    isTrend ? 'MODO TREND ATIVO: identifique um formato viral recente (POV, antes/depois, expectativa vs realidade, rotina revelada, dueto imaginario, ranking, etc) e adapte o produto a esse formato. O formato trend define a ESTRUTURA do video, o produto entra naturalmente dentro dele. Cada uma das 3 variacoes deve usar um formato trend diferente.' : null,
-    input.pain ? `Dor que o produto resolve: ${input.pain}` : null,
-    input.benefit ? `Beneficio principal: ${input.benefit}` : null,
+    `Estilo e tom: ${toneLabel}`,
+    `Objetivo: ${objectiveLabel}`,
+    isTrend
+      ? 'MODO TREND ATIVO: identifique 3 formatos virais diferentes do momento (POV, antes/depois filmado, rotina revelada, expectativa vs realidade, ranking ironico, dueto imaginario, etc). Cada variacao usa um formato trend diferente. O formato define a ESTRUTURA — o produto entra naturalmente dentro dele. Priorize alcance e compartilhamento.'
+      : null,
+    input.pain ? `Dor central do publico: ${input.pain}` : null,
+    input.benefit ? `Transformacao que o produto entrega: ${input.benefit}` : null,
     input.targetAudience ? `Publico-alvo: ${input.targetAudience}` : null,
     input.productName ? `Produto: ${input.productName}` : null,
-    input.productContext ? `Contexto do produto (beneficios, publico, restricoes): ${input.productContext}` : null,
-    input.referenceContext ? `Referencias e temas em alta fornecidos: ${input.referenceContext}` : null,
-    input.prompt ? `Instrucao extra do usuario: ${input.prompt}` : null,
+    input.productContext ? `Contexto do produto: ${input.productContext}` : null,
+    input.referenceContext ? `Referencias adicionais: ${input.referenceContext}` : null,
+    input.prompt ? `Instrucao extra: ${input.prompt}` : null,
     '',
-    '=== 3 VARIACOES OBRIGATORIAS ===',
-    'Variacao 1 — GANCHO DE DOR: abre direto na dor ou problema do publico. Promessa de transformacao rapida. Tom mais proximo e empatico.',
-    'Variacao 2 — PROVA E BASTIDOR: abre com resultado real, caso concreto ou "fui testar e...". Mais credibilidade e menos sentimento.',
-    'Variacao 3 — CURIOSIDADE E CONTRASTE: abre com provocacao, dado surpresa ou contraste ("todo mundo faz X, mas o que funciona e Y"). Mais intriga e engajamento.',
+    '=== 3 VARIACOES OBRIGATORIAS (angulos completamente diferentes) ===',
+    isTrend
+      ? 'Variacao 1 — TREND FORMAT A: escolha um formato viral (ex: POV), adapte o produto a ele naturalmente.'
+      : 'Variacao 1 — HISTORIA PESSOAL: começa com uma situacao especifica e real. O produto e a revelacao no meio da historia, nao o final. A pessoa assiste pelo story, nao pelo produto.',
+    isTrend
+      ? 'Variacao 2 — TREND FORMAT B: escolha outro formato viral diferente (ex: antes/depois filmado), adapte.'
+      : 'Variacao 2 — DADO E CONTRASTE: abre com fato surpreendente ou contraste inesperado. Explica a logica por tras. O produto entra como prova, com resultado especifico.',
+    isTrend
+      ? 'Variacao 3 — TREND FORMAT C: escolha um terceiro formato viral (ex: rotina revelada ou ranking). Adapte.'
+      : 'Variacao 3 — CURIOSIDADE E EDUCACAO: abre com curiosity gap ou dado que intriga. Ensina algo util sobre o tema. O produto aparece como ferramenta, nao como solucao magica.',
     '',
-    'Cada variacao deve ter angulo, gancho e estrutura de cena completamente diferentes entre si.',
-    'Use referencias de trends e formatos virais do momento quando isso fortalecer o gancho ou a estrutura.'
+    'Cada variacao: hook diferente, estrutura diferente, tom ligeiramente diferente.',
+    'Use dados, referencias de trends e formatos virais captados na busca web quando fortalecerem o gancho.',
+    'Se nao houver dados reais disponiveis, invente uma historia verossimil especifica — nao generica.'
   ], webQuery);
 
   const parsed = parseStructuredResponse(await callProvider(prompt, { maxTokens: 3200 }), fallback);
