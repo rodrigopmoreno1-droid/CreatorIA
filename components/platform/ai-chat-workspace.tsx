@@ -21,7 +21,7 @@ import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { useSpeechCapture } from '@/hooks/use-speech-capture';
 import { cn } from '@/lib/utils';
-import type { AiConversation, AiMessage } from '@/types/platform';
+import type { AiConversation, AiMessage, ProductItem } from '@/types/platform';
 
 function makeConversationTitle(prompt: string) {
   return prompt.trim().replace(/\s+/g, ' ').slice(0, 42) || 'Nova conversa';
@@ -552,14 +552,570 @@ function ConversationRenameModal({
   );
 }
 
+// ─── Save-to-platform types ──────────────────────────────────────────────────
+
+type SaveAction = {
+  id: string;
+  label: string;
+  icon: string;
+  type: 'post' | 'product' | 'idea';
+  color: string;
+};
+
+type LocalPost = {
+  id: string;
+  title: string;
+  channel: 'Feed' | 'Reels' | 'Stories';
+  status: 'production' | 'ready' | 'scheduled' | 'posted';
+  scheduledFor: string;
+  caption: string;
+  imageUrl: string;
+  notes: string;
+  productId?: string;
+  productName?: string;
+  createdAt: string;
+};
+
+type ContentIdea = {
+  id: string;
+  title: string;
+  content: string;
+  format: string;
+  productId?: string;
+  productName?: string;
+  notes: string;
+  createdAt: string;
+};
+
+// ─── getSaveActions ───────────────────────────────────────────────────────────
+
+function getSaveActions(message: AiMessage): SaveAction[] {
+  const content = message.content.toLowerCase();
+  const actions: SaveAction[] = [];
+
+  if (/legenda|caption|hashtag|#|publicar|post|feed|stories|reels|agendar/.test(content) && content.length > 100) {
+    actions.push({
+      id: 'save-post',
+      label: 'Salvar em Postagens',
+      icon: '📅',
+      type: 'post',
+      color: 'bg-blue-50 text-blue-700 border-blue-200 hover:bg-blue-100'
+    });
+  }
+
+  if (
+    /produto|preço|público|benefício|público-alvo|dor|solução|oferta|restrição/.test(content) &&
+    /r\$|\d+[,\.]\d+|gratuito|grátis/.test(content)
+  ) {
+    actions.push({
+      id: 'save-product',
+      label: 'Criar produto',
+      icon: '📦',
+      type: 'product',
+      color: 'bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-100'
+    });
+  }
+
+  if (
+    /gancho|hook|roteiro|ideia|pauta|carrossel|stories|reels|conteúdo/.test(content) &&
+    (content.includes('\n') || content.length > 200)
+  ) {
+    actions.push({
+      id: 'save-idea',
+      label: 'Salvar ideia de conteúdo',
+      icon: '💡',
+      type: 'idea',
+      color: 'bg-amber-50 text-amber-700 border-amber-200 hover:bg-amber-100'
+    });
+  }
+
+  return actions;
+}
+
+// ─── localStorage helpers ─────────────────────────────────────────────────────
+
+function loadLocalPosts(workspace: string): LocalPost[] {
+  if (typeof window === 'undefined') return [];
+  try {
+    const raw = localStorage.getItem(`creatorai:posts:${workspace}`);
+    return raw ? (JSON.parse(raw) as LocalPost[]) : [];
+  } catch {
+    return [];
+  }
+}
+
+function saveLocalPosts(workspace: string, posts: LocalPost[]) {
+  try {
+    localStorage.setItem(`creatorai:posts:${workspace}`, JSON.stringify(posts));
+  } catch {
+    // ignore
+  }
+}
+
+function loadContentIdeas(workspace: string): ContentIdea[] {
+  if (typeof window === 'undefined') return [];
+  try {
+    const raw = localStorage.getItem(`creatorai:content-ideas:${workspace}`);
+    return raw ? (JSON.parse(raw) as ContentIdea[]) : [];
+  } catch {
+    return [];
+  }
+}
+
+function saveContentIdeas(workspace: string, ideas: ContentIdea[]) {
+  try {
+    localStorage.setItem(`creatorai:content-ideas:${workspace}`, JSON.stringify(ideas));
+  } catch {
+    // ignore
+  }
+}
+
+// ─── SavePostModal ────────────────────────────────────────────────────────────
+
+function SavePostModal({
+  message,
+  workspace,
+  onClose
+}: {
+  message: AiMessage;
+  workspace: string;
+  onClose: () => void;
+}) {
+  const firstLine = message.content.split('\n').find((l) => l.trim()) ?? 'Post sem título';
+  const [title, setTitle] = useState(firstLine.slice(0, 80));
+  const [channel, setChannel] = useState<'Feed' | 'Reels' | 'Stories'>('Feed');
+  const [status, setStatus] = useState<'production' | 'ready' | 'scheduled' | 'posted'>('production');
+  const [scheduledFor, setScheduledFor] = useState(new Date().toISOString().slice(0, 10));
+  const [caption, setCaption] = useState(message.content);
+  const [notes, setNotes] = useState('');
+
+  function handleSave() {
+    const post: LocalPost = {
+      id: crypto.randomUUID(),
+      title: title.trim() || 'Post sem título',
+      channel,
+      status,
+      scheduledFor,
+      caption,
+      imageUrl: '',
+      notes,
+      createdAt: new Date().toISOString()
+    };
+    const existing = loadLocalPosts(workspace);
+    saveLocalPosts(workspace, [...existing, post]);
+    toast.success('Post salvo em Postagens!');
+    onClose();
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-[rgba(15,23,42,0.34)] p-4 backdrop-blur-sm">
+      <div className="w-full max-w-lg rounded-[28px] border border-border bg-white shadow-[0_30px_90px_rgba(15,23,42,0.18)]">
+        <div className="flex items-start gap-3 border-b border-border px-5 py-4">
+          <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl border border-blue-200 bg-blue-50 text-blue-600 text-xl">
+            📅
+          </div>
+          <div className="min-w-0">
+            <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-muted-foreground">Salvar em Postagens</p>
+            <h3 className="mt-1 text-lg font-semibold text-foreground">Nova postagem</h3>
+          </div>
+        </div>
+
+        <div className="max-h-[60vh] space-y-3 overflow-y-auto px-5 py-4">
+          <div className="space-y-1.5">
+            <label className="text-[12px] font-medium text-foreground">Título</label>
+            <input
+              value={title}
+              onChange={(e) => setTitle(e.target.value)}
+              className="w-full rounded-[14px] border border-border bg-muted/20 px-3 py-2 text-[13px] text-foreground outline-none focus:ring-2 focus:ring-foreground/10"
+            />
+          </div>
+
+          <div className="grid grid-cols-2 gap-3">
+            <div className="space-y-1.5">
+              <label className="text-[12px] font-medium text-foreground">Canal</label>
+              <select
+                value={channel}
+                onChange={(e) => setChannel(e.target.value as 'Feed' | 'Reels' | 'Stories')}
+                className="w-full rounded-[14px] border border-border bg-muted/20 px-3 py-2 text-[13px] text-foreground outline-none focus:ring-2 focus:ring-foreground/10"
+              >
+                <option value="Feed">Feed</option>
+                <option value="Reels">Reels</option>
+                <option value="Stories">Stories</option>
+              </select>
+            </div>
+
+            <div className="space-y-1.5">
+              <label className="text-[12px] font-medium text-foreground">Status</label>
+              <select
+                value={status}
+                onChange={(e) => setStatus(e.target.value as 'production' | 'ready' | 'scheduled' | 'posted')}
+                className="w-full rounded-[14px] border border-border bg-muted/20 px-3 py-2 text-[13px] text-foreground outline-none focus:ring-2 focus:ring-foreground/10"
+              >
+                <option value="production">Em produção</option>
+                <option value="ready">Pronto</option>
+                <option value="scheduled">Agendado</option>
+                <option value="posted">Publicado</option>
+              </select>
+            </div>
+          </div>
+
+          <div className="space-y-1.5">
+            <label className="text-[12px] font-medium text-foreground">Data</label>
+            <input
+              type="date"
+              value={scheduledFor}
+              onChange={(e) => setScheduledFor(e.target.value)}
+              className="w-full rounded-[14px] border border-border bg-muted/20 px-3 py-2 text-[13px] text-foreground outline-none focus:ring-2 focus:ring-foreground/10"
+            />
+          </div>
+
+          <div className="space-y-1.5">
+            <label className="text-[12px] font-medium text-foreground">Legenda</label>
+            <textarea
+              value={caption}
+              onChange={(e) => setCaption(e.target.value)}
+              rows={5}
+              className="w-full resize-none rounded-[14px] border border-border bg-muted/20 px-3 py-2 text-[13px] text-foreground outline-none focus:ring-2 focus:ring-foreground/10"
+            />
+          </div>
+
+          <div className="space-y-1.5">
+            <label className="text-[12px] font-medium text-foreground">Notas</label>
+            <textarea
+              value={notes}
+              onChange={(e) => setNotes(e.target.value)}
+              rows={2}
+              className="w-full resize-none rounded-[14px] border border-border bg-muted/20 px-3 py-2 text-[13px] text-foreground outline-none focus:ring-2 focus:ring-foreground/10"
+            />
+          </div>
+        </div>
+
+        <div className="flex items-center justify-end gap-2 border-t border-border px-5 py-4">
+          <Button variant="outline" onClick={onClose}>
+            Cancelar
+          </Button>
+          <Button onClick={handleSave}>Salvar postagem</Button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── SaveIdeaModal ────────────────────────────────────────────────────────────
+
+function SaveIdeaModal({
+  message,
+  workspace,
+  products,
+  onClose
+}: {
+  message: AiMessage;
+  workspace: string;
+  products: ProductItem[];
+  onClose: () => void;
+}) {
+  const firstLine = message.content.split('\n').find((l) => l.trim()) ?? 'Ideia de conteúdo';
+  const [title, setTitle] = useState(firstLine.slice(0, 80));
+  const [content, setContent] = useState(message.content);
+  const [format, setFormat] = useState('Reels');
+  const [productId, setProductId] = useState('');
+  const [notes, setNotes] = useState('');
+
+  function handleSave() {
+    const selectedProduct = products.find((p) => p.id === productId);
+    const idea: ContentIdea = {
+      id: crypto.randomUUID(),
+      title: title.trim() || 'Ideia de conteúdo',
+      content,
+      format,
+      productId: selectedProduct?.id,
+      productName: selectedProduct?.name,
+      notes,
+      createdAt: new Date().toISOString()
+    };
+    const existing = loadContentIdeas(workspace);
+    saveContentIdeas(workspace, [...existing, idea]);
+    toast.success('Ideia salva!');
+    onClose();
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-[rgba(15,23,42,0.34)] p-4 backdrop-blur-sm">
+      <div className="w-full max-w-lg rounded-[28px] border border-border bg-white shadow-[0_30px_90px_rgba(15,23,42,0.18)]">
+        <div className="flex items-start gap-3 border-b border-border px-5 py-4">
+          <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl border border-amber-200 bg-amber-50 text-amber-600 text-xl">
+            💡
+          </div>
+          <div className="min-w-0">
+            <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-muted-foreground">Salvar ideia de conteúdo</p>
+            <h3 className="mt-1 text-lg font-semibold text-foreground">Nova ideia</h3>
+          </div>
+        </div>
+
+        <div className="max-h-[60vh] space-y-3 overflow-y-auto px-5 py-4">
+          <div className="space-y-1.5">
+            <label className="text-[12px] font-medium text-foreground">Título da ideia</label>
+            <input
+              value={title}
+              onChange={(e) => setTitle(e.target.value)}
+              className="w-full rounded-[14px] border border-border bg-muted/20 px-3 py-2 text-[13px] text-foreground outline-none focus:ring-2 focus:ring-foreground/10"
+            />
+          </div>
+
+          <div className="space-y-1.5">
+            <label className="text-[12px] font-medium text-foreground">Conteúdo</label>
+            <textarea
+              value={content}
+              onChange={(e) => setContent(e.target.value)}
+              rows={5}
+              className="w-full resize-none rounded-[14px] border border-border bg-muted/20 px-3 py-2 text-[13px] text-foreground outline-none focus:ring-2 focus:ring-foreground/10"
+            />
+          </div>
+
+          <div className="grid grid-cols-2 gap-3">
+            <div className="space-y-1.5">
+              <label className="text-[12px] font-medium text-foreground">Formato</label>
+              <select
+                value={format}
+                onChange={(e) => setFormat(e.target.value)}
+                className="w-full rounded-[14px] border border-border bg-muted/20 px-3 py-2 text-[13px] text-foreground outline-none focus:ring-2 focus:ring-foreground/10"
+              >
+                <option value="Reels">Reels</option>
+                <option value="Stories">Stories</option>
+                <option value="Carrossel">Carrossel</option>
+                <option value="Post">Post</option>
+                <option value="Outro">Outro</option>
+              </select>
+            </div>
+
+            <div className="space-y-1.5">
+              <label className="text-[12px] font-medium text-foreground">Produto relacionado</label>
+              {products.length > 0 ? (
+                <select
+                  value={productId}
+                  onChange={(e) => setProductId(e.target.value)}
+                  className="w-full rounded-[14px] border border-border bg-muted/20 px-3 py-2 text-[13px] text-foreground outline-none focus:ring-2 focus:ring-foreground/10"
+                >
+                  <option value="">Nenhum</option>
+                  {products.map((p) => (
+                    <option key={p.id} value={p.id}>
+                      {p.name}
+                    </option>
+                  ))}
+                </select>
+              ) : (
+                <input
+                  value={productId}
+                  onChange={(e) => setProductId(e.target.value)}
+                  placeholder="Nome do produto"
+                  className="w-full rounded-[14px] border border-border bg-muted/20 px-3 py-2 text-[13px] text-foreground outline-none focus:ring-2 focus:ring-foreground/10"
+                />
+              )}
+            </div>
+          </div>
+
+          <div className="space-y-1.5">
+            <label className="text-[12px] font-medium text-foreground">Notas</label>
+            <textarea
+              value={notes}
+              onChange={(e) => setNotes(e.target.value)}
+              rows={2}
+              className="w-full resize-none rounded-[14px] border border-border bg-muted/20 px-3 py-2 text-[13px] text-foreground outline-none focus:ring-2 focus:ring-foreground/10"
+            />
+          </div>
+        </div>
+
+        <div className="flex items-center justify-end gap-2 border-t border-border px-5 py-4">
+          <Button variant="outline" onClick={onClose}>
+            Cancelar
+          </Button>
+          <Button onClick={handleSave}>Salvar ideia</Button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── SaveProductModal ─────────────────────────────────────────────────────────
+
+function SaveProductModal({
+  message,
+  workspace,
+  onClose
+}: {
+  message: AiMessage;
+  workspace: string;
+  onClose: () => void;
+}) {
+  const [name, setName] = useState('');
+  const [benefits, setBenefits] = useState('');
+  const [audience, setAudience] = useState('');
+  const [price, setPrice] = useState('');
+  const [discountPrice, setDiscountPrice] = useState('');
+  const [restrictions, setRestrictions] = useState('');
+  const [pain, setPain] = useState('');
+  const [benefit, setBenefit] = useState('');
+  const [isSaving, setIsSaving] = useState(false);
+
+  // Attempt to pre-fill benefits from the message
+  useEffect(() => {
+    const benefitsMatch = message.content.match(/benef[íi]ci[oa]s?[:\s]+([^\n]+)/i);
+    if (benefitsMatch?.[1]) setBenefits(benefitsMatch[1].trim());
+    const audienceMatch = message.content.match(/p[úu]blico(?:-alvo)?[:\s]+([^\n]+)/i);
+    if (audienceMatch?.[1]) setAudience(audienceMatch[1].trim());
+    const painMatch = message.content.match(/dor[:\s]+([^\n]+)/i);
+    if (painMatch?.[1]) setPain(painMatch[1].trim());
+  }, [message.content]);
+
+  async function handleSave() {
+    if (!name.trim()) {
+      toast.error('Nome do produto é obrigatório.');
+      return;
+    }
+    setIsSaving(true);
+    try {
+      const response = await fetch(`/api/workspaces/${workspace}/products`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ name: name.trim(), benefits, audience, price, discountPrice, restrictions, pain, benefit })
+      });
+      if (!response.ok) {
+        const payload = (await response.json().catch(() => null)) as { error?: string } | null;
+        throw new Error(payload?.error ?? 'Não foi possível criar o produto.');
+      }
+      toast.success('Produto criado!');
+      onClose();
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : 'Não foi possível criar o produto.';
+      toast.error(msg);
+    } finally {
+      setIsSaving(false);
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-[rgba(15,23,42,0.34)] p-4 backdrop-blur-sm">
+      <div className="w-full max-w-lg rounded-[28px] border border-border bg-white shadow-[0_30px_90px_rgba(15,23,42,0.18)]">
+        <div className="flex items-start gap-3 border-b border-border px-5 py-4">
+          <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl border border-emerald-200 bg-emerald-50 text-emerald-600 text-xl">
+            📦
+          </div>
+          <div className="min-w-0">
+            <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-muted-foreground">Criar produto</p>
+            <h3 className="mt-1 text-lg font-semibold text-foreground">Novo produto</h3>
+          </div>
+        </div>
+
+        <div className="max-h-[60vh] space-y-3 overflow-y-auto px-5 py-4">
+          <div className="space-y-1.5">
+            <label className="text-[12px] font-medium text-foreground">
+              Nome do produto <span className="text-rose-500">*</span>
+            </label>
+            <input
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              placeholder="Ex.: Mentoria Emagrecimento Acelerado"
+              className="w-full rounded-[14px] border border-border bg-muted/20 px-3 py-2 text-[13px] text-foreground outline-none focus:ring-2 focus:ring-foreground/10"
+            />
+          </div>
+
+          <div className="space-y-1.5">
+            <label className="text-[12px] font-medium text-foreground">Benefícios</label>
+            <textarea
+              value={benefits}
+              onChange={(e) => setBenefits(e.target.value)}
+              rows={3}
+              className="w-full resize-none rounded-[14px] border border-border bg-muted/20 px-3 py-2 text-[13px] text-foreground outline-none focus:ring-2 focus:ring-foreground/10"
+            />
+          </div>
+
+          <div className="space-y-1.5">
+            <label className="text-[12px] font-medium text-foreground">Público-alvo</label>
+            <textarea
+              value={audience}
+              onChange={(e) => setAudience(e.target.value)}
+              rows={2}
+              className="w-full resize-none rounded-[14px] border border-border bg-muted/20 px-3 py-2 text-[13px] text-foreground outline-none focus:ring-2 focus:ring-foreground/10"
+            />
+          </div>
+
+          <div className="grid grid-cols-2 gap-3">
+            <div className="space-y-1.5">
+              <label className="text-[12px] font-medium text-foreground">Preço</label>
+              <input
+                value={price}
+                onChange={(e) => setPrice(e.target.value)}
+                placeholder="R$ 0,00"
+                className="w-full rounded-[14px] border border-border bg-muted/20 px-3 py-2 text-[13px] text-foreground outline-none focus:ring-2 focus:ring-foreground/10"
+              />
+            </div>
+            <div className="space-y-1.5">
+              <label className="text-[12px] font-medium text-foreground">Preço com desconto</label>
+              <input
+                value={discountPrice}
+                onChange={(e) => setDiscountPrice(e.target.value)}
+                placeholder="R$ 0,00"
+                className="w-full rounded-[14px] border border-border bg-muted/20 px-3 py-2 text-[13px] text-foreground outline-none focus:ring-2 focus:ring-foreground/10"
+              />
+            </div>
+          </div>
+
+          <div className="space-y-1.5">
+            <label className="text-[12px] font-medium text-foreground">Restrições</label>
+            <textarea
+              value={restrictions}
+              onChange={(e) => setRestrictions(e.target.value)}
+              rows={2}
+              className="w-full resize-none rounded-[14px] border border-border bg-muted/20 px-3 py-2 text-[13px] text-foreground outline-none focus:ring-2 focus:ring-foreground/10"
+            />
+          </div>
+
+          <div className="grid grid-cols-2 gap-3">
+            <div className="space-y-1.5">
+              <label className="text-[12px] font-medium text-foreground">Dor que resolve</label>
+              <input
+                value={pain}
+                onChange={(e) => setPain(e.target.value)}
+                className="w-full rounded-[14px] border border-border bg-muted/20 px-3 py-2 text-[13px] text-foreground outline-none focus:ring-2 focus:ring-foreground/10"
+              />
+            </div>
+            <div className="space-y-1.5">
+              <label className="text-[12px] font-medium text-foreground">Benefício principal</label>
+              <input
+                value={benefit}
+                onChange={(e) => setBenefit(e.target.value)}
+                className="w-full rounded-[14px] border border-border bg-muted/20 px-3 py-2 text-[13px] text-foreground outline-none focus:ring-2 focus:ring-foreground/10"
+              />
+            </div>
+          </div>
+        </div>
+
+        <div className="flex items-center justify-end gap-2 border-t border-border px-5 py-4">
+          <Button variant="outline" onClick={onClose} disabled={isSaving}>
+            Cancelar
+          </Button>
+          <Button onClick={() => void handleSave()} disabled={isSaving || !name.trim()}>
+            {isSaving ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
+            Criar produto
+          </Button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── AiChatWorkspace ──────────────────────────────────────────────────────────
+
 export function AiChatWorkspace({
   workspace,
+  products = [],
   initialConversations = [],
   initialTrashedConversations = [],
   initialConversationId = null,
   initialMessages = []
 }: {
   workspace: string;
+  products?: ProductItem[];
   initialConversations?: AiConversation[];
   initialTrashedConversations?: AiConversation[];
   initialConversationId?: string | null;
@@ -579,7 +1135,12 @@ export function AiChatWorkspace({
   const [trashOpen, setTrashOpen] = useState(false);
   const [pendingDelete, setPendingDelete] = useState<{ conversation: AiConversation; mode: 'trash' | 'permanent' } | null>(null);
   const [pendingRename, setPendingRename] = useState<AiConversation | null>(null);
+  const [saveModal, setSaveModal] = useState<{ action: SaveAction; message: AiMessage } | null>(null);
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
+
+  function openSaveModal(action: SaveAction, message: AiMessage) {
+    setSaveModal({ action, message });
+  }
 
   const voiceCapture = useSpeechCapture({
     onTranscript: async (text) => {
@@ -1160,19 +1721,40 @@ export function AiChatWorkspace({
                           )}
 
                           {isAssistant ? (
-                            <div className="mt-3 flex flex-wrap gap-2">
-                              {getSuggestedActions(message, messages).map((action) => (
-                                <button
-                                  key={action.label}
-                                  type="button"
-                                  onClick={() => submitPrompt(action.prompt)}
-                                  disabled={isMutationLocked || isComposerLocked}
-                                  className="inline-flex h-8 items-center rounded-full border border-border bg-muted/30 px-3 text-[11px] font-medium text-muted-foreground transition hover:bg-muted disabled:pointer-events-none disabled:opacity-50"
-                                >
-                                  {action.label}
-                                </button>
-                              ))}
-                            </div>
+                            <>
+                              <div className="mt-3 flex flex-wrap gap-2">
+                                {getSuggestedActions(message, messages).map((action) => (
+                                  <button
+                                    key={action.label}
+                                    type="button"
+                                    onClick={() => submitPrompt(action.prompt)}
+                                    disabled={isMutationLocked || isComposerLocked}
+                                    className="inline-flex h-8 items-center rounded-full border border-border bg-muted/30 px-3 text-[11px] font-medium text-muted-foreground transition hover:bg-muted disabled:pointer-events-none disabled:opacity-50"
+                                  >
+                                    {action.label}
+                                  </button>
+                                ))}
+                              </div>
+
+                              {getSaveActions(message).length > 0 && (
+                                <div className="mt-1.5 flex flex-wrap gap-1.5">
+                                  {getSaveActions(message).map((action) => (
+                                    <button
+                                      key={action.id}
+                                      type="button"
+                                      onClick={() => openSaveModal(action, message)}
+                                      className={cn(
+                                        'inline-flex items-center gap-1 rounded-full border px-2.5 py-1 text-[11px] font-medium transition',
+                                        action.color
+                                      )}
+                                    >
+                                      <span>{action.icon}</span>
+                                      {action.label}
+                                    </button>
+                                  ))}
+                                </div>
+                              )}
+                            </>
                           ) : null}
                         </div>
 
@@ -1295,6 +1877,31 @@ export function AiChatWorkspace({
         }}
         processing={deletingConversationId === pendingDelete?.conversation.id}
       />
+
+      {saveModal?.action.type === 'post' && (
+        <SavePostModal
+          message={saveModal.message}
+          workspace={workspace}
+          onClose={() => setSaveModal(null)}
+        />
+      )}
+
+      {saveModal?.action.type === 'idea' && (
+        <SaveIdeaModal
+          message={saveModal.message}
+          workspace={workspace}
+          products={products}
+          onClose={() => setSaveModal(null)}
+        />
+      )}
+
+      {saveModal?.action.type === 'product' && (
+        <SaveProductModal
+          message={saveModal.message}
+          workspace={workspace}
+          onClose={() => setSaveModal(null)}
+        />
+      )}
     </div>
   );
 }

@@ -1,15 +1,10 @@
-import { SimpleModuleShell } from '@/components/platform/simple-module-shell';
+import { CompetitorsWorkspace } from '@/components/platform/competitors-workspace';
 
-export default function CompetitorsPage() {
-  return (
-    <SimpleModuleShell
-      eyebrow="Concorrentes"
-      title="Mapa de referencias"
-      highlights={[
-        'Anotacoes e repertorio visual do que performa melhor.',
-        'Espaco para insights curtos e sem ruido.',
-        'Preparado para crescer com IA depois.'
-      ]}
-    />
-  );
+export default async function CompetitorsPage({
+  params
+}: {
+  params: Promise<{ workspace: string }>;
+}) {
+  const { workspace } = await params;
+  return <CompetitorsWorkspace workspace={workspace} />;
 }
