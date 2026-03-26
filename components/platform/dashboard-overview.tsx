@@ -3,6 +3,7 @@ import { Bot, CalendarDays, ChevronRight, Package, PenSquare, Video } from 'luci
 
 import { Card, CardContent } from '@/components/ui/card';
 import { PageIntro } from '@/components/platform/page-intro';
+import { cn } from '@/lib/utils';
 import type { ProductItem, RecordingCard, ScriptItem } from '@/types/platform';
 
 function formatCount(value: number) {
@@ -128,6 +129,57 @@ export function DashboardOverview({
           </CardContent>
         </Card>
       </div>
+
+      {(() => {
+        const pipelineStages = [
+          { key: 'draft', label: 'Rascunho', count: scripts.filter(s => s.status === 'draft').length, color: 'bg-zinc-100 text-zinc-600 border-zinc-200', dot: 'bg-zinc-400', href: `/${workspace}/scripts` },
+          { key: 'approved', label: 'Aprovado', count: scripts.filter(s => s.status === 'approved').length, color: 'bg-emerald-50 text-emerald-700 border-emerald-200', dot: 'bg-emerald-500', href: `/${workspace}/scripts` },
+          { key: 'production', label: 'Em produção', count: scripts.filter(s => s.status === 'production').length, color: 'bg-amber-50 text-amber-700 border-amber-200', dot: 'bg-amber-500', href: `/${workspace}/recordings` },
+          { key: 'recording', label: 'Gravando', count: scripts.filter(s => s.status === 'recording').length, color: 'bg-rose-50 text-rose-700 border-rose-200', dot: 'bg-rose-500', href: `/${workspace}/recordings` },
+          { key: 'drive', label: 'No Drive', count: scripts.filter(s => s.status === 'drive').length, color: 'bg-sky-50 text-sky-700 border-sky-200', dot: 'bg-sky-500', href: `/${workspace}/recordings` },
+          { key: 'editing', label: 'Em edição', count: scripts.filter(s => s.status === 'editing').length, color: 'bg-purple-50 text-purple-700 border-purple-200', dot: 'bg-purple-500', href: `/${workspace}/recordings` },
+          { key: 'edited', label: 'Editado', count: scripts.filter(s => s.status === 'edited').length, color: 'bg-indigo-50 text-indigo-700 border-indigo-200', dot: 'bg-indigo-500', href: `/${workspace}/recordings` },
+          { key: 'scheduled', label: 'Agendado', count: scripts.filter(s => s.status === 'scheduled').length, color: 'bg-blue-50 text-blue-700 border-blue-200', dot: 'bg-blue-500', href: `/${workspace}/posts` },
+          { key: 'posted', label: 'Postado', count: scripts.filter(s => s.status === 'posted').length, color: 'bg-slate-100 text-slate-600 border-slate-200', dot: 'bg-slate-400', href: `/${workspace}/posts` },
+        ];
+
+        return (
+          <Card className="rounded-[24px] border-border/90 bg-white/95">
+            <CardContent className="p-4 lg:p-5">
+              <div className="mb-4 flex items-center justify-between">
+                <div>
+                  <p className="text-[10px] font-semibold uppercase tracking-[0.24em] text-muted-foreground">Fluxo de conteúdo</p>
+                  <h3 className="mt-1 text-sm font-semibold text-foreground">Pipeline completo</h3>
+                </div>
+                <p className="text-[13px] text-muted-foreground">{scripts.length} peças no total</p>
+              </div>
+              <div className="flex items-center gap-0 overflow-x-auto pb-2">
+                {pipelineStages.map((stage, index) => (
+                  <div key={stage.key} className="flex shrink-0 items-center">
+                    <Link
+                      href={stage.href as any}
+                      className={cn(
+                        'flex flex-col items-center rounded-[16px] border px-3 py-2.5 transition hover:opacity-80',
+                        stage.color,
+                        stage.count === 0 && 'opacity-40'
+                      )}
+                    >
+                      <div className="flex items-center gap-1.5">
+                        <div className={cn('h-2 w-2 rounded-full', stage.dot)} />
+                        <span className="whitespace-nowrap text-[11px] font-medium">{stage.label}</span>
+                      </div>
+                      <span className="mt-1.5 text-[22px] font-semibold leading-none">{stage.count}</span>
+                    </Link>
+                    {index < pipelineStages.length - 1 && (
+                      <span className="mx-1 shrink-0 text-[13px] text-muted-foreground/50">→</span>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </CardContent>
+          </Card>
+        );
+      })()}
     </div>
   );
 }

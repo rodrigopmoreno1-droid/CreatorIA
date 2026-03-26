@@ -1546,6 +1546,7 @@ export function PostsWorkspace({
   const [draggingScriptId, setDraggingScriptId] = useState<string | null>(null);
   const [dragOverDate, setDragOverDate] = useState<string | null>(null);
   const [plannerOpen, setPlannerOpen] = useState(false);
+  const [schedulingDates, setSchedulingDates] = useState<Record<string, string>>({});
   const batchStatusRef = useRef<Map<string, PlannerBatchItem['status']>>(new Map(plannerBatches.map((batch) => [batch.id, batch.status])));
 
   const activeBatches = useMemo(
@@ -1711,6 +1712,23 @@ export function PostsWorkspace({
       toast.error(error instanceof Error ? error.message : 'Não foi possível iniciar o cronograma.');
     } finally {
       setPlannerSubmitting(false);
+    }
+  }
+
+  async function handleScheduleScript(scriptId: string, scheduledFor: string) {
+    try {
+      const res = await fetch(`/api/workspaces/${workspace}/scripts/${scriptId}`, {
+        method: 'PATCH',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ status: 'scheduled', scheduledFor })
+      });
+      if (!res.ok) throw new Error();
+      setScriptsState(current =>
+        current.map(s => s.id === scriptId ? { ...s, status: 'scheduled', scheduledFor } : s)
+      );
+      toast.success('Conteúdo agendado!');
+    } catch {
+      toast.error('Erro ao agendar.');
     }
   }
 
@@ -1894,6 +1912,11 @@ export function PostsWorkspace({
   const draftScripts = useMemo(
     () => filteredScripts.filter((script) => script.status === 'draft').sort((left, right) => right.updatedAt.localeCompare(left.updatedAt)),
     [filteredScripts]
+  );
+
+  const editedScripts = useMemo(
+    () => scriptsState.filter((script) => script.status === 'edited').sort((left, right) => right.updatedAt.localeCompare(left.updatedAt)),
+    [scriptsState]
   );
 
   const statusCounts = useMemo(() => {
@@ -2131,6 +2154,59 @@ export function PostsWorkspace({
 
               {activeTab === 'Rascunhos' ? (
                 <>
+                  {editedScripts.length > 0 && (
+                    <div className="mb-5">
+                      <div className="mb-3 flex items-center gap-2">
+                        <div className="h-2 w-2 rounded-full bg-indigo-500" />
+                        <p className="text-xs font-semibold text-zinc-700">
+                          Prontos para agendar
+                        </p>
+                        <span className="rounded-full bg-indigo-100 px-1.5 py-0.5 text-[10px] font-medium text-indigo-700">
+                          {editedScripts.length}
+                        </span>
+                      </div>
+                      <div className="space-y-2">
+                        {editedScripts.map((script) => (
+                          <div
+                            key={script.id}
+                            className="flex flex-wrap items-center gap-3 rounded-xl border border-indigo-100 bg-indigo-50/60 p-3"
+                          >
+                            <div className="min-w-0 flex-1">
+                              <p className="truncate text-sm font-medium text-zinc-800">{script.title}</p>
+                              <div className="mt-1 flex flex-wrap items-center gap-1.5">
+                                <span className={cn('rounded-full border px-2 py-0.5 text-[10px] font-medium', getContentFormatBadgeClass(script.contentType))}>
+                                  {getContentFormatLabel(script.contentType)}
+                                </span>
+                                {script.productName ? (
+                                  <span className="text-[10px] text-violet-600">{script.productName}</span>
+                                ) : null}
+                              </div>
+                            </div>
+                            <div className="flex shrink-0 items-center gap-2">
+                              <input
+                                type="date"
+                                value={schedulingDates[script.id] ?? ''}
+                                onChange={(e) => setSchedulingDates((current) => ({ ...current, [script.id]: e.target.value }))}
+                                className="rounded-lg border border-zinc-200 bg-white px-2 py-1.5 text-xs text-zinc-700 focus:outline-none focus:ring-2 focus:ring-indigo-200"
+                              />
+                              <button
+                                type="button"
+                                disabled={!schedulingDates[script.id]}
+                                onClick={() => {
+                                  const date = schedulingDates[script.id];
+                                  if (date) void handleScheduleScript(script.id, date);
+                                }}
+                                className="rounded-lg border border-indigo-200 bg-indigo-600 px-3 py-1.5 text-[12px] font-medium text-white transition hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-40"
+                              >
+                                Agendar
+                              </button>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                      <div className="mt-4 border-t border-zinc-100" />
+                    </div>
+                  )}
                   <div className="mb-3 flex items-center justify-between">
                     <p className="text-xs font-semibold text-zinc-500">
                       {draftScripts.length} rascunho{draftScripts.length !== 1 ? 's' : ''}

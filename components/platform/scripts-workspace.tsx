@@ -432,6 +432,23 @@ export function ScriptsWorkspace({
     }
   }
 
+  async function handleQuickAdvance(scriptId: string, newStatus: string) {
+    try {
+      const res = await fetch(`/api/workspaces/${workspace}/scripts/${scriptId}`, {
+        method: 'PATCH',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ status: newStatus })
+      });
+      if (!res.ok) throw new Error('Falha ao atualizar status');
+      setScripts(current =>
+        current.map(s => s.id === scriptId ? { ...s, status: newStatus as any } : s)
+      );
+      toast.success(newStatus === 'approved' ? 'Roteiro aprovado!' : 'Enviado para produção!');
+    } catch {
+      toast.error('Erro ao atualizar status.');
+    }
+  }
+
   async function updateScript(script: EditableScriptDraft) {
     setBusyScriptId(script.id);
     try {
@@ -910,6 +927,16 @@ export function ScriptsWorkspace({
                             <PencilLine className="h-3.5 w-3.5" />
                             Editar
                           </Button>
+                          {script.status === 'approved' && (
+                            <button
+                              type="button"
+                              onClick={() => handleQuickAdvance(script.id, 'production')}
+                              disabled={isBusy}
+                              className="inline-flex items-center gap-1 rounded-lg border border-blue-200 bg-blue-50 px-2.5 py-1.5 text-[12px] font-medium text-blue-700 transition hover:bg-blue-100 disabled:opacity-40"
+                            >
+                              → Produção
+                            </button>
+                          )}
                         </>
                       )}
                     </div>
