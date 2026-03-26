@@ -1,6 +1,3 @@
-import mammoth from 'mammoth';
-import { PDFParse } from 'pdf-parse';
-
 import { createSupabaseAdminClient } from '@/lib/supabase/admin';
 import { PRODUCT_IMPORT_BUCKET } from '@/lib/product-import-storage';
 
@@ -1028,6 +1025,7 @@ function buildAnthropicImportContent(file: ResolvedProductImportFile, prompt: st
 }
 
 async function extractPdfImportData(buffer: Buffer) {
+  const { PDFParse } = await import('pdf-parse');
   const parser = new PDFParse({ data: buffer });
 
   try {
@@ -1161,6 +1159,7 @@ async function resolveProductImportFile(file?: ProductImportInput['file']): Prom
     }
 
     if (isDocxImportFile(file.mimeType, fileName)) {
+      const mammoth = await import('mammoth');
       const result = await mammoth.extractRawText({ buffer });
 
       if (result.value?.trim()) {
