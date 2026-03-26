@@ -77,6 +77,7 @@ type ScriptMetadata = {
   carrosselSlides?: CarrosselSlide[];
   postFields?: PostFields;
   assignee?: string;
+  blockType?: string;
 };
 
 type WorkspaceDataAccess = {
@@ -210,6 +211,7 @@ export function parseScriptMetadata(storyboard: unknown): ScriptMetadata {
       carrosselSlides: Array.isArray(raw.carrosselSlides) ? (raw.carrosselSlides as CarrosselSlide[]) : [],
       postFields: (raw.postFields && typeof raw.postFields === 'object') ? (raw.postFields as PostFields) : undefined,
       assignee: normalizeString(raw.assignee) || undefined,
+      blockType: normalizeString(raw.blockType) || undefined,
       contentType: normalizeString(raw.contentType) || undefined,
       subOption: normalizeString(raw.subOption) || undefined
     };

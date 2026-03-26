@@ -111,6 +111,7 @@ export type RecordingCard = {
   contentType: string;
   productName?: string;
   assignee?: string;
+  blockType?: string;
   column: RecordingColumnKey;
   order: number;
   notes: string;

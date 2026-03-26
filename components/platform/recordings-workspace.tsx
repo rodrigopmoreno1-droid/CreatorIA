@@ -1,14 +1,17 @@
 "use client";
 
-import { useMemo, useState } from 'react';
+import { Fragment, useMemo, useState } from 'react';
 import {
   closestCorners,
   DndContext,
+  DragOverlay,
   PointerSensor,
   useDroppable,
   useSensor,
   useSensors,
-  type DragEndEvent
+  type DragEndEvent,
+  type DragOverEvent,
+  type DragStartEvent
 } from '@dnd-kit/core';
 import {
   SortableContext,
@@ -25,19 +28,12 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { PageIntro } from '@/components/platform/page-intro';
+import { getContentFormatBadgeClass, getContentFormatLabel } from '@/lib/content-format-meta';
 import { recordingColumns } from '@/lib/platform-navigation';
 import { cn } from '@/lib/utils';
 import type { RecordingCard, RecordingColumnKey } from '@/types/platform';
 
 type RecordingEditorState = RecordingCard;
-
-const FORMAT_LABELS: Record<string, string> = {
-  reels: 'Reels',
-  stories: 'Stories',
-  video_curto: 'Vídeo curto',
-  carrossel: 'Carrossel',
-  post: 'Post'
-};
 
 const COLUMN_COLORS: Record<string, string> = {
   approved: 'bg-green-50 text-green-700 border-green-100',
@@ -72,6 +68,36 @@ function findColumn(cards: RecordingCard[], cardId: string) {
 
 function sortColumnCards(cards: RecordingCard[]) {
   return [...cards].sort((left, right) => left.order - right.order);
+}
+
+function DropPositionIndicator() {
+  return (
+    <div className="rounded-[18px] border-2 border-dashed border-sky-300 bg-sky-100/70 px-3 py-2 text-[11px] font-medium uppercase tracking-[0.18em] text-sky-700 shadow-[inset_0_0_0_1px_rgba(14,165,233,0.08)]">
+      Soltar aqui
+    </div>
+  );
+}
+
+function DragPreviewCard({ card }: { card: RecordingCard }) {
+  return (
+    <div className="w-[320px] rounded-[24px] border border-sky-200 bg-white p-4 shadow-[0_26px_70px_rgba(15,23,42,0.2)] ring-1 ring-sky-100">
+      <div className="flex flex-wrap items-center gap-1.5">
+        {card.productName ? (
+          <span className="inline-flex items-center gap-1 rounded-full border border-border bg-muted/40 px-2 py-0.5 text-[10px] font-medium text-muted-foreground">
+            <Package className="h-2.5 w-2.5" />
+            {card.productName}
+          </span>
+        ) : null}
+        {card.contentType ? (
+          <span className={cn('rounded-full border px-2 py-0.5 text-[10px] font-medium', getContentFormatBadgeClass(card.contentType))}>
+            {getContentFormatLabel(card.contentType)}
+          </span>
+        ) : null}
+      </div>
+      <p className="mt-2 truncate text-sm font-semibold text-foreground">{card.title}</p>
+      <p className="mt-1.5 line-clamp-2 text-[13px] leading-5 text-muted-foreground">{card.hook}</p>
+    </div>
+  );
 }
 
 function reorderWithinColumn(cards: RecordingCard[], column: RecordingColumnKey, activeId: string, overId: string) {
@@ -235,7 +261,10 @@ function SortableRecordingCard({
     <div
       ref={setNodeRef}
       style={{ transform: CSS.Transform.toString(transform), transition }}
-      className={cn('touch-none select-none cursor-grab active:cursor-grabbing', isDragging ? 'opacity-60' : 'opacity-100')}
+      className={cn(
+        'touch-none select-none cursor-grab active:cursor-grabbing',
+        isDragging ? 'z-0 scale-[0.985] opacity-30' : 'opacity-100'
+      )}
       {...attributes}
       {...listeners}
     >
@@ -249,8 +278,8 @@ function SortableRecordingCard({
             </span>
           ) : null}
           {card.contentType ? (
-            <span className="rounded-full border border-blue-100 bg-blue-50 px-2 py-0.5 text-[10px] font-medium text-blue-700">
-              {FORMAT_LABELS[card.contentType] ?? card.contentType}
+            <span className={cn('rounded-full border px-2 py-0.5 text-[10px] font-medium', getContentFormatBadgeClass(card.contentType))}>
+              {getContentFormatLabel(card.contentType)}
             </span>
           ) : null}
         </div>
@@ -337,7 +366,11 @@ function RecordingColumn({
   onDelete,
   onAdd,
   loadingId,
-  deletingId
+  deletingId,
+  activeDropTarget,
+  dropIndicatorId,
+  showEndIndicator,
+  activeCardId
 }: {
   column: { key: RecordingColumnKey; label: string };
   cards: RecordingCard[];
@@ -347,13 +380,25 @@ function RecordingColumn({
   onAdd: (column: RecordingColumnKey) => void;
   loadingId: string | null;
   deletingId: string | null;
+  activeDropTarget: boolean;
+  dropIndicatorId?: string;
+  showEndIndicator: boolean;
+  activeCardId: string | null;
 }) {
   const { setNodeRef } = useDroppable({
     id: `column-${column.key}`
   });
 
   return (
-    <div ref={setNodeRef} className="flex w-[320px] shrink-0 flex-col rounded-[26px] border border-border bg-white/85 p-3">
+    <div
+      ref={setNodeRef}
+      className={cn(
+        'flex w-[320px] shrink-0 flex-col rounded-[26px] border bg-white/85 p-3 transition-all duration-200',
+        activeDropTarget
+          ? 'border-sky-300 bg-sky-50/60 shadow-[0_18px_50px_rgba(14,165,233,0.12)] ring-1 ring-sky-200/70'
+          : 'border-border'
+      )}
+    >
       <div className="mb-3 flex items-center justify-between px-2 pt-1">
         <div>
           <p className="text-sm font-semibold text-foreground">{column.label}</p>
@@ -373,21 +418,29 @@ function RecordingColumn({
         <div className="space-y-3">
           {cards.length ? (
             cards.map((card) => (
-              <SortableRecordingCard
-                key={card.id}
-                card={card}
-                onView={onView}
-                onEdit={onEdit}
-                onDelete={onDelete}
-                loading={loadingId === card.id}
-                deleting={deletingId === card.id}
-              />
+              <Fragment key={card.id}>
+                {dropIndicatorId === card.id && activeCardId !== card.id ? <DropPositionIndicator /> : null}
+                <SortableRecordingCard
+                  card={card}
+                  onView={onView}
+                  onEdit={onEdit}
+                  onDelete={onDelete}
+                  loading={loadingId === card.id}
+                  deleting={deletingId === card.id}
+                />
+              </Fragment>
             ))
           ) : (
-            <div className="rounded-[20px] border border-dashed border-border bg-muted/20 p-4 text-[13px] leading-6 text-muted-foreground">
+            <div
+              className={cn(
+                'rounded-[20px] border border-dashed bg-muted/20 p-4 text-[13px] leading-6 text-muted-foreground transition-colors',
+                activeDropTarget ? 'border-sky-300 bg-sky-100/60 text-sky-700' : 'border-border'
+              )}
+            >
               Arraste um roteiro para esta etapa quando ele chegar aqui na producao.
             </div>
           )}
+          {showEndIndicator ? <DropPositionIndicator /> : null}
         </div>
       </SortableContext>
     </div>
@@ -422,8 +475,8 @@ function RecordingViewModal({
                 </span>
               ) : null}
               {card.contentType ? (
-                <span className="rounded-full border border-blue-100 bg-blue-50 px-2.5 py-1 text-[10px] font-medium uppercase tracking-[0.16em] text-blue-700">
-                  {FORMAT_LABELS[card.contentType] ?? card.contentType}
+                <span className={cn('rounded-full border px-2.5 py-1 text-[10px] font-medium uppercase tracking-[0.16em]', getContentFormatBadgeClass(card.contentType))}>
+                  {getContentFormatLabel(card.contentType)}
                 </span>
               ) : null}
               {card.assignee ? (
@@ -863,6 +916,8 @@ export function RecordingsWorkspace({
   const [loadingId, setLoadingId] = useState<string | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [pendingDeleteCard, setPendingDeleteCard] = useState<RecordingCard | null>(null);
+  const [activeCardId, setActiveCardId] = useState<string | null>(null);
+  const [dropIndicator, setDropIndicator] = useState<{ column: RecordingColumnKey; overId?: string } | null>(null);
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 8 } }));
 
   function persistAssignee(name: string) {
@@ -916,6 +971,10 @@ export function RecordingsWorkspace({
   }, [filteredCards]);
 
   const listCards = useMemo(() => sortColumnCards(filteredCards), [filteredCards]);
+  const activeDragCard = useMemo(
+    () => (activeCardId ? cards.find((card) => card.id === activeCardId) ?? null : null),
+    [activeCardId, cards]
+  );
 
   async function persistCards(nextCards: RecordingCard[], affectedColumns: RecordingColumnKey[]) {
     const affectedItems = nextCards
@@ -957,8 +1016,89 @@ export function RecordingsWorkspace({
     }
   }
 
+  function syncActiveCardState(nextCards: RecordingCard[], activeId: string) {
+    const nextCard = nextCards.find((item) => item.id === activeId);
+
+    if (!nextCard) {
+      return;
+    }
+
+    setViewingCard((current) => (current?.id === activeId ? nextCard : current));
+    setEditingCard((current) => (current?.id === activeId ? { ...current, ...nextCard } : current));
+  }
+
+  async function moveCardToColumn(activeId: string, targetColumn: RecordingColumnKey, overId?: string) {
+    const activeColumn = findColumn(cards, activeId);
+
+    if (!activeColumn) {
+      return;
+    }
+
+    const nextCards =
+      activeColumn === targetColumn
+        ? overId && overId !== activeId
+          ? reorderWithinColumn(cards, activeColumn, activeId, overId)
+          : cards
+        : moveAcrossColumns(cards, activeId, targetColumn, overId);
+
+    if (nextCards === cards) {
+      return;
+    }
+
+    setCards(nextCards);
+    syncActiveCardState(nextCards, activeId);
+    setLoadingId(activeId);
+
+    try {
+      await persistCards(nextCards, activeColumn === targetColumn ? [activeColumn] : [activeColumn, targetColumn]);
+    } catch {
+      toast.error('Nao foi possivel salvar a nova ordem do fluxo. Vamos manter a interface local por enquanto.');
+    } finally {
+      setLoadingId(null);
+    }
+  }
+
+  function handleDragStart(event: DragStartEvent) {
+    const nextActiveId = String(event.active.id);
+    const column = findColumn(cards, nextActiveId);
+
+    setActiveCardId(nextActiveId);
+    setDropIndicator(column ? { column, overId: nextActiveId } : null);
+  }
+
+  function handleDragOver(event: DragOverEvent) {
+    const { over } = event;
+
+    if (!over) {
+      setDropIndicator(null);
+      return;
+    }
+
+    const overId = String(over.id);
+    const overColumn = overId.startsWith('column-')
+      ? (overId.replace('column-', '') as RecordingColumnKey)
+      : findColumn(cards, overId);
+
+    if (!overColumn) {
+      setDropIndicator(null);
+      return;
+    }
+
+    setDropIndicator({
+      column: overColumn,
+      overId: overId.startsWith('column-') ? undefined : overId
+    });
+  }
+
+  function resetDragState() {
+    setActiveCardId(null);
+    setDropIndicator(null);
+  }
+
   async function handleDragEnd(event: DragEndEvent) {
     const { active, over } = event;
+
+    resetDragState();
 
     if (!over || active.id === over.id) {
       return;
@@ -980,21 +1120,7 @@ export function RecordingsWorkspace({
       return;
     }
 
-    const nextCards =
-      activeColumn === overColumn
-        ? reorderWithinColumn(cards, activeColumn, activeId, overId)
-        : moveAcrossColumns(cards, activeId, overColumn, overId.startsWith('column-') ? undefined : overId);
-
-    setCards(nextCards);
-    setLoadingId(activeId);
-
-    try {
-      await persistCards(nextCards, activeColumn === overColumn ? [activeColumn] : [activeColumn, overColumn]);
-    } catch {
-      toast.error('Nao foi possivel salvar a nova ordem. Vamos manter a interface local por enquanto.');
-    } finally {
-      setLoadingId(null);
-    }
+    await moveCardToColumn(activeId, overColumn, overId.startsWith('column-') ? undefined : overId);
   }
 
   function openCreateCard(column: RecordingColumnKey) {
@@ -1155,11 +1281,11 @@ export function RecordingsWorkspace({
                 >
                   <option value="all">Todos os formatos</option>
                   {availableFormats.map((f) => (
-                    <option key={f} value={f}>
-                      {FORMAT_LABELS[f] ?? f}
-                    </option>
-                  ))}
-                </select>
+                  <option key={f} value={f}>
+                      {getContentFormatLabel(f)}
+                  </option>
+                ))}
+              </select>
               ) : null}
 
               {availableProducts.length > 0 ? (
@@ -1240,7 +1366,14 @@ export function RecordingsWorkspace({
 
           {viewMode === 'flow' ? (
             <div className="overflow-x-auto pb-2">
-              <DndContext sensors={sensors} collisionDetection={closestCorners} onDragEnd={handleDragEnd}>
+              <DndContext
+                sensors={sensors}
+                collisionDetection={closestCorners}
+                onDragStart={handleDragStart}
+                onDragOver={handleDragOver}
+                onDragEnd={handleDragEnd}
+                onDragCancel={resetDragState}
+              >
                 <div className="flex min-w-max gap-4">
                   {groupedCards.map((column) => (
                     <RecordingColumn
@@ -1253,9 +1386,16 @@ export function RecordingsWorkspace({
                       onAdd={openCreateCard}
                       loadingId={loadingId}
                       deletingId={deletingId}
+                      activeDropTarget={dropIndicator?.column === column.key}
+                      dropIndicatorId={dropIndicator?.column === column.key ? dropIndicator?.overId : undefined}
+                      showEndIndicator={dropIndicator?.column === column.key && !dropIndicator?.overId}
+                      activeCardId={activeCardId}
                     />
                   ))}
                 </div>
+                <DragOverlay dropAnimation={null}>
+                  {activeDragCard ? <DragPreviewCard card={activeDragCard} /> : null}
+                </DragOverlay>
               </DndContext>
             </div>
           ) : viewMode === 'list' ? (
@@ -1276,8 +1416,8 @@ export function RecordingsWorkspace({
                             </span>
                           ) : null}
                           {card.contentType ? (
-                            <span className="rounded-full border border-blue-100 bg-blue-50 px-2 py-0.5 text-[10px] font-medium text-blue-700">
-                              {FORMAT_LABELS[card.contentType] ?? card.contentType}
+                            <span className={cn('rounded-full border px-2 py-0.5 text-[10px] font-medium', getContentFormatBadgeClass(card.contentType))}>
+                              {getContentFormatLabel(card.contentType)}
                             </span>
                           ) : null}
                         </div>
@@ -1300,7 +1440,22 @@ export function RecordingsWorkspace({
                         ) : null}
                       </div>
 
-                      <div className="flex shrink-0 items-center gap-1">
+                      <div className="flex shrink-0 items-center gap-2">
+                        <div className="min-w-[132px]">
+                          <select
+                            value={card.column}
+                            onChange={(event) => void moveCardToColumn(card.id, event.target.value as RecordingColumnKey)}
+                            disabled={loadingId === card.id}
+                            className="h-8 cursor-pointer rounded-xl border border-border bg-white px-2.5 text-[12px] font-medium text-foreground transition hover:bg-muted focus:outline-none"
+                            aria-label={`Alterar status de ${card.title}`}
+                          >
+                            {recordingColumns.map((column) => (
+                              <option key={`${card.id}-${column.key}`} value={column.key}>
+                                {column.label}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
                         <button type="button" onClick={() => setViewingCard(card)} onPointerDownCapture={(e) => e.stopPropagation()}
                           className="inline-flex h-8 w-8 items-center justify-center rounded-xl border border-border bg-white transition hover:bg-muted" aria-label="Ver">
                           <Eye className="h-4 w-4" />
@@ -1359,8 +1514,8 @@ export function RecordingsWorkspace({
                           </span>
                         ) : null}
                         {card.contentType ? (
-                          <span className="rounded-full border border-blue-100 bg-blue-50 px-2 py-0.5 text-[10px] font-medium text-blue-700">
-                            {FORMAT_LABELS[card.contentType] ?? card.contentType}
+                          <span className={cn('rounded-full border px-2 py-0.5 text-[10px] font-medium', getContentFormatBadgeClass(card.contentType))}>
+                            {getContentFormatLabel(card.contentType)}
                           </span>
                         ) : null}
                       </div>

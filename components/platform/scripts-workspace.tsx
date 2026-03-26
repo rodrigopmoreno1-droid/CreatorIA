@@ -13,16 +13,18 @@ import { Textarea } from '@/components/ui/textarea';
 import { PageIntro } from '@/components/platform/page-intro';
 import { ScriptEditorModal, type EditableScriptDraft } from '@/components/platform/script-editor-modal';
 import { useSpeechCapture } from '@/hooks/use-speech-capture';
+import { CONTENT_FORMAT_ORDER, getContentFormatBadgeClass, getContentFormatLabel } from '@/lib/content-format-meta';
 import type { ProductItem, ScriptItem } from '@/types/platform';
 
 type ScriptStatusFilter = 'all' | 'draft' | 'approved' | 'production';
+type ScriptFormatFilter = 'all' | (typeof CONTENT_FORMAT_ORDER)[number];
 
 const CONTENT_TYPES = [
-  { value: 'reels', label: 'Reels' },
-  { value: 'stories', label: 'Stories' },
-  { value: 'video_curto', label: 'Vídeo curto' },
-  { value: 'carrossel', label: 'Carrossel' },
-  { value: 'post', label: 'Post estático' }
+  { value: 'reels', label: getContentFormatLabel('reels') },
+  { value: 'stories', label: getContentFormatLabel('stories') },
+  { value: 'video_curto', label: getContentFormatLabel('video_curto') },
+  { value: 'carrossel', label: getContentFormatLabel('carrossel') },
+  { value: 'post', label: getContentFormatLabel('post') }
 ] as const;
 
 const SUB_OPTIONS: Record<string, ReadonlyArray<{ value: string; label: string }>> = {
@@ -286,6 +288,7 @@ export function ScriptsWorkspace({
   const [viewingScript, setViewingScript] = useState<ScriptItem | null>(null);
   const [editingScript, setEditingScript] = useState<EditableScriptDraft | null>(null);
   const [statusFilter, setStatusFilter] = useState<ScriptStatusFilter>('all');
+  const [formatFilter, setFormatFilter] = useState<ScriptFormatFilter>('all');
 
   const selectedProduct = useMemo(
     () => products.find((p) => p.id === selectedProductId),
@@ -293,10 +296,18 @@ export function ScriptsWorkspace({
   );
 
   const filteredScripts = useMemo(() => {
-    if (statusFilter === 'all') return scripts;
-    if (statusFilter === 'production') return scripts.filter((s) => s.status !== 'draft' && s.status !== 'approved');
-    return scripts.filter((s) => s.status === statusFilter);
-  }, [scripts, statusFilter]);
+    return scripts.filter((script) => {
+      const matchesStatus =
+        statusFilter === 'all'
+          ? true
+          : statusFilter === 'production'
+            ? script.status !== 'draft' && script.status !== 'approved'
+            : script.status === statusFilter;
+
+      const matchesFormat = formatFilter === 'all' ? true : script.contentType === formatFilter;
+      return matchesStatus && matchesFormat;
+    });
+  }, [scripts, statusFilter, formatFilter]);
 
   const draftCount = useMemo(() => scripts.filter((s) => s.status === 'draft').length, [scripts]);
   const approvedCount = useMemo(() => scripts.filter((s) => s.status === 'approved').length, [scripts]);
@@ -799,20 +810,38 @@ export function ScriptsWorkspace({
               </p>
             </div>
             <div className="flex flex-wrap gap-1.5">
-              {(['all', 'draft', 'approved', 'production'] as const).map((f) => (
-                <button
-                  key={f}
-                  type="button"
-                  onClick={() => setStatusFilter(f)}
-                  className={`rounded-full border px-3 py-1 text-[12px] font-medium transition ${
-                    statusFilter === f
-                      ? 'border-foreground bg-foreground text-background'
-                      : 'border-border bg-white text-muted-foreground hover:border-foreground/40 hover:text-foreground'
-                  }`}
-                >
-                  {f === 'all' ? 'Todos' : f === 'draft' ? 'Rascunho' : f === 'approved' ? 'Aprovado' : 'Em produção'}
-                </button>
-              ))}
+              <div className="flex flex-wrap gap-1.5">
+                {(['all', 'draft', 'approved', 'production'] as const).map((f) => (
+                  <button
+                    key={f}
+                    type="button"
+                    onClick={() => setStatusFilter(f)}
+                    className={`rounded-full border px-3 py-1 text-[12px] font-medium transition ${
+                      statusFilter === f
+                        ? 'border-foreground bg-foreground text-background'
+                        : 'border-border bg-white text-muted-foreground hover:border-foreground/40 hover:text-foreground'
+                    }`}
+                  >
+                    {f === 'all' ? 'Todos' : f === 'draft' ? 'Rascunho' : f === 'approved' ? 'Aprovado' : 'Em produção'}
+                  </button>
+                ))}
+              </div>
+              <div className="flex flex-wrap gap-1.5">
+                {(['all', ...CONTENT_FORMAT_ORDER] as const).map((format) => (
+                  <button
+                    key={format}
+                    type="button"
+                    onClick={() => setFormatFilter(format)}
+                    className={`rounded-full border px-3 py-1 text-[12px] font-medium transition ${
+                      formatFilter === format
+                        ? 'border-foreground bg-foreground text-background'
+                        : 'border-border bg-white text-muted-foreground hover:border-foreground/40 hover:text-foreground'
+                    }`}
+                  >
+                    {format === 'all' ? 'Todos formatos' : getContentFormatLabel(format)}
+                  </button>
+                ))}
+              </div>
             </div>
           </div>
 
@@ -831,9 +860,9 @@ export function ScriptsWorkspace({
                       <div className="min-w-0 flex-1">
                         <div className="flex flex-wrap items-center gap-2">
                           <p className="truncate text-sm font-semibold text-foreground">{script.title}</p>
-                          {script.contentType && script.contentType !== 'reels' && (
-                            <span className="rounded-full border border-violet-200 bg-violet-50 px-2 py-0.5 text-[11px] font-medium text-violet-700">
-                              {CONTENT_TYPES.find((c) => c.value === script.contentType)?.label ?? script.contentType}
+                          {script.contentType && (
+                            <span className={`rounded-full border px-2 py-0.5 text-[11px] font-medium ${getContentFormatBadgeClass(script.contentType)}`}>
+                              {getContentFormatLabel(script.contentType)}
                             </span>
                           )}
                           <span className={`rounded-full border px-2 py-0.5 text-[11px] font-medium ${
