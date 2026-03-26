@@ -28,15 +28,15 @@ export const platformNavigation: Array<{
   },
   {
     key: 'scripts',
-    label: 'Roteiros',
-    description: 'Geração, edição e aprovação',
+    label: 'Conteúdo',
+    description: 'Briefing, geração e aprovação',
     icon: Video,
     href: (workspace) => `/${workspace}/scripts`
   },
   {
     key: 'recordings',
-    label: 'Gravações',
-    description: 'Kanban de produção',
+    label: 'Produção',
+    description: 'Pipeline completo de conteúdo',
     icon: Clapperboard,
     href: (workspace) => `/${workspace}/recordings`
   },
@@ -85,11 +85,15 @@ export const platformNavigation: Array<{
 ];
 
 export const recordingColumns: Array<{
-  key: 'approved' | 'recording' | 'drive' | 'edited';
+  key: 'approved' | 'production' | 'recording' | 'drive' | 'editing' | 'edited' | 'scheduled' | 'posted';
   label: string;
 }> = [
-  { key: 'approved', label: 'Aprovados' },
+  { key: 'approved', label: 'Aprovado' },
+  { key: 'production', label: 'Em produção' },
   { key: 'recording', label: 'Gravando' },
   { key: 'drive', label: 'No Drive' },
-  { key: 'edited', label: 'Editado' }
+  { key: 'editing', label: 'Em edição' },
+  { key: 'edited', label: 'Editado' },
+  { key: 'scheduled', label: 'Agendado' },
+  { key: 'posted', label: 'Postado' }
 ];

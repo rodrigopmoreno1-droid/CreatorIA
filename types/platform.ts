@@ -17,6 +17,8 @@ export type ProductItem = {
   price: string;
   discountPrice: string;
   restrictions: string;
+  pain: string;
+  benefit: string;
   createdAt: string;
 };
 
@@ -27,9 +29,20 @@ export type ProductDraft = {
   price: string;
   discountPrice: string;
   restrictions: string;
+  pain: string;
+  benefit: string;
 };
 
-export type ScriptStatus = 'draft' | 'approved' | 'recording' | 'drive' | 'edited';
+export type ScriptStatus =
+  | 'draft'
+  | 'approved'
+  | 'production'
+  | 'recording'
+  | 'drive'
+  | 'editing'
+  | 'edited'
+  | 'scheduled'
+  | 'posted';
 
 export type RecordingField = {
   key: string;
@@ -53,7 +66,7 @@ export type ScriptItem = {
   updatedAt: string;
 };
 
-export type RecordingColumnKey = 'approved' | 'recording' | 'drive' | 'edited';
+export type RecordingColumnKey = 'approved' | 'production' | 'recording' | 'drive' | 'editing' | 'edited' | 'scheduled' | 'posted';
 
 export type RecordingCard = {
   id: string;

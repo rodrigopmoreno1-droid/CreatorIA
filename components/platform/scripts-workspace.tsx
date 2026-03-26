@@ -25,12 +25,42 @@ const CONTENT_TYPES = [
   { value: 'post', label: 'Post estático' }
 ] as const;
 
-const DURATIONS = [
-  { value: '15s', label: '15s' },
-  { value: '30s', label: '30s' },
-  { value: '45s', label: '45s' },
-  { value: '60s', label: '60s' }
-] as const;
+const SUB_OPTIONS: Record<string, ReadonlyArray<{ value: string; label: string }>> = {
+  reels: [
+    { value: '15s', label: '15s' },
+    { value: '30s', label: '30s' },
+    { value: '45s', label: '45s' },
+    { value: '60s', label: '1 min' },
+    { value: '90s', label: '1,5 min' },
+    { value: '3min', label: '3 min' }
+  ],
+  video_curto: [
+    { value: '30s', label: '30s' },
+    { value: '60s', label: '1 min' },
+    { value: '90s', label: '1,5 min' },
+    { value: '3min', label: '3 min' }
+  ],
+  stories: [
+    { value: '1', label: '1 slide' },
+    { value: '2', label: '2 slides' },
+    { value: '3', label: '3 slides' },
+    { value: '5', label: '5 slides' }
+  ],
+  carrossel: [
+    { value: '3', label: '3 páginas' },
+    { value: '5', label: '5 páginas' },
+    { value: '7', label: '7 páginas' },
+    { value: '10', label: '10 páginas' }
+  ]
+};
+
+const DEFAULT_SUB_OPTIONS: Record<string, string> = {
+  reels: '30s',
+  video_curto: '60s',
+  stories: '3',
+  carrossel: '5',
+  post: ''
+};
 
 const TONES = [
   { value: 'natural', label: 'Natural' },
@@ -39,7 +69,8 @@ const TONES = [
   { value: 'engracado', label: 'Engraçado' },
   { value: 'storytelling', label: 'Storytelling' },
   { value: 'genz', label: 'Gen Z' },
-  { value: 'educativo', label: 'Educativo' }
+  { value: 'educativo', label: 'Educativo' },
+  { value: 'trend', label: '🔥 Trend' }
 ] as const;
 
 const OBJECTIVES = [
@@ -47,8 +78,12 @@ const OBJECTIVES = [
   { value: 'engajar', label: 'Engajar' },
   { value: 'educar', label: 'Educar' },
   { value: 'autoridade', label: 'Autoridade' },
-  { value: 'prova_social', label: 'Prova social' }
+  { value: 'prova_social', label: 'Prova social' },
+  { value: 'alcance', label: 'Alcance' },
+  { value: 'relacionamento', label: 'Relacionamento' }
 ] as const;
+
+const AUDIENCE_TEMPLATES_KEY = 'ca_audience_templates';
 
 function ChipGroup<T extends string>({
   label,
@@ -72,6 +107,49 @@ function ChipGroup<T extends string>({
             onClick={() => onChange(opt.value)}
             className={`rounded-full border px-3 py-1 text-[12px] font-medium transition ${
               value === opt.value
+                ? 'border-foreground bg-foreground text-background'
+                : 'border-border bg-white text-muted-foreground hover:border-foreground/40 hover:text-foreground'
+            }`}
+          >
+            {opt.label}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function MultiChipGroup({
+  label,
+  options,
+  values,
+  onChange
+}: {
+  label: string;
+  options: ReadonlyArray<{ value: string; label: string }>;
+  values: string[];
+  onChange: (v: string[]) => void;
+}) {
+  function toggle(value: string) {
+    if (values.includes(value)) {
+      const next = values.filter((v) => v !== value);
+      onChange(next.length ? next : [value]);
+    } else {
+      onChange([...values, value]);
+    }
+  }
+
+  return (
+    <div className="space-y-1.5">
+      <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">{label}</p>
+      <div className="flex flex-wrap gap-1.5">
+        {options.map((opt) => (
+          <button
+            key={opt.value}
+            type="button"
+            onClick={() => toggle(opt.value)}
+            className={`rounded-full border px-3 py-1 text-[12px] font-medium transition ${
+              values.includes(opt.value)
                 ? 'border-foreground bg-foreground text-background'
                 : 'border-border bg-white text-muted-foreground hover:border-foreground/40 hover:text-foreground'
             }`}
@@ -167,14 +245,22 @@ export function ScriptsWorkspace({
 
   // Structured briefing state
   const [contentType, setContentType] = useState<string>('reels');
-  const [duration, setDuration] = useState<string>('30s');
-  const [tone, setTone] = useState<string>('natural');
-  const [objective, setObjective] = useState<string>('vender');
+  const [subOption, setSubOption] = useState<string>('30s');
+  const [tones, setTones] = useState<string[]>(['natural']);
+  const [objectives, setObjectives] = useState<string[]>(['vender']);
   const [selectedProductId, setSelectedProductId] = useState(initialProducts[0]?.id ?? '');
   const [pain, setPain] = useState('');
   const [benefit, setBenefit] = useState('');
   const [targetAudience, setTargetAudience] = useState('');
   const [extraContext, setExtraContext] = useState('');
+  const [audienceTemplates, setAudienceTemplates] = useState<string[]>(() => {
+    try {
+      const raw = typeof window !== 'undefined' ? localStorage.getItem(AUDIENCE_TEMPLATES_KEY) : null;
+      return raw ? (JSON.parse(raw) as string[]) : [];
+    } catch {
+      return [];
+    }
+  });
 
   const [loadingGeneration, setLoadingGeneration] = useState(false);
   const [savingDraftId, setSavingDraftId] = useState<string | null>(null);
@@ -190,13 +276,33 @@ export function ScriptsWorkspace({
   const draftScripts = useMemo(() => scripts.filter((s) => s.status === 'draft'), [scripts]);
   const approvedScripts = useMemo(() => scripts.filter((s) => s.status === 'approved'), [scripts]);
 
-  // When product changes, auto-fill audience if empty
   function handleProductChange(productId: string) {
     setSelectedProductId(productId);
     const product = products.find((p) => p.id === productId);
-    if (product?.audience && !targetAudience) {
-      setTargetAudience(product.audience);
+    if (product) {
+      if (product.audience && !targetAudience) setTargetAudience(product.audience);
+      if (product.pain && !pain) setPain(product.pain);
+      if (product.benefit && !benefit) setBenefit(product.benefit);
     }
+  }
+
+  function handleContentTypeChange(nextType: string) {
+    setContentType(nextType);
+    setSubOption(DEFAULT_SUB_OPTIONS[nextType] ?? '');
+  }
+
+  function saveAudienceTemplate() {
+    const trimmed = targetAudience.trim();
+    if (!trimmed || audienceTemplates.includes(trimmed)) return;
+    const next = [trimmed, ...audienceTemplates].slice(0, 8);
+    setAudienceTemplates(next);
+    try { localStorage.setItem(AUDIENCE_TEMPLATES_KEY, JSON.stringify(next)); } catch { /* noop */ }
+  }
+
+  function removeAudienceTemplate(template: string) {
+    const next = audienceTemplates.filter((t) => t !== template);
+    setAudienceTemplates(next);
+    try { localStorage.setItem(AUDIENCE_TEMPLATES_KEY, JSON.stringify(next)); } catch { /* noop */ }
   }
 
   const voiceCapture = useSpeechCapture({
@@ -222,17 +328,18 @@ export function ScriptsWorkspace({
   const contextSummary = useMemo(() => {
     const parts: string[] = [];
     const ctLabel = CONTENT_TYPES.find((c) => c.value === contentType)?.label ?? contentType;
-    const durLabel = DURATIONS.find((d) => d.value === duration)?.label ?? duration;
-    const toneLabel = TONES.find((t) => t.value === tone)?.label ?? tone;
-    const objLabel = OBJECTIVES.find((o) => o.value === objective)?.label ?? objective;
-    parts.push(`${ctLabel} · ${durLabel} · ${toneLabel} · ${objLabel}`);
+    const subOpts = SUB_OPTIONS[contentType];
+    const subLabel = subOpts ? (subOpts.find((o) => o.value === subOption)?.label ?? subOption) : null;
+    const tonesLabel = tones.map((t) => TONES.find((o) => o.value === t)?.label ?? t).join(', ');
+    const objsLabel = objectives.map((o) => OBJECTIVES.find((x) => x.value === o)?.label ?? o).join(', ');
+    parts.push(`${ctLabel}${subLabel ? ` · ${subLabel}` : ''} · ${tonesLabel} · ${objsLabel}`);
     if (selectedProduct) parts.push(`Produto: ${selectedProduct.name}`);
     if (pain) parts.push(`Dor: ${pain}`);
     if (benefit) parts.push(`Benefício: ${benefit}`);
     if (targetAudience) parts.push(`Público: ${targetAudience}`);
     if (extraContext.trim()) parts.push(`Extra: ${extraContext.trim().slice(0, 80)}`);
     return parts;
-  }, [contentType, duration, tone, objective, selectedProduct, pain, benefit, targetAudience, extraContext]);
+  }, [contentType, subOption, tones, objectives, selectedProduct, pain, benefit, targetAudience, extraContext]);
 
   const canGenerate = pain.trim() || benefit.trim() || extraContext.trim();
 
@@ -267,9 +374,9 @@ export function ScriptsWorkspace({
             productContext,
             referenceContext: '',
             contentType,
-            duration,
-            tone,
-            objective,
+            subOption: subOption || undefined,
+            tones,
+            objectives,
             pain,
             benefit,
             targetAudience
@@ -406,8 +513,8 @@ export function ScriptsWorkspace({
   return (
     <div className="space-y-4">
       <PageIntro
-        eyebrow="Roteiros"
-        title="Geração, edição e aprovação"
+        eyebrow="Conteúdo"
+        title="Briefing, geração e aprovação"
         actions={
           <Button
             variant="outline"
@@ -441,25 +548,27 @@ export function ScriptsWorkspace({
                 label="Tipo de conteúdo"
                 options={CONTENT_TYPES}
                 value={contentType}
-                onChange={setContentType}
+                onChange={handleContentTypeChange}
               />
-              <ChipGroup
-                label="Duração"
-                options={DURATIONS}
-                value={duration}
-                onChange={setDuration}
-              />
-              <ChipGroup
+              {SUB_OPTIONS[contentType] ? (
+                <ChipGroup
+                  label={contentType === 'stories' ? 'Quantidade de slides' : contentType === 'carrossel' ? 'Quantidade de páginas' : 'Duração'}
+                  options={SUB_OPTIONS[contentType] as ReadonlyArray<{ value: string; label: string }>}
+                  value={subOption}
+                  onChange={setSubOption}
+                />
+              ) : null}
+              <MultiChipGroup
                 label="Tom de comunicação"
                 options={TONES}
-                value={tone}
-                onChange={setTone}
+                values={tones}
+                onChange={setTones}
               />
-              <ChipGroup
+              <MultiChipGroup
                 label="Objetivo"
                 options={OBJECTIVES}
-                value={objective}
-                onChange={setObjective}
+                values={objectives}
+                onChange={setObjectives}
               />
             </div>
 
@@ -511,15 +620,48 @@ export function ScriptsWorkspace({
               </div>
 
               <div className="space-y-1.5">
-                <label className="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
-                  Público-alvo
-                </label>
+                <div className="flex items-center justify-between">
+                  <label className="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
+                    Público-alvo
+                  </label>
+                  {targetAudience.trim() ? (
+                    <button
+                      type="button"
+                      onClick={saveAudienceTemplate}
+                      className="text-[11px] font-medium text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
+                    >
+                      Salvar como template
+                    </button>
+                  ) : null}
+                </div>
                 <Input
                   value={targetAudience}
                   onChange={(e) => setTargetAudience(e.target.value)}
                   placeholder="Ex.: mulheres 30-45 anos, mães, quem quer emagrecer..."
                   className="h-9 rounded-xl text-sm"
                 />
+                {audienceTemplates.length > 0 ? (
+                  <div className="flex flex-wrap gap-1.5 pt-0.5">
+                    {audienceTemplates.map((template) => (
+                      <div key={template} className="group flex items-center gap-1 rounded-full border border-border bg-white px-2.5 py-0.5">
+                        <button
+                          type="button"
+                          onClick={() => setTargetAudience(template)}
+                          className="max-w-[180px] truncate text-[11px] text-muted-foreground hover:text-foreground"
+                        >
+                          {template}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => removeAudienceTemplate(template)}
+                          className="text-muted-foreground/40 hover:text-rose-500"
+                        >
+                          ×
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                ) : null}
               </div>
 
               <div className="space-y-1.5">
@@ -611,12 +753,21 @@ export function ScriptsWorkspace({
               </div>
             ) : null}
 
-            <div className="rounded-[14px] border border-white/8 bg-white/4 px-3.5 py-2.5">
-              <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-white/35">Tendências</p>
-              <p className="mt-1 text-[12px] leading-4 text-white/55">
-                A IA busca automaticamente reels, TikToks e carrosséis virais relacionados ao tema do produto ao gerar os roteiros.
-              </p>
-            </div>
+            {tones.includes('trend') ? (
+              <div className="rounded-[14px] border border-amber-400/20 bg-amber-400/8 px-3.5 py-2.5">
+                <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-amber-300/70">Modo Trend ativo</p>
+                <p className="mt-1 text-[12px] leading-4 text-white/55">
+                  A IA identifica formatos virais do momento (POV, antes/depois, expectativa vs realidade...) e adapta o produto a cada um. Cada variação usará um formato trend diferente.
+                </p>
+              </div>
+            ) : (
+              <div className="rounded-[14px] border border-white/8 bg-white/4 px-3.5 py-2.5">
+                <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-white/35">Tendências</p>
+                <p className="mt-1 text-[12px] leading-4 text-white/55">
+                  A IA busca automaticamente reels, TikToks e carrosséis virais relacionados ao tema do produto ao gerar os roteiros.
+                </p>
+              </div>
+            )}
           </CardContent>
         </Card>
       </div>
@@ -760,7 +911,7 @@ export function ScriptsWorkspace({
                   ))
                 ) : (
                   <div className="rounded-[18px] border border-dashed border-border bg-muted/20 p-3.5 text-[13px] text-muted-foreground">
-                    Roteiros aprovados aparecem aqui e seguem para Gravações.
+                    Roteiros aprovados aparecem aqui e seguem para Produção.
                   </div>
                 )}
               </div>

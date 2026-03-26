@@ -20,8 +20,11 @@ type ScriptVariantInput = {
   productContext?: string;
   referenceContext?: string;
   contentType?: string;
+  subOption?: string;
   duration?: string;
+  tones?: string[];
   tone?: string;
+  objectives?: string[];
   objective?: string;
   pain?: string;
   benefit?: string;
@@ -2070,9 +2073,27 @@ function resolveToneLabel(tone?: string) {
     engracado: 'Tom engracado: usa humor, auto-ironia ou situacoes absurdas do cotidiano. O produto aparece como solucao natural sem forcar.',
     storytelling: 'Tom de storytelling: estrutura de antes/depois ou conflito/resolucao. Conta uma historia real especifica, depois revela o produto ou aprendizado.',
     genz: 'Tom Gen Z: curto, cru, sem filtro, como TikTok raiz. Direto ao ponto, sem apresentacao. Pode usar linguagem atual mas sem forcar girias.',
-    educativo: 'Tom educativo: ensina algo especifico e util antes de mencionar o produto. Entrega valor primeiro, depois conecta com a solucao.'
+    educativo: 'Tom educativo: ensina algo especifico e util antes de mencionar o produto. Entrega valor primeiro, depois conecta com a solucao.',
+    trend: 'Tom Trend: adapta o produto a um formato viral do momento (POV, antes/depois, expectativa vs realidade, dueto imaginario, rotina, etc). O formato define a estrutura, o produto entra naturalmente dentro dele. Prioriza alcance, compartilhamento e identificacao. Soa atual e nativo da plataforma.'
   };
   return map[tone ?? ''] ?? map['natural'];
+}
+
+function resolveTonesLabel(tones?: string[], tone?: string): string {
+  const active = tones?.length ? tones : tone ? [tone] : ['natural'];
+  const isTrend = active.includes('trend');
+  const others = active.filter((t) => t !== 'trend');
+
+  const parts: string[] = [];
+  if (isTrend) {
+    parts.push(resolveToneLabel('trend'));
+  }
+  others.forEach((t) => {
+    const label = resolveToneLabel(t);
+    if (label) parts.push(label);
+  });
+
+  return parts.join(' + ');
 }
 
 function resolveObjectiveLabel(objective?: string) {
@@ -2081,17 +2102,25 @@ function resolveObjectiveLabel(objective?: string) {
     engajar: 'Objetivo engajar: termina com pergunta ou provocacao que gera comentario, salvamento ou compartilhamento. NAO faz CTA de venda.',
     educar: 'Objetivo educar: foca em entregar um aprendizado pratico. O produto e solucao natural do problema ensinado, nao o centro.',
     autoridade: 'Objetivo autoridade: posiciona o criador ou marca como referencia. Usa dados, resultados ou credenciais de forma implicita e natural.',
-    prova_social: 'Objetivo prova social: usa depoimento, caso real ou transformacao visivel. Estrutura: "meu cliente fez X e aconteceu Y" ou "eu mesma testei e...".'
+    prova_social: 'Objetivo prova social: usa depoimento, caso real ou transformacao visivel. Estrutura: "meu cliente fez X e aconteceu Y" ou "eu mesma testei e...".',
+    alcance: 'Objetivo alcance: maximiza compartilhamento e viralidade. Termina com CTA de salvar, compartilhar ou marcar alguem. Conteudo e universalmente identificavel.',
+    relacionamento: 'Objetivo relacionamento: constrói conexao com a audiencia. Primeira pessoa, vulnerabilidade controlada, historia proxima do seguidor. Sem CTA de venda, apenas convite para continuar junto.'
   };
   return map[objective ?? ''] ?? map['vender'];
+}
+
+function resolveObjectivesLabel(objectives?: string[], objective?: string): string {
+  const active = objectives?.length ? objectives : objective ? [objective] : ['vender'];
+  return active.map((o) => resolveObjectiveLabel(o)).join(' + ');
 }
 
 export async function generateScriptVariants(input: ScriptVariantInput) {
   const productLabel = input.productName ?? 'Creator AI';
   const contentTypeLabel = resolveContentTypeLabel(input.contentType);
   const durationLabel = resolveDurationLabel(input.duration);
-  const toneLabel = resolveToneLabel(input.tone);
-  const objectiveLabel = resolveObjectiveLabel(input.objective);
+  const toneLabel = resolveTonesLabel(input.tones, input.tone);
+  const objectiveLabel = resolveObjectivesLabel(input.objectives, input.objective);
+  const isTrend = input.tones?.includes('trend') || input.tone === 'trend';
 
   const fallback = Array.from({ length: 3 }, (_, index) => ({
     title: `Roteiro ${index + 1} - ${productLabel}`,
@@ -2122,7 +2151,7 @@ export async function generateScriptVariants(input: ScriptVariantInput) {
     input.productName ?? input.prompt,
     input.pain ?? '',
     input.benefit ?? '',
-    'reels virais tiktok tendencias conteudo'
+    isTrend ? 'formato viral trend reels tiktok POV antes depois expectativa realidade rotina' : 'reels virais tiktok tendencias conteudo'
   );
 
   const prompt = await buildCreatorAiPrompt([
@@ -2145,9 +2174,11 @@ export async function generateScriptVariants(input: ScriptVariantInput) {
     '',
     '=== BRIEFING DO CLIENTE ===',
     `Tipo de conteudo: ${contentTypeLabel}`,
+    input.subOption ? `Especificacao de formato: ${input.subOption}` : null,
     `Duracao alvo: ${durationLabel}`,
     `${toneLabel}`,
     `${objectiveLabel}`,
+    isTrend ? 'MODO TREND ATIVO: identifique um formato viral recente (POV, antes/depois, expectativa vs realidade, rotina revelada, dueto imaginario, ranking, etc) e adapte o produto a esse formato. O formato trend define a ESTRUTURA do video, o produto entra naturalmente dentro dele. Cada uma das 3 variacoes deve usar um formato trend diferente.' : null,
     input.pain ? `Dor que o produto resolve: ${input.pain}` : null,
     input.benefit ? `Beneficio principal: ${input.benefit}` : null,
     input.targetAudience ? `Publico-alvo: ${input.targetAudience}` : null,

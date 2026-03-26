@@ -9,6 +9,8 @@ type ProductPayload = {
   price?: string;
   discountPrice?: string;
   restrictions?: string;
+  pain?: string;
+  benefit?: string;
 };
 
 function toNumericPrice(value?: string) {
@@ -52,7 +54,9 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ wo
 
   const nextMetadata = {
     ...currentMetadata,
-    discountPrice: body?.discountPrice?.trim() ?? ''
+    discountPrice: body?.discountPrice?.trim() ?? '',
+    pain: body?.pain?.trim() ?? '',
+    benefit: body?.benefit?.trim() ?? ''
   };
 
   const { data, error } = await admin

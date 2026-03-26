@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server';
 
 import { buildScriptMetadata, parseScriptMetadata, resolveWorkspaceDataAccess, toScriptItem } from '@/lib/platform-data';
 
-const allowedStatuses = new Set(['draft', 'approved', 'recording', 'drive', 'edited']);
+const allowedStatuses = new Set(['draft', 'approved', 'production', 'recording', 'drive', 'editing', 'edited', 'scheduled', 'posted']);
 
 type ScriptPatchBody = {
   title?: string;

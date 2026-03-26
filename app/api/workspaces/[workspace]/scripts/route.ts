@@ -23,7 +23,7 @@ type IncomingScript = {
   fields?: Array<{ key?: string; value?: string }>;
 };
 
-const allowedStatuses = new Set(['draft', 'approved', 'recording', 'drive', 'edited']);
+const allowedStatuses = new Set(['draft', 'approved', 'production', 'recording', 'drive', 'editing', 'edited', 'scheduled', 'posted']);
 
 function sanitizeScriptPayload(script: IncomingScript) {
   const title = script.title?.trim();

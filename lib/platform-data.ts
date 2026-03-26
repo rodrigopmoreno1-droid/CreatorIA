@@ -75,7 +75,7 @@ type WorkspaceDataAccess = {
   context: WorkspaceContext;
 };
 
-const recordingColumns = new Set<RecordingColumnKey>(['approved', 'recording', 'drive', 'edited']);
+const recordingColumns = new Set<RecordingColumnKey>(['approved', 'production', 'recording', 'drive', 'editing', 'edited', 'scheduled', 'posted']);
 
 function normalizeString(value: unknown) {
   return typeof value === 'string' ? value : '';
@@ -124,7 +124,9 @@ function parseProductMetadata(metadata: unknown) {
   const raw = metadata as Record<string, unknown>;
 
   return {
-    discountPrice: normalizeString(raw.discountPrice ?? raw.discount_price)
+    discountPrice: normalizeString(raw.discountPrice ?? raw.discount_price),
+    pain: normalizeString(raw.pain),
+    benefit: normalizeString(raw.benefit)
   };
 }
 
@@ -244,6 +246,8 @@ export function toProductItem(row: ProductRow): ProductItem {
     price: row.price == null ? '' : String(row.price),
     discountPrice: metadata.discountPrice ?? '',
     restrictions: row.restrictions ?? '',
+    pain: metadata.pain ?? '',
+    benefit: metadata.benefit ?? '',
     createdAt: row.created_at
   };
 }
@@ -265,7 +269,15 @@ export function toScriptItem(row: ScriptRow): ScriptItem {
     cta: row.cta ?? '',
     caption: meta.caption ?? '',
     status:
-      status === 'draft' || status === 'approved' || status === 'recording' || status === 'drive' || status === 'edited'
+      status === 'draft' ||
+      status === 'approved' ||
+      status === 'production' ||
+      status === 'recording' ||
+      status === 'drive' ||
+      status === 'editing' ||
+      status === 'edited' ||
+      status === 'scheduled' ||
+      status === 'posted'
         ? status
         : 'approved',
     createdAt: row.created_at,
@@ -400,7 +412,7 @@ export async function getWorkspaceRecordings(workspaceSlug: string) {
     .from('scripts')
     .select('id,title,hook,spoken_text,cta,storyboard,status,created_at,updated_at')
     .eq('company_id', context.companyId)
-    .in('status', ['approved', 'recording', 'drive', 'edited'])
+    .in('status', ['approved', 'production', 'recording', 'drive', 'editing', 'edited', 'scheduled', 'posted'])
     .order('updated_at', { ascending: false });
 
   if (error) {

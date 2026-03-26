@@ -9,6 +9,8 @@ type ProductPayload = {
   price?: string;
   discountPrice?: string;
   restrictions?: string;
+  pain?: string;
+  benefit?: string;
 };
 
 function toNumericPrice(value?: string) {
@@ -24,7 +26,9 @@ function toNumericPrice(value?: string) {
 
 function toMetadata(payload: ProductPayload) {
   return {
-    discountPrice: payload.discountPrice?.trim() ?? ''
+    discountPrice: payload.discountPrice?.trim() ?? '',
+    pain: payload.pain?.trim() ?? '',
+    benefit: payload.benefit?.trim() ?? ''
   };
 }
 

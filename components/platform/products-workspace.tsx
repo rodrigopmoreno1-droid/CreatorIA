@@ -38,7 +38,9 @@ const emptyForm: ProductFormState = {
   audience: '',
   price: '',
   discountPrice: '',
-  restrictions: ''
+  restrictions: '',
+  pain: '',
+  benefit: ''
 };
 
 function createDraftFromProduct(product: ProductItem): ProductFormState {
@@ -49,7 +51,9 @@ function createDraftFromProduct(product: ProductItem): ProductFormState {
     audience: product.audience,
     price: product.price,
     discountPrice: product.discountPrice,
-    restrictions: product.restrictions
+    restrictions: product.restrictions,
+    pain: product.pain,
+    benefit: product.benefit
   };
 }
 
@@ -88,7 +92,9 @@ function normalizeImportedProducts(payload: unknown): ImportedProductDraft[] {
           typeof rawItem.discountPrice === 'string' || typeof rawItem.discountPrice === 'number'
             ? String(rawItem.discountPrice)
             : '',
-        restrictions: typeof rawItem.restrictions === 'string' ? rawItem.restrictions : ''
+        restrictions: typeof rawItem.restrictions === 'string' ? rawItem.restrictions : '',
+        pain: typeof rawItem.pain === 'string' ? rawItem.pain : '',
+        benefit: typeof rawItem.benefit === 'string' ? rawItem.benefit : ''
       };
     })
     .filter((item): item is ImportedProductDraft => Boolean(item));
@@ -733,6 +739,25 @@ export function ProductsWorkspace({ workspace, initialProducts }: { workspace: s
                   onChange={(event) => setForm((current) => ({ ...current, restrictions: event.target.value }))}
                   className="min-h-[88px]"
                 />
+              </div>
+
+              <div className="grid gap-3 sm:grid-cols-2">
+                <div className="space-y-2">
+                  <label className="text-sm font-medium">Dor principal</label>
+                  <Input
+                    value={form.pain}
+                    onChange={(event) => setForm((current) => ({ ...current, pain: event.target.value }))}
+                    placeholder="Ex: nao consegue emagrecer"
+                  />
+                </div>
+                <div className="space-y-2">
+                  <label className="text-sm font-medium">Benefício principal</label>
+                  <Input
+                    value={form.benefit}
+                    onChange={(event) => setForm((current) => ({ ...current, benefit: event.target.value }))}
+                    placeholder="Ex: perde gordura sem cortar carboidrato"
+                  />
+                </div>
               </div>
 
               <div className="flex flex-wrap gap-2">
