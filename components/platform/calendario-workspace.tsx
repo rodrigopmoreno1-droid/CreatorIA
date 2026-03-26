@@ -27,7 +27,7 @@ import {
   type ContentFormatKey
 } from '@/lib/content-format-meta';
 import { buildEditableScript, type EditableScriptDraft } from '@/lib/script-drafts';
-import { buildDefaultProductRules, computeEndDateFromPreset, generateSchedulePlan, type PlannerConfig, type PlannerProductRule, type SchedulePeriodPreset } from '@/lib/post-schedule-planner';
+import { computeEndDateFromPreset } from '@/lib/post-schedule-planner';
 import { cn } from '@/lib/utils';
 import type { CarrosselSlide, PlannerBatchItem, PostFields, ProductItem, ScriptItem, StorySlide } from '@/types/platform';
 
@@ -190,6 +190,57 @@ function buildContentStructure(contentType: ContentFormatKey, subOption: string)
     postFields: null,
     takes: Array.from({ length: 5 }, () => '') as string[]
   };
+}
+
+/** Returns true if the script was auto-created but has no meaningful content yet */
+function isScriptIncomplete(script: ScriptItem): boolean {
+  if (script.contentType === 'stories') {
+    return !script.storySlides.some((s) => s.falado.trim() || s.textoTela.trim());
+  }
+  if (script.contentType === 'carrossel') {
+    return !script.carrosselSlides.some((s) => s.conteudo.trim() || s.titulo.trim());
+  }
+  if (script.contentType === 'post') {
+    const pf = script.postFields;
+    return !pf || (!pf.conceito.trim() && !pf.textoApoio.trim());
+  }
+  return !script.spoken?.trim() && !script.hook?.trim();
+}
+
+/** Simple stories-only schedule generator — no AI, pure logic */
+function generateStoriesSchedule(
+  startDate: string,
+  daysInPeriod: number,
+  productConfigs: Array<{ productId: string; productName: string; appearances: number; slides: number }>
+): Array<{ date: string; productId: string; productName: string; slides: number }> {
+  if (daysInPeriod < 1 || !productConfigs.length) return [];
+
+  // Build all dates in range
+  const base = new Date(`${startDate}T12:00:00`);
+  const dates: string[] = Array.from({ length: daysInPeriod }, (_, i) => {
+    const d = new Date(base);
+    d.setDate(d.getDate() + i);
+    return d.toISOString().slice(0, 10);
+  });
+
+  // Interleave products round-robin
+  const maxApps = Math.max(...productConfigs.map((p) => p.appearances), 0);
+  const slots: Array<{ productId: string; productName: string; slides: number }> = [];
+  for (let i = 0; i < maxApps; i++) {
+    for (const prod of productConfigs) {
+      if (i < prod.appearances) {
+        slots.push({ productId: prod.productId, productName: prod.productName, slides: prod.slides });
+      }
+    }
+  }
+
+  if (!slots.length) return [];
+
+  // Spread slots evenly across dates
+  return slots.map((slot, i) => ({
+    date: dates[Math.min(Math.floor(i * dates.length / slots.length), dates.length - 1)],
+    ...slot
+  }));
 }
 
 function buildEmptyNewEvent(date: string): NewEventDraft {
@@ -382,6 +433,7 @@ function MonthCalendarGrid({
                 {dayScripts.slice(0, 3).map((script) => {
                   const colors = getFormatColors(script.contentType);
                   const isPosted = script.status === 'posted';
+                  const incomplete = isScriptIncomplete(script);
                   return (
                     <div
                       key={script.id}
@@ -390,7 +442,8 @@ function MonthCalendarGrid({
                       onDragEnd={onDragEnd}
                       onClick={(e) => { e.stopPropagation(); onClickScript(script); }}
                       className={cn(
-                        'group/block flex items-center gap-1 rounded-md px-1.5 py-0.5 border text-[10px] cursor-pointer transition-opacity',
+                        'group/block flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[10px] cursor-pointer transition-opacity',
+                        incomplete ? 'border border-dashed' : 'border',
                         selectedScriptId === script.id ? 'ring-1 ring-zinc-900' : '',
                         colors.pill,
                         isPosted && 'opacity-60'
@@ -514,6 +567,7 @@ function WeekCalendarGrid({
                 const colors = getFormatColors(script.contentType);
                 const isPosted = script.status === 'posted';
                 const isSelected = selectedScriptId === script.id;
+                const incomplete = isScriptIncomplete(script);
                 return (
                   <div
                     key={script.id}
@@ -523,6 +577,7 @@ function WeekCalendarGrid({
                     onClick={(e) => { e.stopPropagation(); onClickScript(script); }}
                     className={cn(
                       'group rounded-xl border-l-4 p-2.5 cursor-pointer transition-all hover:shadow-sm',
+                      incomplete ? 'border border-dashed border-l-4' : 'border',
                       colors.block,
                       isPosted && 'opacity-60',
                       isSelected && 'ring-1 ring-zinc-900 shadow-sm'
@@ -972,6 +1027,17 @@ function EditScriptPanel({
     }
   }, [workspace, products, onUpdated]);
 
+  // Sync scheduledFor from parent when drag-and-drop updates it externally
+  useEffect(() => {
+    setScheduledFor(script.scheduledFor || '');
+  }, [script.scheduledFor]);
+
+  // Sync productId from parent if it changes externally
+  useEffect(() => {
+    setProductId(script.productId || '');
+  }, [script.productId]);
+
+  // Auto-save debounce (skip on first render)
   useEffect(() => {
     if (isFirst.current) { isFirst.current = false; return; }
     if (saveTimer.current) clearTimeout(saveTimer.current);
@@ -1151,16 +1217,29 @@ function EditScriptPanel({
   );
 }
 
-/* ─────────────────────────── Create schedule panel ─────────────────────────── */
+/* ─────────────────────────── Create schedule panel (Stories only) ─────────────────────────── */
 
-type SchedulerProductRow = {
+type StoriesSchedulerRow = {
   productId: string;
   productName: string;
-  enabled: boolean;
-  feedInPeriod: number;
-  storiesInPeriod: number;
-  storySlides: number;
+  selected: boolean;
+  appearances: number; // how many times this product posts stories in the period
+  slides: number;      // slides per story sequence
 };
+
+const PERIOD_PRESETS: Array<{ label: string; days: number }> = [
+  { label: '1 dia', days: 1 },
+  { label: '3 dias', days: 3 },
+  { label: '7 dias', days: 7 },
+  { label: '15 dias', days: 15 },
+  { label: '30 dias', days: 30 }
+];
+
+function computeEndFromDays(startDate: string, days: number): string {
+  const d = new Date(`${startDate}T12:00:00`);
+  d.setDate(d.getDate() + days - 1);
+  return d.toISOString().slice(0, 10);
+}
 
 function CreateSchedulePanel({
   workspace,
@@ -1175,85 +1254,70 @@ function CreateSchedulePanel({
 }) {
   const today = isoToday();
   const [startDate, setStartDate] = useState(today);
-  const [endDate, setEndDate] = useState(computeEndDateFromPreset(today, '7'));
-  const [rows, setRows] = useState<SchedulerProductRow[]>(() =>
+  const [periodDays, setPeriodDays] = useState(7);
+  const [productSearch, setProductSearch] = useState('');
+  const [rows, setRows] = useState<StoriesSchedulerRow[]>(() =>
     products.map((p) => ({
       productId: p.id,
       productName: p.name,
-      enabled: true,
-      feedInPeriod: 2,
-      storiesInPeriod: 3,
-      storySlides: 3
+      selected: false,
+      appearances: 3,
+      slides: 3
     }))
   );
   const [creating, setCreating] = useState(false);
-  const [preview, setPreview] = useState<null | { feed: number; stories: number }>(null);
 
-  function setRow(id: string, patch: Partial<SchedulerProductRow>) {
+  const endDate = computeEndFromDays(startDate, periodDays);
+
+  function setRow(id: string, patch: Partial<StoriesSchedulerRow>) {
     setRows((prev) => prev.map((r) => r.productId === id ? { ...r, ...patch } : r));
   }
 
-  // Compute plan preview
-  const planPreview = useMemo(() => {
-    const enabledRows = rows.filter((r) => r.enabled);
-    const feedTotal = enabledRows.reduce((acc, r) => acc + r.feedInPeriod, 0);
-    const storyTotal = enabledRows.reduce((acc, r) => acc + r.storiesInPeriod, 0);
-    return { feed: feedTotal, stories: storyTotal };
-  }, [rows]);
+  const selectedRows = rows.filter((r) => r.selected);
+
+  const filteredRows = useMemo(
+    () => rows.filter((r) => !productSearch || r.productName.toLowerCase().includes(productSearch.toLowerCase())),
+    [rows, productSearch]
+  );
+
+  const totalEvents = useMemo(
+    () => selectedRows.reduce((acc, r) => acc + r.appearances, 0),
+    [selectedRows]
+  );
 
   async function handleCreate() {
-    const enabledRows = rows.filter((r) => r.enabled);
-    if (!enabledRows.length) { toast.error('Selecione pelo menos um produto.'); return; }
-    if (!startDate || !endDate || endDate < startDate) { toast.error('Datas inválidas.'); return; }
+    if (!selectedRows.length) { toast.error('Selecione pelo menos um produto.'); return; }
+    if (!startDate) { toast.error('Defina a data de início.'); return; }
 
     setCreating(true);
     try {
-      // Generate schedule slots client-side using the existing planner
-      const productRules: PlannerProductRule[] = enabledRows.map((r) => ({
-        productId: r.productId,
-        productName: r.productName,
-        enabled: true,
-        paused: false,
-        appearancesInPeriod: r.feedInPeriod,
-        storiesInPeriod: r.storiesInPeriod,
-        fixedWeekdays: [],
-        consecutiveRule: 'avoid' as const,
-        allDays: true,
-        priority: 1
-      }));
-
-      const config: PlannerConfig = {
-        mode: 'create',
-        periodPreset: 'custom',
+      const slots = generateStoriesSchedule(
         startDate,
-        endDate,
-        feedPerDay: 1,
-        reason: 'Cronograma criado no Calendário',
-        productRules
-      };
+        periodDays,
+        selectedRows.map((r) => ({
+          productId: r.productId,
+          productName: r.productName,
+          appearances: r.appearances,
+          slides: r.slides
+        }))
+      );
 
-      const plan = generateSchedulePlan(config, products);
-
-      if (plan.posts.length === 0) {
-        toast.error('Nenhum slot gerado com essas configurações.');
+      if (!slots.length) {
+        toast.error('Nenhum slot gerado. Verifique as configurações.');
         return;
       }
 
-      // Build script payloads for each planned post
-      const scriptPayloads = plan.posts.map((post) => {
-        const row = enabledRows.find((r) => r.productId === post.productId);
-        const subOpt = post.contentType === 'stories'
-          ? String(row?.storySlides ?? 3)
-          : DEFAULT_SUB_OPTIONS[post.contentType as ContentFormatKey] ?? '';
-        const structure = buildContentStructure(post.contentType as ContentFormatKey, subOpt);
+      const scriptPayloads = slots.map((slot) => {
+        const subOpt = String(slot.slides);
+        const structure = buildContentStructure('stories', subOpt);
         return {
-          title: `${getContentFormatLabel(post.contentType)} – ${post.productName || 'Sem produto'}`,
-          contentType: post.contentType,
+          title: `Stories (${slot.slides} slides) – ${slot.productName}`,
+          contentType: 'stories',
           subOption: subOpt,
-          scheduledFor: post.scheduledFor,
+          scheduledFor: slot.date,
           status: 'draft',
-          productId: post.productId || '',
-          productName: post.productName || '',
+          productId: slot.productId,
+          productName: slot.productName,
           ...structure
         };
       });
@@ -1266,7 +1330,7 @@ function CreateSchedulePanel({
       if (!res.ok) throw new Error();
       const { scripts } = (await res.json()) as { scripts: ScriptItem[] };
       onCreated(scripts ?? []);
-      toast.success(`${scripts.length} eventos criados no calendário.`);
+      toast.success(`${scripts.length} Stories criados no calendário.`);
     } catch {
       toast.error('Erro ao criar cronograma.');
     } finally {
@@ -1276,9 +1340,10 @@ function CreateSchedulePanel({
 
   return (
     <div className="flex flex-col h-full">
+      {/* Header */}
       <div className="flex items-center justify-between p-4 border-b border-border">
         <div>
-          <p className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground">Calendário</p>
+          <p className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground">Apenas Stories</p>
           <h3 className="font-semibold text-foreground">Criar cronograma</h3>
         </div>
         <button onClick={onCancel} className="rounded-xl border border-border p-1.5 text-muted-foreground hover:bg-muted transition-colors">
@@ -1286,117 +1351,157 @@ function CreateSchedulePanel({
         </button>
       </div>
 
-      <div className="flex-1 overflow-y-auto p-4 space-y-4">
-        {/* Date range */}
-        <div className="grid grid-cols-2 gap-3">
-          <div className="space-y-1">
-            <label className="text-xs font-medium text-foreground">Data início</label>
-            <Input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} className="text-sm" />
-          </div>
-          <div className="space-y-1">
-            <label className="text-xs font-medium text-foreground">Data fim</label>
-            <Input type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} className="text-sm" />
-          </div>
-        </div>
+      <div className="flex-1 overflow-y-auto p-4 space-y-5">
 
-        {/* Quick presets */}
-        <div className="flex gap-2 flex-wrap">
-          {(['7', '15', '30'] as SchedulePeriodPreset[]).map((preset) => (
-            <button
-              key={preset}
-              onClick={() => setEndDate(computeEndDateFromPreset(startDate, preset))}
-              className="rounded-lg border border-border px-2.5 py-1 text-xs font-medium text-muted-foreground hover:bg-zinc-50 hover:text-foreground transition-colors"
-            >
-              {preset} dias
-            </button>
-          ))}
-        </div>
-
-        {/* Preview */}
-        <div className="rounded-2xl border border-border bg-muted/30 p-3">
-          <p className="text-xs text-muted-foreground">Prévia do plano</p>
-          <p className="text-sm font-semibold text-foreground mt-0.5">
-            {planPreview.feed} feed + {planPreview.stories} stories = {planPreview.feed + planPreview.stories} peças
-          </p>
-          <p className="text-[10px] text-muted-foreground mt-0.5">
-            {formatDateBR(startDate)} → {formatDateBR(endDate)}
-          </p>
-        </div>
-
-        {/* Product rows */}
+        {/* ── Etapa 1: Período ── */}
         <div>
-          <p className="text-xs font-semibold text-foreground mb-2">Produtos</p>
+          <p className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground mb-2">Etapa 1 — Período</p>
+
           <div className="space-y-3">
-            {rows.map((row) => (
-              <div
+            <div className="space-y-1">
+              <label className="text-xs font-medium text-foreground">Data início</label>
+              <Input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} className="text-sm" />
+            </div>
+
+            <div className="flex gap-2 flex-wrap">
+              {PERIOD_PRESETS.map((preset) => (
+                <button
+                  key={preset.days}
+                  onClick={() => setPeriodDays(preset.days)}
+                  className={cn(
+                    'rounded-[9px] border px-3 py-1.5 text-xs font-medium transition-colors',
+                    periodDays === preset.days
+                      ? 'border-zinc-900 bg-zinc-900 text-white'
+                      : 'border-border text-muted-foreground hover:bg-zinc-50 hover:text-foreground'
+                  )}
+                >
+                  {preset.label}
+                </button>
+              ))}
+            </div>
+
+            <div className="rounded-xl border border-border bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
+              {formatDateBR(startDate)} → {formatDateBR(endDate)} ({periodDays} {periodDays === 1 ? 'dia' : 'dias'})
+            </div>
+          </div>
+        </div>
+
+        {/* ── Etapa 2: Produtos ── */}
+        <div>
+          <p className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground mb-2">Etapa 2 — Produtos</p>
+
+          <div className="relative mb-2">
+            <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3 w-3 text-muted-foreground" />
+            <Input
+              value={productSearch}
+              onChange={(e) => setProductSearch(e.target.value)}
+              placeholder="Buscar produto..."
+              className="pl-7 text-sm"
+            />
+          </div>
+
+          <div className="space-y-1 max-h-48 overflow-y-auto">
+            {filteredRows.length === 0 ? (
+              <p className="text-xs text-muted-foreground italic py-2">Nenhum produto encontrado.</p>
+            ) : filteredRows.map((row) => (
+              <label
                 key={row.productId}
                 className={cn(
-                  'rounded-2xl border border-border p-3 space-y-3 transition-opacity',
-                  !row.enabled && 'opacity-50'
+                  'flex items-center gap-3 rounded-xl border px-3 py-2.5 cursor-pointer transition-colors',
+                  row.selected ? 'border-zinc-900 bg-zinc-50' : 'border-border hover:bg-zinc-50/60'
                 )}
               >
-                <div className="flex items-center justify-between">
-                  <label className="flex items-center gap-2 text-sm font-medium text-foreground cursor-pointer">
-                    <input
-                      type="checkbox"
-                      checked={row.enabled}
-                      onChange={(e) => setRow(row.productId, { enabled: e.target.checked })}
-                      className="rounded"
-                    />
-                    {row.productName}
-                  </label>
-                </div>
-
-                {row.enabled && (
-                  <div className="grid grid-cols-3 gap-2">
-                    <div className="space-y-1">
-                      <label className="text-[10px] font-medium text-muted-foreground">Feed</label>
-                      <Input
-                        type="number"
-                        min="0"
-                        max="30"
-                        value={row.feedInPeriod}
-                        onChange={(e) => setRow(row.productId, { feedInPeriod: Math.max(0, Number(e.target.value)) })}
-                        className="text-sm text-center"
-                      />
-                    </div>
-                    <div className="space-y-1">
-                      <label className="text-[10px] font-medium text-muted-foreground">Stories</label>
-                      <Input
-                        type="number"
-                        min="0"
-                        max="30"
-                        value={row.storiesInPeriod}
-                        onChange={(e) => setRow(row.productId, { storiesInPeriod: Math.max(0, Number(e.target.value)) })}
-                        className="text-sm text-center"
-                      />
-                    </div>
-                    <div className="space-y-1">
-                      <label className="text-[10px] font-medium text-muted-foreground">Slides</label>
-                      <select
-                        value={row.storySlides}
-                        onChange={(e) => setRow(row.productId, { storySlides: Number(e.target.value) })}
-                        className="w-full rounded-xl border border-border bg-white px-2 py-1.5 text-sm text-center focus:outline-none"
-                      >
-                        {[1, 2, 3, 5].map((n) => <option key={n} value={n}>{n}</option>)}
-                      </select>
-                    </div>
-                  </div>
-                )}
-              </div>
+                <input
+                  type="checkbox"
+                  checked={row.selected}
+                  onChange={(e) => setRow(row.productId, { selected: e.target.checked })}
+                  className="rounded accent-zinc-900"
+                />
+                <span className="text-sm font-medium text-foreground flex-1">{row.productName}</span>
+              </label>
             ))}
           </div>
         </div>
+
+        {/* ── Etapa 3: Configuração por produto ── */}
+        {selectedRows.length > 0 && (
+          <div>
+            <p className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground mb-2">
+              Etapa 3 — Configurar Stories
+            </p>
+            <div className="space-y-3">
+              {selectedRows.map((row) => (
+                <div key={row.productId} className="rounded-2xl border border-sky-200 bg-sky-50/50 p-3 space-y-3">
+                  <div className="flex items-center gap-2">
+                    <span className="h-2 w-2 rounded-full bg-sky-500 shrink-0" />
+                    <p className="text-sm font-semibold text-foreground">{row.productName}</p>
+                  </div>
+                  <div className="grid grid-cols-2 gap-3">
+                    <div className="space-y-1">
+                      <label className="text-[10px] font-medium text-muted-foreground">
+                        Aparições no período
+                      </label>
+                      <Input
+                        type="number"
+                        min="1"
+                        max="30"
+                        value={row.appearances}
+                        onChange={(e) => setRow(row.productId, { appearances: Math.max(1, Number(e.target.value)) })}
+                        className="text-sm text-center"
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <label className="text-[10px] font-medium text-muted-foreground">
+                        Slides por sequência
+                      </label>
+                      <div className="flex gap-1">
+                        {[1, 2, 3, 5].map((n) => (
+                          <button
+                            key={n}
+                            onClick={() => setRow(row.productId, { slides: n })}
+                            className={cn(
+                              'flex-1 rounded-lg border py-1.5 text-xs font-semibold transition-colors',
+                              row.slides === n
+                                ? 'border-sky-500 bg-sky-500 text-white'
+                                : 'border-border text-muted-foreground hover:bg-sky-50'
+                            )}
+                          >
+                            {n}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                  <p className="text-[10px] text-sky-600 font-medium">
+                    → {row.appearances}× Stories ({row.slides} slides cada)
+                  </p>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Preview total */}
+        {totalEvents > 0 && (
+          <div className="rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3">
+            <p className="text-xs font-semibold text-emerald-700">
+              {totalEvents} {totalEvents === 1 ? 'bloco de Stories' : 'blocos de Stories'} serão criados
+            </p>
+            <p className="text-[10px] text-emerald-600 mt-0.5">
+              Distribuídos em {formatDateBR(startDate)} → {formatDateBR(endDate)}. Os blocos aparecerão com borda tracejada até serem preenchidos.
+            </p>
+          </div>
+        )}
       </div>
 
       <div className="p-4 border-t border-border">
         <Button
           className="w-full"
           onClick={handleCreate}
-          disabled={creating || rows.every((r) => !r.enabled)}
+          disabled={creating || !selectedRows.length || !startDate}
         >
           {creating ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <Sparkles className="h-4 w-4 mr-2" />}
-          {creating ? 'Gerando...' : `Criar ${planPreview.feed + planPreview.stories} eventos`}
+          {creating ? 'Criando...' : totalEvents > 0 ? `Criar ${totalEvents} Stories` : 'Criar cronograma'}
         </Button>
       </div>
     </div>
@@ -1582,12 +1687,12 @@ export function CalendarioWorkspace({
       <div className="flex flex-1 flex-col min-w-0 border-r border-border">
         {/* Calendar header */}
         <div className="flex items-center justify-between px-5 py-3 border-b border-border">
-          <div className="flex items-center gap-1 rounded-xl border border-border p-0.5">
+          <div className="flex items-center rounded-xl border border-border p-[3px] gap-[3px]">
             <button
               onClick={() => setViewMode('monthly')}
               className={cn(
-                'flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-medium transition-colors',
-                viewMode === 'monthly' ? 'bg-zinc-900 text-white' : 'text-muted-foreground hover:text-foreground'
+                'flex items-center gap-1.5 rounded-[9px] px-3 py-1.5 text-xs font-medium transition-colors',
+                viewMode === 'monthly' ? 'bg-zinc-900 text-white shadow-sm' : 'text-muted-foreground hover:text-foreground'
               )}
             >
               <CalendarRange className="h-3.5 w-3.5" />
@@ -1596,8 +1701,8 @@ export function CalendarioWorkspace({
             <button
               onClick={() => setViewMode('weekly')}
               className={cn(
-                'flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-medium transition-colors',
-                viewMode === 'weekly' ? 'bg-zinc-900 text-white' : 'text-muted-foreground hover:text-foreground'
+                'flex items-center gap-1.5 rounded-[9px] px-3 py-1.5 text-xs font-medium transition-colors',
+                viewMode === 'weekly' ? 'bg-zinc-900 text-white shadow-sm' : 'text-muted-foreground hover:text-foreground'
               )}
             >
               <Columns2 className="h-3.5 w-3.5" />
