@@ -19,6 +19,13 @@ type ScriptVariantInput = {
   productName?: string;
   productContext?: string;
   referenceContext?: string;
+  contentType?: string;
+  duration?: string;
+  tone?: string;
+  objective?: string;
+  pain?: string;
+  benefit?: string;
+  targetAudience?: string;
 };
 
 type ProductImportInput = {
@@ -2034,53 +2041,131 @@ export async function generateScript(input: ScriptInput) {
   return normalizeScriptOutput(parseStructuredResponse(await callProvider(prompt), fallback), fallback);
 }
 
+function resolveContentTypeLabel(contentType?: string) {
+  const map: Record<string, string> = {
+    reels: 'Reels (video curto vertical, corte rapido, gancho visual nos primeiros 3 segundos)',
+    stories: 'Sequencia de Stories (cada take e um slide independente, linguagem direta, CTA no ultimo slide)',
+    video_curto: 'Video curto (estrutura linear: entrada, desenvolvimento e saida em menos de 1 minuto)',
+    carrossel: 'Carrossel (cada take e um slide, capa com gancho forte, ultimos slides com CTA)',
+    post: 'Post estatico (hook na primeira linha da legenda, visual precisa prender atencao antes do texto)'
+  };
+  return map[contentType ?? ''] ?? 'Reels (padrao)';
+}
+
+function resolveDurationLabel(duration?: string) {
+  const map: Record<string, string> = {
+    '15s': '15 segundos — spoken com no maximo 35 palavras. Ultra direto. So o essencial.',
+    '30s': '30 segundos — spoken com 65 a 80 palavras. Uma ideia clara, sem enrolacao.',
+    '45s': '45 segundos — spoken com 95 a 115 palavras. Da para desenvolver um exemplo curto.',
+    '60s': '60 segundos — spoken com 130 a 150 palavras. Historia rapida ou passo a passo.'
+  };
+  return map[duration ?? ''] ?? '30 segundos — spoken com 65 a 80 palavras.';
+}
+
+function resolveToneLabel(tone?: string) {
+  const map: Record<string, string> = {
+    natural: 'Tom natural: primeira pessoa, como uma conversa real, sem termos de marketing, como se fosse um amigo contando algo que descobriu. Sem "ola pessoal".',
+    autoridade: 'Tom de autoridade: firme, dados concretos, linguagem de especialista. Sem ser arrogante, mas sem hesitar. Usa numeros e resultados reais.',
+    emocional: 'Tom emocional: comeca com uma situacao real de dor ou frustração, cria conexao antes de apresentar qualquer solucao. Vai do sentimento para a transformacao.',
+    engracado: 'Tom engracado: usa humor, auto-ironia ou situacoes absurdas do cotidiano. O produto aparece como solucao natural sem forcar.',
+    storytelling: 'Tom de storytelling: estrutura de antes/depois ou conflito/resolucao. Conta uma historia real especifica, depois revela o produto ou aprendizado.',
+    genz: 'Tom Gen Z: curto, cru, sem filtro, como TikTok raiz. Direto ao ponto, sem apresentacao. Pode usar linguagem atual mas sem forcar girias.',
+    educativo: 'Tom educativo: ensina algo especifico e util antes de mencionar o produto. Entrega valor primeiro, depois conecta com a solucao.'
+  };
+  return map[tone ?? ''] ?? map['natural'];
+}
+
+function resolveObjectiveLabel(objective?: string) {
+  const map: Record<string, string> = {
+    vender: 'Objetivo vender: destaca o resultado, urgencia ou o que o cliente perde sem agir. CTA direto para compra, link ou DM.',
+    engajar: 'Objetivo engajar: termina com pergunta ou provocacao que gera comentario, salvamento ou compartilhamento. NAO faz CTA de venda.',
+    educar: 'Objetivo educar: foca em entregar um aprendizado pratico. O produto e solucao natural do problema ensinado, nao o centro.',
+    autoridade: 'Objetivo autoridade: posiciona o criador ou marca como referencia. Usa dados, resultados ou credenciais de forma implicita e natural.',
+    prova_social: 'Objetivo prova social: usa depoimento, caso real ou transformacao visivel. Estrutura: "meu cliente fez X e aconteceu Y" ou "eu mesma testei e...".'
+  };
+  return map[objective ?? ''] ?? map['vender'];
+}
+
 export async function generateScriptVariants(input: ScriptVariantInput) {
+  const productLabel = input.productName ?? 'Creator AI';
+  const contentTypeLabel = resolveContentTypeLabel(input.contentType);
+  const durationLabel = resolveDurationLabel(input.duration);
+  const toneLabel = resolveToneLabel(input.tone);
+  const objectiveLabel = resolveObjectiveLabel(input.objective);
+
   const fallback = Array.from({ length: 3 }, (_, index) => ({
-    title: `Roteiro ${index + 1} - ${input.productName ?? 'Creator AI'}`,
+    title: `Roteiro ${index + 1} - ${productLabel}`,
     hook:
       index === 0
-        ? 'Comece pela dor principal do cliente e entregue a virada logo nos primeiros segundos.'
+        ? `Voce ja tentou resolver ${(input.pain ?? input.prompt).toLowerCase()} e nao funcionou?`
         : index === 1
-          ? 'Abra com uma situacao real, puxe curiosidade e entregue um passo pratico no meio.'
-          : 'Use uma provocacao curta, um exemplo atual e termine com CTA objetivo.',
+          ? `Ninguem te contou que da pra ${(input.benefit ?? input.prompt).toLowerCase()} sem complicar.`
+          : `${productLabel} nao e o que voce acha que e — e melhor.`,
     spoken:
       index === 0
-        ? `Hoje eu quero te mostrar um jeito direto de transformar ${input.prompt.toLowerCase()} em conteudo que gera conversa e desejo.`
+        ? `Eu sei como e ficar travado em ${(input.pain ?? input.prompt).toLowerCase()}. Ja passei por isso. O que mudou tudo foi quando eu comecei a usar ${productLabel}. Simples, rapido e sem enrolacao.`
         : index === 1
-          ? `Se voce sente que ${input.prompt.toLowerCase()} ainda fica generico, esse roteiro resolve isso com contexto, prova e CTA.`
-          : `Tem um jeito mais inteligente de abordar ${input.prompt.toLowerCase()} sem parecer repetitivo, e e isso que eu vou te mostrar agora.`,
+          ? `Sabe aquela sensacao de ${(input.pain ?? input.prompt).toLowerCase()}? ${productLabel} foi feito exatamente pra isso. Resultado real, sem complicacao.`
+          : `Se voce quer ${(input.benefit ?? input.prompt).toLowerCase()}, precisa conhecer ${productLabel}. Testei, funcionou, e agora eu recomendo.`,
     takes: [
-      'Abertura com enquadramento rapido da dor',
-      'Contexto visual ou noticia recente',
-      'Explicacao objetiva em linguagem humana',
-      'Prova, exemplo ou quebra de objecao',
-      'CTA para comentario, direct ou clique'
+      'Abertura: enquadra a dor ou situacao em 1 frase',
+      'Contexto: por que isso importa agora',
+      'Virada: apresenta a solucao de forma natural',
+      'Prova ou exemplo concreto',
+      'CTA claro e especifico'
     ],
-    cta: 'Comente "quero" para eu te enviar a proxima ideia dessa serie.',
-    caption: `Se voce quer ${input.prompt.toLowerCase()}, esse e o tipo de abordagem que faz sentido agora.\n\nUse a ideia, adapte o gancho e finalize com uma CTA clara.\n\n#reels #stories #marketingdigital #conteudo`
+    cta: 'Comenta aqui embaixo se voce ja passou por isso.',
+    caption: `${(input.pain ?? input.prompt).slice(0, 60)}.\n\nA solucao existe e e mais simples do que parece.\n\n#reels #${productLabel.toLowerCase().replace(/\s+/g, '')} #marketingdigital #conteudo`
   }));
 
+  const webQuery = buildSocialTrendQuery(
+    input.productName ?? input.prompt,
+    input.pain ?? '',
+    input.benefit ?? '',
+    'reels virais tiktok tendencias conteudo'
+  );
+
   const prompt = await buildCreatorAiPrompt([
-    'Voce cria roteiros de Instagram e videos curtos em portugues do Brasil.',
+    '=== MISSAO ===',
+    'Voce e um roteirista especialista em conteudo de alta performance para social media brasileiro.',
+    'Sua unica funcao aqui e criar roteiros que PRENDEM atencao, geram retencao e convertem.',
+    'NAO escreva texto de IA generica. Escreva como um creator real fala no video.',
+    '',
+    '=== FORMATO DE RESPOSTA ===',
     'Responda somente JSON valido.',
     'Retorne exatamente um array com 3 objetos.',
-    'Formato esperado: [{"title":"","hook":"","spoken":"","takes":["","","","",""],"cta":"","caption":""}]',
-    'Cada versao deve ser pronta para Reels, carrossel ou Stories e evitar texto genérico.',
-    'Hook: curto e forte, em linguagem nativa de rede social.',
-    'Spoken: natural, com pontuacao e ritmo de fala. Mire em 70 a 130 palavras.',
-    'Takes: 5 blocos curtos. CTA: uma unica chamada clara. Caption: com abertura, valor, CTA e hashtags.',
-    'Versao 1 deve puxar para dor e promessa.',
-    'Versao 2 deve usar prova, bastidor ou exemplo concreto.',
-    'Versao 3 deve abrir com curiosidade, contraste ou objecao.',
-    `Pedido principal: ${input.prompt}`,
-    input.productName ? `Produto principal: ${input.productName}` : null,
-    input.productContext ? `Contexto do produto: ${input.productContext}` : null,
-    input.referenceContext ? `Contexto e referencias para aproveitar: ${input.referenceContext}` : null,
-    'Cada roteiro deve ter um angulo diferente, parecer pronto para gravacao e evitar frases genericas.',
-    'Use contexto atual de marketing e criacao de conteudo quando isso ajudar o gancho, a estrutura ou a legenda.'
-  ], buildSocialTrendQuery(input.prompt, input.referenceContext, input.productContext, input.productName));
+    'Formato: [{"title":"","hook":"","spoken":"","takes":["","","","",""],"cta":"","caption":""}]',
+    '',
+    '=== REGRAS INEGOCIAVEIS ===',
+    '1. HOOK: primeira frase do video. Deve prender em 3 segundos. Sem "ola", sem "hoje vou falar", sem apresentacao. Comeca direto na dor, provocacao, dado chocante ou situacao real.',
+    '2. SPOKEN: como a pessoa VAI FALAR no video. Linguagem oral, natural, com virgulas e pausas. Sem bullets, sem headers, sem linguagem escrita. Respeite o limite de palavras da duracao.',
+    '3. TAKES: 5 descricoes de cena/take para o editor. Cada take e uma instrucao visual curta, nao texto falado.',
+    '4. CTA: uma chamada unica, especifica e nao generica. Alinhada ao objetivo.',
+    '5. CAPTION: legenda pronta para postar. Abertura forte (nao repete o hook palavra por palavra), 2 a 4 linhas de valor, CTA, hashtags relevantes ao nicho.',
+    '',
+    '=== BRIEFING DO CLIENTE ===',
+    `Tipo de conteudo: ${contentTypeLabel}`,
+    `Duracao alvo: ${durationLabel}`,
+    `${toneLabel}`,
+    `${objectiveLabel}`,
+    input.pain ? `Dor que o produto resolve: ${input.pain}` : null,
+    input.benefit ? `Beneficio principal: ${input.benefit}` : null,
+    input.targetAudience ? `Publico-alvo: ${input.targetAudience}` : null,
+    input.productName ? `Produto: ${input.productName}` : null,
+    input.productContext ? `Contexto do produto (beneficios, publico, restricoes): ${input.productContext}` : null,
+    input.referenceContext ? `Referencias e temas em alta fornecidos: ${input.referenceContext}` : null,
+    input.prompt ? `Instrucao extra do usuario: ${input.prompt}` : null,
+    '',
+    '=== 3 VARIACOES OBRIGATORIAS ===',
+    'Variacao 1 — GANCHO DE DOR: abre direto na dor ou problema do publico. Promessa de transformacao rapida. Tom mais proximo e empatico.',
+    'Variacao 2 — PROVA E BASTIDOR: abre com resultado real, caso concreto ou "fui testar e...". Mais credibilidade e menos sentimento.',
+    'Variacao 3 — CURIOSIDADE E CONTRASTE: abre com provocacao, dado surpresa ou contraste ("todo mundo faz X, mas o que funciona e Y"). Mais intriga e engajamento.',
+    '',
+    'Cada variacao deve ter angulo, gancho e estrutura de cena completamente diferentes entre si.',
+    'Use referencias de trends e formatos virais do momento quando isso fortalecer o gancho ou a estrutura.'
+  ], webQuery);
 
-  const parsed = parseStructuredResponse(await callProvider(prompt), fallback);
+  const parsed = parseStructuredResponse(await callProvider(prompt, { maxTokens: 3200 }), fallback);
   return fallback.map((item, index) => normalizeScriptOutput(parsed[index], item));
 }
 
