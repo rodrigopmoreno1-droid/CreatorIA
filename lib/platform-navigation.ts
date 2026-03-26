@@ -1,4 +1,6 @@
 import {
+  CalendarDays,
+  Clapperboard,
   Bot,
   ChartColumn,
   LayoutDashboard,
@@ -6,7 +8,6 @@ import {
   PencilLine,
   TrendingUp,
   UserSquare2,
-  Video
 } from 'lucide-react';
 
 import type { PlatformModuleKey } from '@/types/platform';
@@ -26,18 +27,25 @@ export const platformNavigation: Array<{
     href: (workspace) => `/${workspace}/dashboard`
   },
   {
-    key: 'contents',
-    label: 'Conteúdos',
-    description: 'Fluxo único de conteúdo',
-    icon: Video,
-    href: (workspace) => `/${workspace}/conteudos`
-  },
-  {
     key: 'roteiros',
     label: 'Roteiros',
     description: 'Briefing e geração',
     icon: PencilLine,
     href: (workspace) => `/${workspace}/roteiros`
+  },
+  {
+    key: 'production',
+    label: 'Produção',
+    description: 'Gravação e edição',
+    icon: Clapperboard,
+    href: (workspace) => `/${workspace}/recordings`
+  },
+  {
+    key: 'posts',
+    label: 'Postagens',
+    description: 'Calendário e publicação',
+    icon: CalendarDays,
+    href: (workspace) => `/${workspace}/posts`
   },
   {
     key: 'creators',

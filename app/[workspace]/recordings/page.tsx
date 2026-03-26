@@ -1,4 +1,5 @@
-import { redirect } from 'next/navigation';
+import { RecordingsWorkspace } from '@/components/platform/recordings-workspace';
+import { getWorkspaceRecordings } from '@/lib/platform-data';
 
 export default async function RecordingsPage({
   params
@@ -6,5 +7,7 @@ export default async function RecordingsPage({
   params: Promise<{ workspace: string }>;
 }) {
   const { workspace } = await params;
-  redirect(`/${workspace}/conteudos?view=production`);
+  const recordings = await getWorkspaceRecordings(workspace);
+
+  return <RecordingsWorkspace workspace={workspace} initialCards={recordings} />;
 }
