@@ -2,13 +2,13 @@
 
 import { useMemo, useState } from 'react';
 import Link from 'next/link';
-import { Bot, CheckCircle2, Loader2, Mic, PencilLine, Plus, Sparkles, Square, Trash2, X } from 'lucide-react';
+import { Bot, CheckCircle2, Eye, Loader2, Mic, PencilLine, Plus, Sparkles, Square, X } from 'lucide-react';
 import { toast } from 'sonner';
 
-import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
+import { ScriptPreviewModal } from '@/components/platform/script-preview-modal';
 import { Textarea } from '@/components/ui/textarea';
 import { PageIntro } from '@/components/platform/page-intro';
 import { ScriptEditorModal, type EditableScriptDraft } from '@/components/platform/script-editor-modal';
@@ -185,9 +185,9 @@ function buildEditableScript(script: ScriptItem): EditableScriptDraft {
     productName: script.productName,
     contentType: script.contentType,
     subOption: script.subOption,
-    storySlides: script.storySlides,
-    carrosselSlides: script.carrosselSlides,
-    postFields: script.postFields
+    storySlides: script.storySlides.map((slide) => ({ ...slide })),
+    carrosselSlides: script.carrosselSlides.map((slide) => ({ ...slide })),
+    postFields: script.postFields ? { ...script.postFields } : null
   };
 }
 
@@ -283,6 +283,7 @@ export function ScriptsWorkspace({
 
   const [loadingGeneration, setLoadingGeneration] = useState(false);
   const [busyScriptId, setBusyScriptId] = useState<string | null>(null);
+  const [viewingScript, setViewingScript] = useState<ScriptItem | null>(null);
   const [editingScript, setEditingScript] = useState<EditableScriptDraft | null>(null);
   const [statusFilter, setStatusFilter] = useState<ScriptStatusFilter>('all');
 
@@ -461,6 +462,7 @@ export function ScriptsWorkspace({
       const payload = (await response.json().catch(() => null)) as { script?: ScriptItem; error?: string } | null;
       if (!response.ok || !payload?.script) throw new Error(payload?.error ?? 'Erro ao aprovar.');
       setScripts((current) => current.map((s) => (s.id === payload.script!.id ? payload.script! : s)));
+      setViewingScript((current) => (current?.id === payload.script!.id ? payload.script! : current));
       toast.success('Roteiro aprovado e enviado para Produção.');
     } catch (error) {
       toast.error(error instanceof Error ? error.message : 'Não foi possível aprovar o roteiro.');
@@ -476,6 +478,7 @@ export function ScriptsWorkspace({
       const payload = (await response.json().catch(() => null)) as { ok?: boolean; error?: string } | null;
       if (!response.ok || !payload?.ok) throw new Error(payload?.error ?? 'Erro ao descartar.');
       setScripts((current) => current.filter((s) => s.id !== scriptId));
+      setViewingScript((current) => (current?.id === scriptId ? null : current));
       toast.success('Roteiro descartado.');
     } catch (error) {
       toast.error(error instanceof Error ? error.message : 'Não foi possível descartar o roteiro.');
@@ -511,6 +514,7 @@ export function ScriptsWorkspace({
       const payload = (await response.json().catch(() => null)) as { script?: ScriptItem; error?: string } | null;
       if (!response.ok || !payload?.script) throw new Error(payload?.error ?? 'Erro ao atualizar.');
       setScripts((current) => current.map((s) => (s.id === payload.script!.id ? payload.script! : s)));
+      setViewingScript((current) => (current?.id === payload.script!.id ? payload.script! : current));
       setEditingScript(null);
       toast.success('Roteiro atualizado.');
     } catch (error) {
@@ -845,7 +849,7 @@ export function ScriptsWorkspace({
                         {script.contentType === 'stories' && script.storySlides && script.storySlides.length > 0 ? (
                           <>
                             <p className="mt-1.5 text-[13px] font-medium leading-5 text-foreground/80 line-clamp-2">
-                              {script.storySlides[0].objetivo || script.storySlides[0].textoTela}
+                              {script.storySlides[0].textoTela || script.hook}
                             </p>
                             <p className="mt-1 text-[12px] text-muted-foreground">{script.storySlides.length} slides</p>
                           </>
@@ -888,12 +892,13 @@ export function ScriptsWorkspace({
                       {isDraft ? (
                         <>
                           <Button
+                            variant="outline"
                             size="sm"
-                            onClick={() => handleApprove(script.id)}
+                            onClick={() => setViewingScript(script)}
                             disabled={isBusy}
                           >
-                            {isBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <CheckCircle2 className="h-3.5 w-3.5" />}
-                            Aprovar
+                            <Eye className="h-3.5 w-3.5" />
+                            Visualizar
                           </Button>
                           <Button
                             variant="outline"
@@ -903,6 +908,14 @@ export function ScriptsWorkspace({
                           >
                             <PencilLine className="h-3.5 w-3.5" />
                             Editar
+                          </Button>
+                          <Button
+                            size="sm"
+                            onClick={() => handleApprove(script.id)}
+                            disabled={isBusy}
+                          >
+                            {isBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <CheckCircle2 className="h-3.5 w-3.5" />}
+                            Aprovar
                           </Button>
                           <button
                             type="button"
@@ -915,15 +928,26 @@ export function ScriptsWorkspace({
                           </button>
                         </>
                       ) : (
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          onClick={() => setEditingScript(buildEditableScript(script))}
-                          disabled={isBusy}
-                        >
-                          <PencilLine className="h-3.5 w-3.5" />
-                          Editar
-                        </Button>
+                        <>
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => setViewingScript(script)}
+                            disabled={isBusy}
+                          >
+                            <Eye className="h-3.5 w-3.5" />
+                            Visualizar
+                          </Button>
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => setEditingScript(buildEditableScript(script))}
+                            disabled={isBusy}
+                          >
+                            <PencilLine className="h-3.5 w-3.5" />
+                            Editar
+                          </Button>
+                        </>
                       )}
                     </div>
                   </div>
@@ -952,6 +976,20 @@ export function ScriptsWorkspace({
           onClose={() => setEditingScript(null)}
           onSave={() => updateScript(editingScript)}
           savingLabel={busyScriptId === editingScript.id ? 'Atualizando...' : 'Atualizar roteiro'}
+        />
+      ) : null}
+
+      {viewingScript ? (
+        <ScriptPreviewModal
+          script={viewingScript}
+          busy={busyScriptId === viewingScript.id}
+          onClose={() => setViewingScript(null)}
+          onEdit={() => {
+            setViewingScript(null);
+            setEditingScript(buildEditableScript(viewingScript));
+          }}
+          onApprove={viewingScript.status === 'draft' ? () => handleApprove(viewingScript.id) : undefined}
+          onDiscard={viewingScript.status === 'draft' ? () => handleDiscard(viewingScript.id) : undefined}
         />
       ) : null}
     </div>

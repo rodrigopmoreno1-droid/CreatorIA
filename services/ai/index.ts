@@ -463,6 +463,145 @@ function normalizeCaptionText(value: unknown, maxLength = 1600) {
   return text.slice(0, maxLength);
 }
 
+function uniqueNonEmptyStrings(values: Array<string | null | undefined>) {
+  return [...new Set(values.map((value) => cleanSingleLineText(value, 120)).filter(Boolean))];
+}
+
+function clipWords(value: string, maxWords: number, maxLength = 80) {
+  const words = cleanTextValue(value)
+    .replace(/\s+/g, ' ')
+    .trim()
+    .split(' ')
+    .filter(Boolean)
+    .slice(0, maxWords);
+
+  return words.join(' ').slice(0, maxLength).trim();
+}
+
+function lowerFirst(value: string) {
+  const text = cleanTextValue(value);
+  return text ? `${text.charAt(0).toLowerCase()}${text.slice(1)}` : '';
+}
+
+function hasEnoughLetters(value: string, minimum = 6) {
+  return (value.match(/[A-Za-zÀ-ÖØ-öø-ÿ]/g) ?? []).length >= minimum;
+}
+
+function isPlaceholderText(value: unknown) {
+  const text = cleanTextValue(value);
+
+  if (!text) {
+    return true;
+  }
+
+  if (/\[[^\]]+\]/.test(text) || /\{[^}]+\}/.test(text)) {
+    return true;
+  }
+
+  const normalized = normalizeMatchText(text).replace(/\s+/g, ' ').trim();
+
+  if (!normalized) {
+    return true;
+  }
+
+  return [
+    /^frase de gancho$/,
+    /^gancho aqui$/,
+    /^texto falado(?: do story)?(?: \d+)?$/,
+    /^conteudo(?: da pagina)?(?: \d+)?$/,
+    /^conteudo do slide(?: \d+)?$/,
+    /^legenda(?: aqui)?$/,
+    /^cta(?: aqui)?$/,
+    /^titulo(?: da capa| da peca| impactante| curto e impactante)?$/,
+    /^subtitulo(?: \d+)?$/,
+    /^direcao visual(?: do designer)?$/,
+    /^conceito do post$/,
+    /^abertura forte$/,
+    /^promessa especifica$/,
+    /^story \d+$/,
+    /^slide \d+$/,
+    /^pagina \d+$/,
+    /^take \d+$/,
+    /^roteiro \d+$/,
+    /^produto \d+$/,
+    /^conteudo \d+$/
+  ].some((pattern) => pattern.test(normalized));
+}
+
+function chooseSingleLine(
+  value: unknown,
+  fallback: string,
+  maxLength = 220,
+  minimumLetters = 6
+) {
+  const candidate = cleanSingleLineText(value, maxLength);
+  if (candidate && !isPlaceholderText(candidate) && hasEnoughLetters(candidate, minimumLetters)) {
+    return candidate;
+  }
+
+  return fallback;
+}
+
+function chooseParagraph(
+  value: unknown,
+  fallback: string,
+  maxLength = 1200,
+  minimumLetters = 12
+) {
+  const candidate = cleanParagraphText(value, maxLength);
+  if (candidate && !isPlaceholderText(candidate) && hasEnoughLetters(candidate, minimumLetters)) {
+    return candidate;
+  }
+
+  return fallback;
+}
+
+function chooseCaption(value: unknown, fallback: string) {
+  const candidate = normalizeCaptionText(value);
+  if (candidate && !isPlaceholderText(candidate) && hasEnoughLetters(candidate, 12)) {
+    return candidate;
+  }
+
+  return fallback;
+}
+
+function buildBriefSeed(input: ScriptVariantInput) {
+  const topic = cleanSingleLineText(input.benefit || input.pain || input.prompt || input.productName || 'seu tema principal', 120);
+  const problem = cleanSingleLineText(input.pain || input.prompt || 'esse problema', 120);
+  const benefit = cleanSingleLineText(input.benefit || input.prompt || 'um resultado real', 120);
+  const product = cleanSingleLineText(input.productName || '', 80);
+  const audience = cleanSingleLineText(input.targetAudience || 'quem vive isso na pratica', 120);
+
+  return {
+    topic,
+    problem,
+    benefit,
+    product,
+    audience,
+    shortProblem: clipWords(problem, 5, 52) || 'esse problema',
+    shortBenefit: clipWords(benefit, 5, 52) || 'resultado real',
+    shortProduct: clipWords(product || 'essa solucao', 4, 42) || 'essa solucao'
+  };
+}
+
+function buildHashtags(...parts: Array<string | null | undefined>) {
+  const stopwords = new Set(['com', 'para', 'sem', 'por', 'nao', 'mais', 'muito', 'muita', 'uma', 'umas', 'uns', 'seu', 'sua', 'isso', 'esse', 'essa', 'de', 'da', 'do']);
+  const tags = uniqueNonEmptyStrings(parts)
+    .map((part) =>
+      normalizeDiacritics(part)
+        .toLowerCase()
+        .split(/[^a-z0-9]+/g)
+        .filter((item) => item.length >= 3 && !stopwords.has(item))
+        .slice(0, 2)
+        .join('')
+    )
+    .filter((item) => item.length >= 5)
+    .slice(0, 4)
+    .map((item) => `#${item}`);
+
+  return [...new Set(['#creatorai', '#conteudostrategico', ...tags])].slice(0, 5).join(' ');
+}
+
 function buildSocialTrendQuery(...parts: Array<string | null | undefined>) {
   return [...parts, 'instagram reels tiktok marketing de conteudo social media hooks copywriting tendencias virais']
     .filter((part): part is string => typeof part === 'string' && part.trim().length > 0)
@@ -523,19 +662,22 @@ function normalizeScriptOutput(payload: unknown, fallback: ScriptDraftResponse):
   }
 
   const raw = payload as Record<string, unknown>;
-  const takes = Array.isArray(raw.takes) ? raw.takes.map((take) => cleanSingleLineText(take, 160)).filter(Boolean) : [];
+  const takes = Array.isArray(raw.takes)
+    ? raw.takes.map((take) => cleanSingleLineText(take, 160))
+    : [];
 
-  while (takes.length < 5) {
-    takes.push('');
-  }
+  const normalizedTakes = fallback.takes.map((fallbackTake, index) => {
+    const candidate = takes[index];
+    return chooseSingleLine(candidate, fallbackTake, 160, 6);
+  });
 
   return {
-    title: cleanSingleLineText(raw.title ?? fallback.title, 80) || fallback.title,
-    hook: cleanSingleLineText(raw.hook ?? fallback.hook, 220) || fallback.hook,
-    spoken: cleanParagraphText(raw.spoken ?? fallback.spoken, 1200) || fallback.spoken,
-    takes: takes.slice(0, 6),
-    cta: cleanSingleLineText(raw.cta ?? fallback.cta, 220) || fallback.cta,
-    caption: normalizeCaptionText(raw.caption ?? fallback.caption) || fallback.caption
+    title: chooseSingleLine(raw.title, fallback.title, 80, 4),
+    hook: chooseSingleLine(raw.hook, fallback.hook, 220, 8),
+    spoken: chooseParagraph(raw.spoken, fallback.spoken, 1200, 20),
+    takes: normalizedTakes,
+    cta: chooseSingleLine(raw.cta, fallback.cta, 220, 8),
+    caption: chooseCaption(raw.caption, fallback.caption)
   };
 }
 
@@ -2026,7 +2168,7 @@ export async function generateScript(input: ScriptInput) {
   const fallback = {
     title: `Roteiro sobre ${input.topic}`,
     hook: `Se voce quer ${input.topic.toLowerCase()}, faca isso sem complicar.`,
-    spoken: `Hoje eu vou te mostrar como ${input.topic.toLowerCase()} de forma simples.`,
+    spoken: `Se ${input.topic.toLowerCase()} ainda parece complicado, vale simplificar o caminho antes de desistir. Quando voce entende o ajuste certo, fica mais facil sair da tentativa aleatoria e entrar em um processo que realmente faz sentido.`,
     takes: ['abertura com dor', 'prova visual', 'passo a passo', 'resultado', 'CTA'],
     cta: 'Comente "quero" para receber o material.',
     caption: `Se voce quer ${input.topic.toLowerCase()}, esse roteiro e o caminho mais simples.\n\nUse como base, adapte para a sua oferta e feche com uma chamada clara.\n\n#reels #marketingdigital #conteudopararedes #instagram`
@@ -2046,7 +2188,9 @@ export async function generateScript(input: ScriptInput) {
     input.tone ? `Tom: ${input.tone}` : null
   ], buildSocialTrendQuery(input.topic, input.goal, input.tone));
 
-  return normalizeScriptOutput(parseStructuredResponse(await callProvider(prompt), fallback), fallback);
+  const draft = normalizeScriptOutput(parseStructuredResponse(await callProvider(prompt), fallback), fallback);
+  assertDraftUsability(draft, 'reels');
+  return draft;
 }
 
 function resolveContentTypeLabel(contentType?: string) {
@@ -2072,6 +2216,43 @@ function resolveDurationLabel(duration?: string) {
   return map[duration ?? ''] ?? '30 segundos — spoken com 65 a 80 palavras.';
 }
 
+function resolveActiveTones(tones?: string[], tone?: string) {
+  return uniqueNonEmptyStrings(tones?.length ? tones : tone ? [tone] : ['natural']);
+}
+
+function resolveActiveObjectives(objectives?: string[], objective?: string) {
+  return uniqueNonEmptyStrings(objectives?.length ? objectives : objective ? [objective] : ['vender']);
+}
+
+function resolveToneChipLabel(tone?: string) {
+  const map: Record<string, string> = {
+    natural: 'Natural',
+    autoridade: 'Autoridade',
+    emocional: 'Emocional',
+    engracado: 'Engracado',
+    storytelling: 'Storytelling',
+    genz: 'Gen Z',
+    educativo: 'Educativo',
+    trend: 'Trend'
+  };
+
+  return map[tone ?? ''] ?? 'Natural';
+}
+
+function resolveObjectiveChipLabel(objective?: string) {
+  const map: Record<string, string> = {
+    vender: 'Vender',
+    engajar: 'Engajar',
+    educar: 'Educar',
+    autoridade: 'Autoridade',
+    prova_social: 'Prova social',
+    alcance: 'Alcance',
+    relacionamento: 'Relacionamento'
+  };
+
+  return map[objective ?? ''] ?? 'Vender';
+}
+
 function resolveToneLabel(tone?: string) {
   const map: Record<string, string> = {
     natural: 'Tom natural: primeira pessoa, como uma conversa real, sem termos de marketing, como se fosse um amigo contando algo que descobriu. Sem "ola pessoal".',
@@ -2087,11 +2268,21 @@ function resolveToneLabel(tone?: string) {
 }
 
 function resolveTonesLabel(tones?: string[], tone?: string): string {
-  const active = tones?.length ? tones : tone ? [tone] : ['natural'];
+  const active = resolveActiveTones(tones, tone);
   const isTrend = active.includes('trend');
   const others = active.filter((t) => t !== 'trend');
 
   const parts: string[] = [];
+  const comboLabel = active.map((item) => resolveToneChipLabel(item)).join(' + ');
+
+  parts.push(`Tons ativos combinados: ${comboLabel}.`);
+  parts.push(
+    active.length > 1
+      ? 'Todos esses tons precisam aparecer juntos na mesma peca. Nao escolha um e ignore o resto.'
+      : 'Mantenha esse tom de forma consistente do inicio ao fim.'
+  );
+  parts.push('Pense em camadas: voz, ritmo, estrutura e fechamento devem refletir os tons ao mesmo tempo.');
+
   if (isTrend) {
     parts.push(resolveToneLabel('trend'));
   }
@@ -2100,7 +2291,7 @@ function resolveTonesLabel(tones?: string[], tone?: string): string {
     if (label) parts.push(label);
   });
 
-  return parts.join(' + ');
+  return parts.join('\n');
 }
 
 function resolveObjectiveLabel(objective?: string) {
@@ -2117,8 +2308,17 @@ function resolveObjectiveLabel(objective?: string) {
 }
 
 function resolveObjectivesLabel(objectives?: string[], objective?: string): string {
-  const active = objectives?.length ? objectives : objective ? [objective] : ['vender'];
-  return active.map((o) => resolveObjectiveLabel(o)).join(' + ');
+  const active = resolveActiveObjectives(objectives, objective);
+  const parts = [
+    `Objetivos combinados: ${active.map((item) => resolveObjectiveChipLabel(item)).join(' + ')}.`,
+    active.length > 1
+      ? 'Esses objetivos sao cumulativos. O conteudo precisa equilibrar todos ao mesmo tempo, sem tratar como escolhas exclusivas.'
+      : 'Toda a peca deve servir a esse objetivo de forma clara.',
+    'Distribua a estrategia pela estrutura: o hook pode puxar alcance, o desenvolvimento pode gerar conexao ou valor, e o CTA pode converter sem parecer forcado.',
+    ...active.map((o) => resolveObjectiveLabel(o))
+  ];
+
+  return parts.join('\n');
 }
 
 function buildBriefingLines(input: ScriptVariantInput, extras: string[] = []): (string | null)[] {
@@ -2132,6 +2332,267 @@ function buildBriefingLines(input: ScriptVariantInput, extras: string[] = []): (
     input.prompt ? `Instrucao extra: ${input.prompt}` : null,
     ...extras
   ];
+}
+
+function buildVideoFallback(input: ScriptVariantInput): ScriptDraftResponse {
+  const brief = buildBriefSeed(input);
+  const theme = lowerFirst(brief.topic || brief.problem || brief.benefit || 'esse tema');
+  const productMention = brief.product || 'a solucao certa';
+  const audienceMention = lowerFirst(brief.audience || 'quem vive isso');
+
+  return {
+    title: `${input.contentType === 'video_curto' ? 'Video curto' : 'Reels'} - ${brief.product || brief.shortBenefit}`,
+    hook: chooseSingleLine(
+      `Se voce quer ${brief.shortBenefit}, talvez esteja insistindo no caminho errado.`,
+      `Se voce quer ${theme}, talvez esteja insistindo no caminho errado.`,
+      120,
+      10
+    ),
+    spoken: `Se ${lowerFirst(brief.problem)}, o ponto nao costuma ser falta de esforco. Normalmente o bloqueio esta em repetir uma estrategia que nao conversa com a sua rotina. Quando voce entende isso, fica mais facil buscar ${lowerFirst(brief.benefit)} com mais clareza e menos excesso. Foi exatamente por isso que ${productMention} entrou como apoio real para ${audienceMention}.`,
+    takes: [
+      'Close no rosto, olhando direto para a camera com expressao de alerta',
+      `Texto na tela destacando o erro mais comum sobre ${theme}`,
+      `Corte mostrando o momento em que ${productMention} entra na rotina`,
+      `B-roll com prova visual ligada a ${brief.shortBenefit}`,
+      'Fechamento com CTA direto, olho na camera e gesto chamando para a acao'
+    ],
+    cta: `Se isso fez sentido para voce, me chama no direct e eu te mostro como aplicar isso com ${productMention}.`,
+    caption: `O problema quase nunca e querer demais. O problema e repetir uma estrategia que nao conversa com a sua rotina.\n\nSe ${lowerFirst(brief.problem)}, vale ajustar a base antes de desistir.\n\nMe chama no direct se quiser entender como ${productMention} entra nisso de forma pratica.\n\n${buildHashtags(brief.product, brief.benefit, brief.problem)}`
+  };
+}
+
+function buildStoriesFallback(input: ScriptVariantInput, count: number): ScriptDraftResponse {
+  const brief = buildBriefSeed(input);
+  const productMention = brief.product || 'essa solucao';
+  const slides: StorySlide[] = [];
+
+  const templates: StorySlide[] = [
+    {
+      objetivo: 'gancho',
+      textoTela: 'O erro que trava seu resultado',
+      falado: `Se ${lowerFirst(brief.problem)}, tem um ponto que quase sempre passa batido e trava seu resultado.`,
+      visual: 'Selfie olhando direto para a camera, com texto forte ocupando o centro da tela'
+    },
+    {
+      objetivo: 'contexto',
+      textoTela: 'Nao e falta de esforco',
+      falado: `Na maioria das vezes, o problema nao e disciplina. E insistir em um caminho que nao conversa com a sua rotina.`,
+      visual: 'Plano medio, corte limpo, com apoio de texto curto reforcando a quebra de crenca'
+    },
+    {
+      objetivo: 'revelacao',
+      textoTela: clipWords(`${brief.shortProduct} entra aqui`, 5, 34) || 'A solucao entra aqui',
+      falado: `Quando voce organiza a base e usa ${productMention} com intencao, fica muito mais facil buscar ${lowerFirst(brief.benefit)} sem complicar tudo.`,
+      visual: `B-roll do produto ${brief.product ? 'em uso' : 'ou da rotina'} com detalhes bem proximos`
+    },
+    {
+      objetivo: 'prova',
+      textoTela: clipWords(`Mais clareza para ${brief.shortBenefit}`, 6, 40) || 'Mais clareza no processo',
+      falado: `O ganho aqui e ter mais consistencia, mais clareza e um processo que voce realmente consegue manter.`,
+      visual: 'Mistura de selfie com apoio visual simples mostrando rotina, resultado ou anotacoes'
+    },
+    {
+      objetivo: 'cta',
+      textoTela: 'Me chama no direct',
+      falado: `Se quiser, me chama e eu te explico como aplicar isso no seu caso com ${productMention}.`,
+      visual: 'Tela final limpa, dedo apontando para o direct ou para a caixa de resposta'
+    }
+  ];
+
+  for (let index = 0; index < count; index += 1) {
+    if (count === 1) {
+      slides.push({
+        objetivo: 'gancho',
+        textoTela: templates[0].textoTela,
+        falado: `${templates[0].falado} ${templates[4].falado}`,
+        visual: templates[0].visual
+      });
+      break;
+    }
+
+    if (count === 2) {
+      slides.push(index === 0 ? templates[0] : templates[4]);
+      continue;
+    }
+
+    if (count === 3) {
+      slides.push(index === 0 ? templates[0] : index === 1 ? templates[2] : templates[4]);
+      continue;
+    }
+
+    slides.push(templates[index] ?? templates[templates.length - 1]);
+  }
+
+  return {
+    title: `Stories - ${brief.product || brief.shortBenefit}`,
+    hook: slides[0]?.textoTela || 'Story com gancho forte',
+    spoken: '',
+    takes: [],
+    cta: `Responde "quero" que eu te explico como ${productMention} entra nisso.`,
+    caption: '',
+    storySlides: slides
+  };
+}
+
+function buildCarrosselFallback(input: ScriptVariantInput, count: number): ScriptDraftResponse {
+  const brief = buildBriefSeed(input);
+  const productMention = brief.product || 'essa solucao';
+  const slides = Array.from({ length: count }, (_, index): CarrosselSlide => {
+    if (index === 0) {
+      return {
+        numero: 1,
+        titulo: 'O erro que trava seu resultado',
+        subtitulo: 'E o ajuste que muda o jogo',
+        conteudo: `Se ${lowerFirst(brief.problem)}, este carrossel vai direto ao ponto.`,
+        visual: 'Capa limpa com tipografia grande, contraste forte e um elemento visual de tensao'
+      };
+    }
+
+    if (index === count - 1) {
+      return {
+        numero: index + 1,
+        titulo: 'Agora faz o seguinte',
+        subtitulo: 'Salva e me chama',
+        conteudo: `Salva este carrossel e me chama se quiser aplicar isso com ${productMention} de forma pratica.`,
+        visual: 'Slide final com CTA visivel, destaque para salvar, compartilhar ou chamar no direct'
+      };
+    }
+
+    const middleBlocks = [
+      {
+        titulo: 'O problema real',
+        subtitulo: 'Nao e o que parece',
+        conteudo: `Na maior parte dos casos, o bloqueio vem de insistir em um caminho que nao conversa com a sua rotina.`,
+        visual: 'Layout limpo com um contraste entre erro comum e causa real'
+      },
+      {
+        titulo: 'A virada pratica',
+        subtitulo: `${clipWords(productMention, 4, 28)} entra aqui`,
+        conteudo: `Quando voce ajusta a base e usa ${productMention}, fica mais facil buscar ${lowerFirst(brief.benefit)} com consistencia.`,
+        visual: 'Foto ou detalhe do produto apoiando a explicacao, com destaque visual para a mudanca'
+      },
+      {
+        titulo: 'O que isso destrava',
+        subtitulo: brief.shortBenefit,
+        conteudo: `O ganho real e ter mais clareza, menos excesso e um processo que voce consegue sustentar no dia a dia.`,
+        visual: 'Slide com poucos elementos, numero em destaque e apoio visual de rotina ou resultado'
+      },
+      {
+        titulo: 'Como aplicar hoje',
+        subtitulo: 'Sem complicar',
+        conteudo: `Comece pelo ajuste mais simples, acompanhe a resposta do corpo e refine o processo antes de mudar tudo de uma vez.`,
+        visual: 'Passo a passo visual com setas, blocos ou numeracao curta'
+      }
+    ];
+
+    const template = middleBlocks[(index - 1) % middleBlocks.length];
+
+    return {
+      numero: index + 1,
+      ...template
+    };
+  });
+
+  return {
+    title: `Carrossel - ${brief.product || brief.shortBenefit}`,
+    hook: slides[0]?.titulo || 'Carrossel com capa forte',
+    spoken: '',
+    takes: [],
+    cta: `Salva esse carrossel e me chama para entender como ${productMention} entra na estrategia.`,
+    caption: `Tem coisa que parece falta de disciplina, mas na pratica e estrategia errada repetida por tempo demais.\n\nEste carrossel mostra onde costuma estar o travamento e como ajustar isso com mais clareza.\n\nSalva e manda para quem precisa ver isso hoje.\n\n${buildHashtags(brief.product, brief.problem, brief.benefit)}`,
+    carrosselSlides: slides
+  };
+}
+
+function buildPostFallback(input: ScriptVariantInput): ScriptDraftResponse {
+  const brief = buildBriefSeed(input);
+  const productMention = brief.product || 'essa solucao';
+
+  return {
+    title: `Post - ${brief.product || brief.shortBenefit}`,
+    hook: clipWords(`Nao e falta de disciplina`, 5, 36) || 'Nao e falta de disciplina',
+    spoken: '',
+    takes: [],
+    cta: `Salva esse post e me chama se quiser aplicar isso com ${productMention}.`,
+    caption: `O ponto nem sempre e fazer mais. Muitas vezes e ajustar o caminho para buscar ${lowerFirst(brief.benefit)} com mais estrategia.\n\nSe ${lowerFirst(brief.problem)}, talvez o travamento esteja na abordagem, nao na sua vontade.\n\nSalva e me chama se quiser destravar isso com mais clareza.\n\n${buildHashtags(brief.product, brief.problem, brief.benefit)}`,
+    postFields: {
+      conceito: `Quebra de crenca mostrando que ${lowerFirst(brief.problem)} nao se resolve com excesso, e sim com ajuste inteligente.`,
+      tituloPeca: 'Nao e falta de disciplina',
+      textoApoio: `O travamento pode estar no metodo, nao em voce.`,
+      direcaoVisual: 'Post minimalista com tipografia forte, contraste elegante e um elemento visual que transmita pausa, clareza e reposicionamento'
+    }
+  };
+}
+
+const storyObjectiveKeys = new Set(['gancho', 'contexto', 'tensao', 'revelacao', 'prova', 'solucao', 'cta']);
+
+function sanitizeStorySlides(rawSlides: StorySlide[] | undefined, fallbackSlides: StorySlide[]) {
+  return fallbackSlides.map((fallbackSlide, index) => {
+    const rawSlide = rawSlides?.[index];
+    const rawObjective = cleanSingleLineText(rawSlide?.objetivo, 40);
+    const normalizedObjective = normalizeMatchText(rawObjective);
+
+    return {
+      objetivo: storyObjectiveKeys.has(normalizedObjective) ? rawObjective : fallbackSlide.objetivo,
+      textoTela: chooseSingleLine(rawSlide?.textoTela, fallbackSlide.textoTela, 90, 4),
+      falado: chooseParagraph(rawSlide?.falado, fallbackSlide.falado, 320, 16),
+      visual: chooseSingleLine(rawSlide?.visual, fallbackSlide.visual, 180, 8)
+    };
+  });
+}
+
+function sanitizeCarrosselSlides(rawSlides: CarrosselSlide[] | undefined, fallbackSlides: CarrosselSlide[]) {
+  return fallbackSlides.map((fallbackSlide, index) => {
+    const rawSlide = rawSlides?.[index];
+
+    return {
+      numero: index + 1,
+      titulo: chooseSingleLine(rawSlide?.titulo, fallbackSlide.titulo, 80, 4),
+      subtitulo: chooseSingleLine(rawSlide?.subtitulo, fallbackSlide.subtitulo, 120, 4),
+      conteudo: chooseParagraph(rawSlide?.conteudo, fallbackSlide.conteudo, 420, 16),
+      visual: chooseSingleLine(rawSlide?.visual, fallbackSlide.visual, 180, 8)
+    };
+  });
+}
+
+function sanitizePostFields(rawFields: PostFields | null | undefined, fallbackFields: PostFields) {
+  return {
+    conceito: chooseParagraph(rawFields?.conceito, fallbackFields.conceito, 320, 16),
+    tituloPeca: chooseSingleLine(rawFields?.tituloPeca, fallbackFields.tituloPeca, 80, 4),
+    textoApoio: chooseParagraph(rawFields?.textoApoio, fallbackFields.textoApoio, 220, 12),
+    direcaoVisual: chooseParagraph(rawFields?.direcaoVisual, fallbackFields.direcaoVisual, 260, 14)
+  };
+}
+
+function assertDraftUsability(draft: ScriptDraftResponse, contentType: string) {
+  if (!draft.title || isPlaceholderText(draft.title)) {
+    throw new Error('Nao foi possivel gerar um titulo utilizavel.');
+  }
+
+  if (contentType === 'stories') {
+    if (!draft.storySlides?.length || draft.storySlides.some((slide) => [slide.textoTela, slide.falado, slide.visual].some(isPlaceholderText))) {
+      throw new Error('Nao foi possivel gerar stories completos e preenchidos.');
+    }
+    return;
+  }
+
+  if (contentType === 'carrossel') {
+    if (!draft.carrosselSlides?.length || draft.carrosselSlides.some((slide) => [slide.titulo, slide.subtitulo, slide.conteudo, slide.visual].some(isPlaceholderText))) {
+      throw new Error('Nao foi possivel gerar um carrossel completo e preenchido.');
+    }
+    return;
+  }
+
+  if (contentType === 'post') {
+    if (!draft.postFields || [draft.postFields.conceito, draft.postFields.tituloPeca, draft.postFields.textoApoio, draft.postFields.direcaoVisual, draft.caption, draft.cta].some(isPlaceholderText)) {
+      throw new Error('Nao foi possivel gerar um post estatico completo e preenchido.');
+    }
+    return;
+  }
+
+  if ([draft.hook, draft.spoken, draft.cta, draft.caption].some(isPlaceholderText) || draft.takes.some(isPlaceholderText)) {
+    throw new Error('Nao foi possivel gerar um roteiro completo e preenchido.');
+  }
 }
 
 function parseStoriesArray(raw: unknown): StorySlide[] {
@@ -2161,28 +2622,10 @@ function parseCarrosselArray(raw: unknown): CarrosselSlide[] {
 
 async function generateStoriesVariants(input: ScriptVariantInput): Promise<ScriptDraftResponse[]> {
   const n = Math.max(1, Math.min(10, parseInt(input.subOption ?? '3', 10) || 3));
-  const productLabel = input.productName ?? 'produto';
   const toneLabel = resolveTonesLabel(input.tones, input.tone);
   const objectiveLabel = resolveObjectivesLabel(input.objectives, input.objective);
-
-  const slidesTemplate = Array.from({ length: n }, (_, i) =>
-    `{"objetivo":"","textoTela":"","falado":"","visual":""}`
-  ).join(',');
-
-  const fallback: ScriptDraftResponse[] = [{
-    title: `Stories — ${productLabel}`,
-    hook: 'Ninguem te contou isso sobre [tema].',
-    spoken: '',
-    takes: [],
-    cta: 'Responde aqui embaixo ou manda DM.',
-    caption: '',
-    storySlides: Array.from({ length: n }, (_, j) => ({
-      objetivo: j === 0 ? 'gancho' : j === n - 1 ? 'CTA' : 'valor',
-      textoTela: j === 0 ? `[Frase de gancho]` : `[Conteudo ${j + 1}]`,
-      falado: `Texto falado do story ${j + 1}.`,
-      visual: j === 0 ? 'Selfie direto na camera, expressao de surpresa' : j === n - 1 ? 'Tela final com CTA visivel' : 'Fundo limpo com texto centralizado'
-    }))
-  }];
+  const slidesTemplate = Array.from({ length: n }, () => `{"objetivo":"","textoTela":"","falado":"","visual":""}`).join(',');
+  const fallback = buildStoriesFallback(input, n);
 
   const webQuery = buildSocialTrendQuery(input.productName ?? input.prompt, input.pain ?? '', input.benefit ?? '', 'stories instagram viral');
 
@@ -2195,6 +2638,7 @@ async function generateStoriesVariants(input: ScriptVariantInput): Promise<Scrip
     'Responda somente JSON valido. Array com exatamente 1 sequencia de stories.',
     `Cada sequencia: {"title":"","stories":[${slidesTemplate}],"cta":""}`,
     `A sequencia deve ter exatamente ${n} story(ies).`,
+    'Preencha todos os campos com conteudo final. Nunca use placeholders, colchetes, instrucoes ou textos genericos como "frase de gancho", "texto falado" ou "CTA aqui".',
     '',
     '=== REGRAS DOS STORIES ===',
     'textoTela: texto escrito na tela do story. Max 8 palavras. Deve ser MUITO impactante. Sem pontuacao excessiva.',
@@ -2219,48 +2663,34 @@ async function generateStoriesVariants(input: ScriptVariantInput): Promise<Scrip
   ], webQuery);
 
   const parsed = parseStructuredResponse<unknown[]>(await callProvider(prompt, { maxTokens: 3200 }), []);
-  if (!parsed.length) return fallback;
-
-  return fallback.map((fb, i) => {
+  return [0].map((i) => {
+    const fb = fallback;
     const raw = parsed[i];
-    if (!raw || typeof raw !== 'object') return fb;
+    if (!raw || typeof raw !== 'object') {
+      assertDraftUsability(fb, 'stories');
+      return fb;
+    }
     const r = raw as Record<string, unknown>;
-    const storySlides = parseStoriesArray(r.stories);
-    return {
+    const storySlides = sanitizeStorySlides(parseStoriesArray(r.stories), fb.storySlides ?? []);
+    const draft = {
       ...fb,
-      title: typeof r.title === 'string' ? r.title : fb.title,
-      hook: storySlides[0]?.textoTela || fb.hook,
-      cta: typeof r.cta === 'string' ? r.cta : fb.cta,
-      storySlides: storySlides.length ? storySlides : fb.storySlides
+      title: chooseSingleLine(r.title, fb.title, 80, 4),
+      hook: chooseSingleLine(storySlides[0]?.textoTela || r.hook, fb.hook, 120, 4),
+      cta: chooseSingleLine(r.cta, fb.cta, 180, 8),
+      storySlides
     };
+
+    assertDraftUsability(draft, 'stories');
+    return draft;
   });
 }
 
 async function generateCarrosselVariants(input: ScriptVariantInput): Promise<ScriptDraftResponse[]> {
   const n = Math.max(2, Math.min(15, parseInt(input.subOption ?? '5', 10) || 5));
-  const productLabel = input.productName ?? 'produto';
   const toneLabel = resolveTonesLabel(input.tones, input.tone);
   const objectiveLabel = resolveObjectivesLabel(input.objectives, input.objective);
-
-  const slideTemplate = Array.from({ length: n }, (_, i) =>
-    `{"numero":${i + 1},"titulo":"","subtitulo":"","conteudo":"","visual":""}`
-  ).join(',');
-
-  const fallback: ScriptDraftResponse[] = [{
-    title: `Carrossel — ${productLabel}`,
-    hook: 'O que ninguem te conta sobre [tema].',
-    spoken: '',
-    takes: [],
-    cta: 'Salva esse carrossel pra nao esquecer.',
-    caption: `Voce sabia que [dado surpreendente]?\n\nO carrossel acima explica tudo.\n\nSalva e manda pra quem precisa.\n\n#carrossel #${productLabel.toLowerCase().replace(/\s+/g, '')} #dica`,
-    carrosselSlides: Array.from({ length: n }, (_, j) => ({
-      numero: j + 1,
-      titulo: j === 0 ? '[Titulo da capa]' : j === n - 1 ? 'Agora e hora de agir' : `Ponto ${j}`,
-      subtitulo: j === 0 ? '[Promessa especifica]' : `[Subtitulo ${j + 1}]`,
-      conteudo: j === 0 ? '' : j === n - 1 ? `CTA claro relacionado a ${productLabel}` : `[Conteudo da pagina ${j + 1}]`,
-      visual: j === 0 ? 'Capa impactante, fundo solido, tipografia grande' : j === n - 1 ? 'CTA visivel, cor de destaque' : 'Layout limpo, icone ou ilustracao relevante'
-    }))
-  }];
+  const slideTemplate = Array.from({ length: n }, (_, i) => `{"numero":${i + 1},"titulo":"","subtitulo":"","conteudo":"","visual":""}`).join(',');
+  const fallback = buildCarrosselFallback(input, n);
 
   const webQuery = buildSocialTrendQuery(input.productName ?? input.prompt, input.pain ?? '', input.benefit ?? '', 'carrossel instagram viral');
 
@@ -2275,6 +2705,7 @@ async function generateCarrosselVariants(input: ScriptVariantInput): Promise<Scr
     'Responda somente JSON valido. Array com exatamente 1 carrossel.',
     `Cada carrossel: {"title":"","hook":"","slides":[${slideTemplate}],"cta":"","caption":""}`,
     `O carrossel deve ter exatamente ${n} slides.`,
+    'Preencha todos os campos com conteudo final. Nunca use placeholders, colchetes ou textos genericos como "titulo da capa", "subtitulo 2", "conteudo da pagina" ou "CTA aqui".',
     '',
     '=== REGRAS DO CARROSSEL ===',
     'titulo: texto curto da pagina. Max 6 palavras. Impacto imediato.',
@@ -2299,43 +2730,33 @@ async function generateCarrosselVariants(input: ScriptVariantInput): Promise<Scr
   ], webQuery);
 
   const parsed = parseStructuredResponse<unknown[]>(await callProvider(prompt, { maxTokens }), []);
-  if (!parsed.length) return fallback;
-
-  return fallback.map((fb, i) => {
+  return [0].map((i) => {
+    const fb = fallback;
     const raw = parsed[i];
-    if (!raw || typeof raw !== 'object') return fb;
+    if (!raw || typeof raw !== 'object') {
+      assertDraftUsability(fb, 'carrossel');
+      return fb;
+    }
     const r = raw as Record<string, unknown>;
-    const carrosselSlides = parseCarrosselArray(r.slides);
-    return {
+    const carrosselSlides = sanitizeCarrosselSlides(parseCarrosselArray(r.slides), fb.carrosselSlides ?? []);
+    const draft = {
       ...fb,
-      title: typeof r.title === 'string' ? r.title : fb.title,
-      hook: typeof r.hook === 'string' ? r.hook : (carrosselSlides[0]?.titulo || fb.hook),
-      cta: typeof r.cta === 'string' ? r.cta : fb.cta,
-      caption: typeof r.caption === 'string' ? r.caption : fb.caption,
-      carrosselSlides: carrosselSlides.length ? carrosselSlides : fb.carrosselSlides
+      title: chooseSingleLine(r.title, fb.title, 80, 4),
+      hook: chooseSingleLine(r.hook ?? carrosselSlides[0]?.titulo, fb.hook, 120, 4),
+      cta: chooseSingleLine(r.cta, fb.cta, 180, 8),
+      caption: chooseCaption(r.caption, fb.caption),
+      carrosselSlides
     };
+
+    assertDraftUsability(draft, 'carrossel');
+    return draft;
   });
 }
 
 async function generatePostVariants(input: ScriptVariantInput): Promise<ScriptDraftResponse[]> {
-  const productLabel = input.productName ?? 'produto';
   const toneLabel = resolveTonesLabel(input.tones, input.tone);
   const objectiveLabel = resolveObjectivesLabel(input.objectives, input.objective);
-
-  const fallback: ScriptDraftResponse[] = [{
-    title: `Post — ${productLabel}`,
-    hook: '[Titulo impactante da peca]',
-    spoken: '',
-    takes: [],
-    cta: 'Salva esse post.',
-    caption: `[Abertura forte]\n\n[2-3 linhas de valor]\n\n[CTA especifico]\n\n#post #${productLabel.toLowerCase().replace(/\s+/g, '')} #dica`,
-    postFields: {
-      conceito: `[Conceito do post]`,
-      tituloPeca: `[Titulo curto e impactante]`,
-      textoApoio: `[Subtitulo que complementa]`,
-      direcaoVisual: `Fundo limpo, tipografia em destaque, cores da marca`
-    }
-  }];
+  const fallback = buildPostFallback(input);
 
   const webQuery = buildSocialTrendQuery(input.productName ?? input.prompt, input.pain ?? '', input.benefit ?? '', 'post estatico instagram viral');
 
@@ -2347,6 +2768,7 @@ async function generatePostVariants(input: ScriptVariantInput): Promise<ScriptDr
     '=== FORMATO DE RESPOSTA ===',
     'Responda somente JSON valido. Array com exatamente 1 conceito de post.',
     'Cada post: {"title":"","conceito":"","tituloPeca":"","textoApoio":"","direcaoVisual":"","cta":"","caption":""}',
+    'Preencha todos os campos com conteudo final. Nunca use placeholders, colchetes ou textos genericos como "titulo impactante", "legenda aqui" ou "conceito do post".',
     '',
     '=== REGRAS DO POST ESTATICO ===',
     'conceito: a ideia central em 1 frase. Para briefing do designer.',
@@ -2369,26 +2791,34 @@ async function generatePostVariants(input: ScriptVariantInput): Promise<ScriptDr
   ], webQuery);
 
   const parsed = parseStructuredResponse<unknown[]>(await callProvider(prompt, { maxTokens: 2500 }), []);
-  if (!parsed.length) return fallback;
-
-  return fallback.map((fb, i) => {
+  return [0].map((i) => {
+    const fb = fallback;
     const raw = parsed[i];
-    if (!raw || typeof raw !== 'object') return fb;
+    if (!raw || typeof raw !== 'object') {
+      assertDraftUsability(fb, 'post');
+      return fb;
+    }
     const r = raw as Record<string, unknown>;
-    const postFields: PostFields = {
-      conceito: typeof r.conceito === 'string' ? r.conceito : fb.postFields!.conceito,
-      tituloPeca: typeof r.tituloPeca === 'string' ? r.tituloPeca : fb.postFields!.tituloPeca,
-      textoApoio: typeof r.textoApoio === 'string' ? r.textoApoio : fb.postFields!.textoApoio,
-      direcaoVisual: typeof r.direcaoVisual === 'string' ? r.direcaoVisual : fb.postFields!.direcaoVisual
-    };
-    return {
+    const postFields = sanitizePostFields(
+      {
+        conceito: typeof r.conceito === 'string' ? r.conceito : '',
+        tituloPeca: typeof r.tituloPeca === 'string' ? r.tituloPeca : '',
+        textoApoio: typeof r.textoApoio === 'string' ? r.textoApoio : '',
+        direcaoVisual: typeof r.direcaoVisual === 'string' ? r.direcaoVisual : ''
+      },
+      fb.postFields!
+    );
+    const draft = {
       ...fb,
-      title: typeof r.title === 'string' ? r.title : fb.title,
-      hook: postFields.tituloPeca || fb.hook,
-      cta: typeof r.cta === 'string' ? r.cta : fb.cta,
-      caption: typeof r.caption === 'string' ? r.caption : fb.caption,
+      title: chooseSingleLine(r.title, fb.title, 80, 4),
+      hook: chooseSingleLine(postFields.tituloPeca, fb.hook, 80, 4),
+      cta: chooseSingleLine(r.cta, fb.cta, 180, 8),
+      caption: chooseCaption(r.caption, fb.caption),
       postFields
     };
+
+    assertDraftUsability(draft, 'post');
+    return draft;
   });
 }
 
@@ -2404,30 +2834,13 @@ export async function generateScriptVariants(input: ScriptVariantInput) {
 }
 
 async function generateReelsVariants(input: ScriptVariantInput) {
-  const productLabel = input.productName ?? 'Creator AI';
   const contentTypeLabel = resolveContentTypeLabel(input.contentType);
   const durationLabel = resolveDurationLabel(input.duration ?? input.subOption);
   const toneLabel = resolveTonesLabel(input.tones, input.tone);
   const objectiveLabel = resolveObjectivesLabel(input.objectives, input.objective);
   const isTrend = input.tones?.includes('trend') || input.tone === 'trend';
 
-  const painOrTopic = input.pain ?? input.prompt;
-  const benefitOrTopic = input.benefit ?? input.prompt;
-
-  const fallback = [{
-    title: `Roteiro — ${productLabel}`,
-    hook: `Fiz isso por meses sem resultado. Ate descobrir o que eu estava errando.`,
-    spoken: `Tentei de tudo pra resolver ${painOrTopic.toLowerCase().slice(0, 60)}. Gastei tempo, dinheiro, energia. Nada funcionava de verdade. Ate que uma coisa especifica mudou minha abordagem. Eu descobri que o problema nao era o que eu achava que era. Era [X]. E quando eu corrigi isso com ${productLabel}, o resultado veio rapido. Em semanas, nao meses.`,
-    takes: [
-      'Close no rosto, expressao de quem esta contando algo importante',
-      'Corte para momento de tensao ou situacao especifica',
-      'Virada: expressao de surpresa ou descoberta',
-      'Resultado visual ou texto na tela com dado especifico',
-      'CTA com energia, olho na camera'
-    ],
-    cta: 'Salva esse video pra nao esquecer o que eu falei aqui.',
-    caption: `${painOrTopic.slice(0, 55)}? Existe uma razao especifica pra isso.\n\nA maioria nao sabe. Eu so descobri quando parei de fazer o que todo mundo faz.\n\n#reels #${productLabel.toLowerCase().replace(/\s+/g, '')} #conteudo #dica`
-  }];
+  const fallback = [buildVideoFallback(input)];
 
   const webQuery = buildSocialTrendQuery(
     input.productName ?? input.prompt,
@@ -2446,6 +2859,7 @@ async function generateReelsVariants(input: ScriptVariantInput) {
     '=== FORMATO DE RESPOSTA ===',
     'Responda somente JSON valido. Array com exatamente 1 objeto.',
     'Formato: [{"title":"","hook":"","spoken":"","takes":["","","","",""],"cta":"","caption":""}]',
+    'Preencha tudo com conteudo final. Nunca use placeholders, colchetes ou marcadores como "gancho aqui", "[X]", "texto falado" ou "CTA aqui".',
     '',
     '=== MENTALIDADE AO ESCREVER ===',
     'Antes de escrever, pergunte: "Uma pessoa real assistiria esse video ate o final?" Se a resposta nao for SIM imediato, reescreva.',
@@ -2510,7 +2924,11 @@ async function generateReelsVariants(input: ScriptVariantInput) {
   ], webQuery);
 
   const parsed = parseStructuredResponse(await callProvider(prompt, { maxTokens: 3200 }), fallback);
-  return fallback.map((item, index) => normalizeScriptOutput(parsed[index], item));
+  return fallback.map((item, index) => {
+    const draft = normalizeScriptOutput(parsed[index], item);
+    assertDraftUsability(draft, input.contentType ?? 'reels');
+    return draft;
+  });
 }
 
 export async function generateStoryboard(input: ScriptInput) {
