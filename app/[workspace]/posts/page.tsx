@@ -1,15 +1,11 @@
-import { SimpleModuleShell } from '@/components/platform/simple-module-shell';
+import { PostsWorkspace } from '@/components/platform/posts-workspace';
 
-export default function PostsPage() {
-  return (
-    <SimpleModuleShell
-      eyebrow="Postagens"
-      title="Planejamento de publicacao"
-      highlights={[
-        'Separar feed, reels e stories sem misturar tudo.',
-        'Manter status claros de revisao, agendamento e publicado.',
-        'Preparar espaco para calendario e automacoes.'
-      ]}
-    />
-  );
+export default async function PostsPage({
+  params
+}: {
+  params: Promise<{ workspace: string }>;
+}) {
+  const { workspace } = await params;
+
+  return <PostsWorkspace workspace={workspace} />;
 }

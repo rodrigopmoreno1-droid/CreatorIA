@@ -240,6 +240,7 @@ export function buildScriptMetadata(input: {
   carrosselSlides?: CarrosselSlide[];
   postFields?: PostFields | null;
   assignee?: string;
+  blockType?: string;
 }) {
   return {
     caption: input.caption ?? '',
@@ -260,7 +261,8 @@ export function buildScriptMetadata(input: {
     storySlides: input.storySlides ?? [],
     carrosselSlides: input.carrosselSlides ?? [],
     postFields: input.postFields ?? null,
-    assignee: input.assignee ?? ''
+    assignee: input.assignee ?? '',
+    blockType: input.blockType ?? ''
   };
 }
 
@@ -346,6 +348,7 @@ export function toRecordingCard(row: ScriptRow): RecordingCard | null {
     contentType: meta.contentType ?? '',
     productName: meta.productName,
     assignee: meta.assignee,
+    blockType: meta.blockType,
     column,
     order: meta.boardOrder ?? 0,
     notes: meta.notes ?? '',

@@ -1,15 +1,22 @@
-import { SimpleModuleShell } from '@/components/platform/simple-module-shell';
+import { CreatorsWorkspace } from '@/components/platform/creators-workspace';
+import { getWorkspaceProducts, getWorkspaceRecordings } from '@/lib/platform-data';
 
-export default function CreatorsPage() {
+export default async function CreatorsPage({
+  params
+}: {
+  params: Promise<{ workspace: string }>;
+}) {
+  const { workspace } = await params;
+  const [products, recordings] = await Promise.all([
+    getWorkspaceProducts(workspace),
+    getWorkspaceRecordings(workspace),
+  ]);
+
   return (
-    <SimpleModuleShell
-      eyebrow="Blogueiras"
-      title="Base de criadoras"
-      highlights={[
-        'Perfis organizados com status e notas curtas.',
-        'Visao simples para briefing e alinhamento.',
-        'Espaco preparado para metricas e historico.'
-      ]}
+    <CreatorsWorkspace
+      workspace={workspace}
+      products={products}
+      recordings={recordings}
     />
   );
 }

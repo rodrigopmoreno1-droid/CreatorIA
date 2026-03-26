@@ -20,7 +20,7 @@ import {
   verticalListSortingStrategy
 } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
-import { AlertTriangle, Calendar, Eye, GripVertical, LayoutGrid, List, Loader2, Package, PencilLine, Plus, Trash2, User, X } from 'lucide-react';
+import { AlertTriangle, Calendar, ChevronLeft, ChevronRight, Eye, Film, GripVertical, LayoutGrid, List, Loader2, Package, PencilLine, Plus, Trash2, User, Users, X } from 'lucide-react';
 import { toast } from 'sonner';
 
 import { Button } from '@/components/ui/button';
@@ -45,6 +45,27 @@ const COLUMN_COLORS: Record<string, string> = {
   scheduled: 'bg-sky-50 text-sky-700 border-sky-100',
   posted: 'bg-emerald-50 text-emerald-700 border-emerald-100'
 };
+
+const FORMAT_LABELS: Record<string, string> = {
+  reels: 'Reels',
+  stories: 'Stories',
+  video_curto: 'Vídeo curto',
+  carrossel: 'Carrossel',
+  post: 'Post estático'
+};
+
+const BLOCK_TYPE_OPTIONS = [
+  { value: 'video', label: 'Vídeo' },
+  { value: 'photo', label: 'Foto' },
+  { value: 'ensaio', label: 'Ensaio' },
+  { value: 'captacao', label: 'Captação' },
+  { value: 'outro', label: 'Outro' }
+] as const;
+
+function blockTypeLabel(value: string | undefined): string {
+  if (!value || value === 'video') return 'Vídeo';
+  return BLOCK_TYPE_OPTIONS.find((o) => o.value === value)?.label ?? value;
+}
 
 function formatDateLabel(value: string) {
   return new Intl.DateTimeFormat('pt-BR', {
@@ -158,7 +179,7 @@ function moveAcrossColumns(
     .concat(normalizedTargetCards.find((item) => item.id === activeId) ?? []);
 }
 
-type RecordingViewMode = 'flow' | 'list' | 'cards';
+type RecordingViewMode = 'flow' | 'list' | 'cards' | 'person';
 
 type RecordingFieldDraft = {
   key: string;
@@ -170,7 +191,8 @@ type RecordingFormState = RecordingCard;
 const recordingViewModes: Array<{ key: RecordingViewMode; label: string; icon: typeof LayoutGrid }> = [
   { key: 'flow', label: 'Fluxo', icon: LayoutGrid },
   { key: 'list', label: 'Lista', icon: List },
-  { key: 'cards', label: 'Blocos', icon: LayoutGrid }
+  { key: 'cards', label: 'Blocos', icon: LayoutGrid },
+  { key: 'person', label: 'Por pessoa', icon: Users }
 ];
 
 function parseCommaList(value: string) {
@@ -207,6 +229,7 @@ function createEmptyRecordingCard(column: RecordingColumnKey): RecordingFormStat
     cta: '',
     caption: '',
     contentType: '',
+    blockType: 'video',
     column,
     order: 0,
     notes: '',
@@ -241,7 +264,8 @@ function buildRecordingPayload(card: RecordingFormState, status: RecordingColumn
     dueDate: card.dueDate.trim(),
     labels: card.labels,
     fields: card.fields,
-    assignee: card.assignee?.trim() ?? ''
+    assignee: card.assignee?.trim() ?? '',
+    blockType: card.blockType ?? 'video'
   };
 }
 
@@ -280,6 +304,12 @@ function SortableRecordingCard({
           {card.contentType ? (
             <span className={cn('rounded-full border px-2 py-0.5 text-[10px] font-medium', getContentFormatBadgeClass(card.contentType))}>
               {getContentFormatLabel(card.contentType)}
+            </span>
+          ) : null}
+          {card.blockType && card.blockType !== 'video' ? (
+            <span className="inline-flex items-center gap-1 rounded-full border border-border bg-amber-50 px-2 py-0.5 text-[10px] font-medium text-amber-700">
+              <Film className="h-2.5 w-2.5" />
+              {blockTypeLabel(card.blockType)}
             </span>
           ) : null}
         </div>
@@ -452,13 +482,25 @@ function RecordingViewModal({
   onClose,
   onEdit,
   onDelete,
-  deleting
+  deleting,
+  onPrev,
+  onNext,
+  hasPrev,
+  hasNext,
+  navIndex,
+  navTotal
 }: {
   card: RecordingCard;
   onClose: () => void;
   onEdit: () => void;
   onDelete: () => void;
   deleting: boolean;
+  onPrev?: () => void;
+  onNext?: () => void;
+  hasPrev?: boolean;
+  hasNext?: boolean;
+  navIndex?: number;
+  navTotal?: number;
 }) {
   return (
     <div className="fixed inset-0 z-50 bg-[rgba(15,23,42,0.66)] p-4 backdrop-blur-sm">
@@ -483,6 +525,12 @@ function RecordingViewModal({
                 <span className="inline-flex items-center gap-1 rounded-full border border-border bg-white px-2.5 py-1 text-[10px] font-medium uppercase tracking-[0.16em] text-muted-foreground">
                   <User className="h-2.5 w-2.5" />
                   {card.assignee}
+                </span>
+              ) : null}
+              {card.blockType && card.blockType !== 'video' ? (
+                <span className="inline-flex items-center gap-1 rounded-full border border-border bg-muted/40 px-2.5 py-1 text-[10px] font-medium uppercase tracking-[0.16em] text-muted-foreground">
+                  <Film className="h-2.5 w-2.5" />
+                  {blockTypeLabel(card.blockType)}
                 </span>
               ) : null}
               {card.dueDate ? (
@@ -590,6 +638,31 @@ function RecordingViewModal({
             Remover bloco
           </Button>
           <Button onClick={onClose}>Fechar</Button>
+          {(onPrev || onNext) ? (
+            <div className="flex items-center gap-2 ml-auto">
+              {navIndex !== undefined && navTotal !== undefined ? (
+                <span className="text-[12px] text-muted-foreground">{navIndex + 1} / {navTotal}</span>
+              ) : null}
+              <button
+                type="button"
+                onClick={onPrev}
+                disabled={!hasPrev}
+                className="inline-flex h-8 w-8 items-center justify-center rounded-xl border border-border bg-white transition hover:bg-muted disabled:opacity-40"
+                aria-label="Anterior"
+              >
+                <ChevronLeft className="h-4 w-4" />
+              </button>
+              <button
+                type="button"
+                onClick={onNext}
+                disabled={!hasNext}
+                className="inline-flex h-8 w-8 items-center justify-center rounded-xl border border-border bg-white transition hover:bg-muted disabled:opacity-40"
+                aria-label="Próximo"
+              >
+                <ChevronRight className="h-4 w-4" />
+              </button>
+            </div>
+          ) : null}
         </div>
       </div>
     </div>
@@ -718,6 +791,18 @@ function RecordingEditModal({
                   onChange={(event) => onChange({ ...card, dueDate: event.target.value })}
                 />
               </div>
+            </div>
+            <div className="space-y-2">
+              <label className="text-sm font-medium">Tipo de bloco</label>
+              <select
+                value={card.blockType ?? 'video'}
+                onChange={(e) => onChange({ ...card, blockType: e.target.value })}
+                className="h-10 w-full cursor-pointer rounded-xl border border-border bg-white px-3 text-sm text-foreground focus:outline-none"
+              >
+                {BLOCK_TYPE_OPTIONS.map((opt) => (
+                  <option key={opt.value} value={opt.value}>{opt.label}</option>
+                ))}
+              </select>
             </div>
             <div className="space-y-2">
               <label className="text-sm font-medium">Responsável pela gravação</label>
@@ -910,7 +995,7 @@ export function RecordingsWorkspace({
       return [];
     }
   });
-  const [viewingCard, setViewingCard] = useState<RecordingCard | null>(null);
+  const [viewingCardId, setViewingCardId] = useState<string | null>(null);
   const [editingCard, setEditingCard] = useState<RecordingEditorState | null>(null);
   const [editingMode, setEditingMode] = useState<'create' | 'edit' | null>(null);
   const [loadingId, setLoadingId] = useState<string | null>(null);
@@ -976,6 +1061,13 @@ export function RecordingsWorkspace({
     [activeCardId, cards]
   );
 
+  const viewableCards = useMemo(() => filteredCards, [filteredCards]);
+  const viewingCardIndex = useMemo(
+    () => (viewingCardId ? viewableCards.findIndex((c) => c.id === viewingCardId) : -1),
+    [viewableCards, viewingCardId]
+  );
+  const viewingCard = viewingCardIndex >= 0 ? viewableCards[viewingCardIndex] : null;
+
   async function persistCards(nextCards: RecordingCard[], affectedColumns: RecordingColumnKey[]) {
     const affectedItems = nextCards
       .filter((item) => affectedColumns.includes(item.column))
@@ -1005,7 +1097,8 @@ export function RecordingsWorkspace({
             dueDate: item.dueDate,
             labels: item.labels,
             fields: item.fields,
-            assignee: item.assignee ?? ''
+            assignee: item.assignee ?? '',
+            blockType: item.blockType ?? 'video'
           })
         })
       )
@@ -1023,7 +1116,7 @@ export function RecordingsWorkspace({
       return;
     }
 
-    setViewingCard((current) => (current?.id === activeId ? nextCard : current));
+    setViewingCardId((current) => (current === activeId ? activeId : current));
     setEditingCard((current) => (current?.id === activeId ? { ...current, ...nextCard } : current));
   }
 
@@ -1137,6 +1230,22 @@ export function RecordingsWorkspace({
     setPendingDeleteCard(card);
   }
 
+  function openViewCard(card: RecordingCard) {
+    setViewingCardId(card.id);
+  }
+
+  function navToPrev() {
+    if (viewingCardIndex > 0) {
+      setViewingCardId(viewableCards[viewingCardIndex - 1].id);
+    }
+  }
+
+  function navToNext() {
+    if (viewingCardIndex < viewableCards.length - 1) {
+      setViewingCardId(viewableCards[viewingCardIndex + 1].id);
+    }
+  }
+
   async function deleteCard(card: RecordingCard) {
     setDeletingId(card.id);
 
@@ -1153,8 +1262,8 @@ export function RecordingsWorkspace({
 
       setCards((current) => current.filter((item) => item.id !== card.id));
 
-      if (viewingCard?.id === card.id) {
-        setViewingCard(null);
+      if (viewingCardId === card.id) {
+        setViewingCardId(null);
       }
 
       if (editingCard?.id === card.id) {
@@ -1380,7 +1489,7 @@ export function RecordingsWorkspace({
                       key={column.key}
                       column={column}
                       cards={column.cards}
-                      onView={setViewingCard}
+                      onView={openViewCard}
                       onEdit={openEditCard}
                       onDelete={requestDeleteCard}
                       onAdd={openCreateCard}
@@ -1456,7 +1565,7 @@ export function RecordingsWorkspace({
                             ))}
                           </select>
                         </div>
-                        <button type="button" onClick={() => setViewingCard(card)} onPointerDownCapture={(e) => e.stopPropagation()}
+                        <button type="button" onClick={() => openViewCard(card)} onPointerDownCapture={(e) => e.stopPropagation()}
                           className="inline-flex h-8 w-8 items-center justify-center rounded-xl border border-border bg-white transition hover:bg-muted" aria-label="Ver">
                           <Eye className="h-4 w-4" />
                         </button>
@@ -1478,7 +1587,7 @@ export function RecordingsWorkspace({
                 </div>
               )}
             </div>
-          ) : (
+          ) : viewMode === 'cards' ? (
             <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
               {listCards.length ? (
                 listCards.map((card) => (
@@ -1489,7 +1598,7 @@ export function RecordingsWorkspace({
                         {recordingColumns.find((c) => c.key === card.column)?.label ?? card.column}
                       </span>
                       <div className="flex items-center gap-1">
-                        <button type="button" onClick={() => setViewingCard(card)} onPointerDownCapture={(e) => e.stopPropagation()}
+                        <button type="button" onClick={() => openViewCard(card)} onPointerDownCapture={(e) => e.stopPropagation()}
                           className="inline-flex h-7 w-7 items-center justify-center rounded-xl border border-border bg-white transition hover:bg-muted" aria-label="Ver">
                           <Eye className="h-3.5 w-3.5" />
                         </button>
@@ -1548,25 +1657,112 @@ export function RecordingsWorkspace({
                 </div>
               )}
             </div>
-          )}
+          ) : viewMode === 'person' ? (
+            <div className="space-y-6">
+              {(() => {
+                // Group cards by assignee
+                const groups: Record<string, RecordingCard[]> = {};
+                for (const card of filteredCards) {
+                  const key = card.assignee?.trim() || 'Sem responsável';
+                  if (!groups[key]) groups[key] = [];
+                  groups[key].push(card);
+                }
+                const sortedGroups = Object.entries(groups).sort(([a], [b]) => {
+                  if (a === 'Sem responsável') return 1;
+                  if (b === 'Sem responsável') return -1;
+                  return a.localeCompare(b, 'pt-BR');
+                });
+
+                if (!sortedGroups.length) {
+                  return (
+                    <div className="rounded-[20px] border border-dashed border-border bg-muted/20 p-4 text-[13px] leading-6 text-muted-foreground">
+                      Nenhum bloco nesta visualização.
+                    </div>
+                  );
+                }
+
+                return sortedGroups.map(([person, personCards]) => (
+                  <div key={person} className="space-y-3">
+                    <div className="flex items-center gap-3">
+                      <div className="flex h-8 w-8 items-center justify-center rounded-full border border-border bg-muted/40">
+                        <User className="h-4 w-4 text-muted-foreground" />
+                      </div>
+                      <div>
+                        <p className="text-sm font-semibold text-foreground">{person}</p>
+                        <p className="text-[12px] text-muted-foreground">{personCards.length} {personCards.length === 1 ? 'bloco' : 'blocos'}</p>
+                      </div>
+                    </div>
+                    <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+                      {personCards.map((card) => (
+                        <div key={card.id} className="rounded-[22px] border border-border bg-white p-4 shadow-soft">
+                          <div className="flex items-center justify-between gap-2 mb-2">
+                            <div className="flex flex-wrap gap-1.5">
+                              <span className={cn('rounded-full border px-2 py-0.5 text-[10px] font-medium', COLUMN_COLORS[card.column] ?? 'bg-muted/40 text-muted-foreground border-border')}>
+                                {recordingColumns.find((c) => c.key === card.column)?.label ?? card.column}
+                              </span>
+                              {card.blockType && card.blockType !== 'video' ? (
+                                <span className="inline-flex items-center gap-1 rounded-full border border-border bg-muted/40 px-2 py-0.5 text-[10px] font-medium text-muted-foreground">
+                                  <Film className="h-2.5 w-2.5" />
+                                  {blockTypeLabel(card.blockType)}
+                                </span>
+                              ) : null}
+                              {card.contentType ? (
+                                <span className="rounded-full border border-blue-100 bg-blue-50 px-2 py-0.5 text-[10px] font-medium text-blue-700">
+                                  {FORMAT_LABELS[card.contentType] ?? card.contentType}
+                                </span>
+                              ) : null}
+                            </div>
+                            <div className="flex items-center gap-1 shrink-0">
+                              <button type="button" onClick={() => openViewCard(card)}
+                                className="inline-flex h-7 w-7 items-center justify-center rounded-xl border border-border bg-white transition hover:bg-muted" aria-label="Ver">
+                                <Eye className="h-3.5 w-3.5" />
+                              </button>
+                              <button type="button" onClick={() => openEditCard(card)}
+                                className="inline-flex h-7 w-7 items-center justify-center rounded-xl border border-border bg-white transition hover:bg-muted" aria-label="Editar">
+                                <PencilLine className="h-3.5 w-3.5" />
+                              </button>
+                            </div>
+                          </div>
+                          {card.productName ? (
+                            <p className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground mb-1">{card.productName}</p>
+                          ) : null}
+                          <p className="truncate text-sm font-semibold text-foreground">{card.title}</p>
+                          <p className="mt-1 line-clamp-2 text-[13px] leading-5 text-muted-foreground">{card.hook}</p>
+                          {card.dueDate ? (
+                            <p className="mt-2 flex items-center gap-1 text-[11px] text-muted-foreground">
+                              <Calendar className="h-3 w-3" />
+                              {formatDueDateBR(card.dueDate)}
+                            </p>
+                          ) : null}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                ));
+              })()}
+            </div>
+          ) : null}
         </CardContent>
       </Card>
 
       {viewingCard ? (
         <RecordingViewModal
           card={viewingCard}
-          onClose={() => setViewingCard(null)}
+          onClose={() => setViewingCardId(null)}
           onEdit={() => {
             const current = viewingCard;
-            if (!current) {
-              return;
-            }
-
-            setViewingCard(null);
+            if (!current) return;
+            setViewingCardId(null);
             openEditCard(current);
           }}
           onDelete={() => requestDeleteCard(viewingCard!)}
-          deleting={deletingId === viewingCard.id}
+          deleting={deletingId === viewingCard?.id}
+          onPrev={navToPrev}
+          onNext={navToNext}
+          hasPrev={viewingCardIndex > 0}
+          hasNext={viewingCardIndex < viewableCards.length - 1}
+          navIndex={viewingCardIndex}
+          navTotal={viewableCards.length}
         />
       ) : null}
       {editingCard ? (

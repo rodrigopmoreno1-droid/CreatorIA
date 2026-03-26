@@ -29,6 +29,7 @@ type ScriptPatchBody = {
   carrosselSlides?: unknown[];
   postFields?: unknown;
   assignee?: string;
+  blockType?: string;
 };
 
 export async function PATCH(
@@ -97,7 +98,8 @@ export async function PATCH(
       storySlides: body.storySlides === undefined ? existingMeta.storySlides : (body.storySlides as import('@/types/platform').StorySlide[]),
       carrosselSlides: body.carrosselSlides === undefined ? existingMeta.carrosselSlides : (body.carrosselSlides as import('@/types/platform').CarrosselSlide[]),
       postFields: body.postFields === undefined ? existingMeta.postFields : (body.postFields as import('@/types/platform').PostFields | null),
-      assignee: body.assignee ?? existingMeta.assignee
+      assignee: body.assignee ?? existingMeta.assignee,
+      blockType: body.blockType ?? existingMeta.blockType
     })
   };
 
