@@ -1,5 +1,6 @@
 "use client";
 
+import dynamic from 'next/dynamic';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   ArrowLeft,
@@ -45,9 +46,9 @@ import {
   type ScheduleTemplate
 } from '@/lib/post-schedule-planner';
 import { cn } from '@/lib/utils';
-import type { PlannerBatchItem, ProductItem, ScriptItem, ScriptStatus } from '@/types/platform';
+import type { PlannerBatchItem, ProductItem, RecordingCard, ScriptItem, ScriptStatus } from '@/types/platform';
 
-type WorkspaceTab = 'Calendário' | 'Feed' | 'Stories' | 'Rascunhos' | 'Atrasados';
+type WorkspaceTab = 'Rascunhos' | 'Produção' | 'Editados' | 'Calendário' | 'Postados' | 'Atrasados';
 type StatusFilter = 'all' | ScriptStatus;
 type ManualModalMode = 'new' | 'none';
 
@@ -168,6 +169,18 @@ const SUB_OPTIONS: Record<ContentFormatKey, ReadonlyArray<{ value: string; label
   ],
   post: []
 };
+
+const ProductionWorkspace = dynamic(
+  () => import('@/components/platform/recordings-workspace').then((module) => module.RecordingsWorkspace),
+  {
+    ssr: false,
+    loading: () => (
+      <div className="rounded-[24px] border border-border bg-white/95 p-6 text-sm text-muted-foreground">
+        Carregando produção...
+      </div>
+    )
+  }
+);
 
 function profileKey(workspace: string) {
   return `creatorai:instagram-profile:${workspace}`;
@@ -1523,23 +1536,28 @@ export function PostsWorkspace({
   products = [],
   scripts = [],
   plannerBatches = [],
+  recordings = [],
+  initialTab = 'Calendário'
 }: {
   workspace: string;
   products?: ProductItem[];
   scripts?: ScriptItem[];
   plannerBatches?: PlannerBatchItem[];
+  recordings?: RecordingCard[];
+  initialTab?: WorkspaceTab;
 }) {
   const now = new Date();
 
   const [profile, setProfile] = useState<string>(() => loadProfile(workspace));
   const [scriptsState, setScriptsState] = useState<ScriptItem[]>(scripts);
   const [batchesState, setBatchesState] = useState<PlannerBatchItem[]>(plannerBatches);
+  const [recordingsState, setRecordingsState] = useState<RecordingCard[]>(recordings);
   const [refreshingWorkspace, setRefreshingWorkspace] = useState(false);
   const [plannerSubmitting, setPlannerSubmitting] = useState(false);
   const [manualModal, setManualModal] = useState<ManualModalMode>('none');
   const [manualModalDate, setManualModalDate] = useState(now.toISOString().slice(0, 10));
   const [creatingManual, setCreatingManual] = useState(false);
-  const [activeTab, setActiveTab] = useState<WorkspaceTab>('Calendário');
+  const [activeTab, setActiveTab] = useState<WorkspaceTab>(initialTab);
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all');
   const [formatFilter, setFormatFilter] = useState<'all' | ContentFormatKey>('all');
   const [filterProductId, setFilterProductId] = useState('');
@@ -1555,6 +1573,18 @@ export function PostsWorkspace({
   const [schedulingDates, setSchedulingDates] = useState<Record<string, string>>({});
   const batchStatusRef = useRef<Map<string, PlannerBatchItem['status']>>(new Map(plannerBatches.map((batch) => [batch.id, batch.status])));
 
+  useEffect(() => {
+    setScriptsState(scripts);
+  }, [scripts]);
+
+  useEffect(() => {
+    setBatchesState(plannerBatches);
+  }, [plannerBatches]);
+
+  useEffect(() => {
+    setActiveTab(initialTab);
+  }, [initialTab]);
+
   const activeBatches = useMemo(
     () => batchesState.filter((batch) => batch.status === 'queued' || batch.status === 'running'),
     [batchesState]
@@ -1566,13 +1596,15 @@ export function PostsWorkspace({
     }
 
     try {
-      const [scriptsResponse, batchesResponse] = await Promise.all([
+      const [scriptsResponse, batchesResponse, recordingsResponse] = await Promise.all([
         fetch(`/api/workspaces/${workspace}/scripts`, { cache: 'no-store' }),
-        fetch(`/api/workspaces/${workspace}/planner-batches`, { cache: 'no-store' })
+        fetch(`/api/workspaces/${workspace}/planner-batches`, { cache: 'no-store' }),
+        fetch(`/api/workspaces/${workspace}/recordings`, { cache: 'no-store' })
       ]);
 
       const scriptsPayload = (await scriptsResponse.json().catch(() => null)) as { scripts?: ScriptItem[]; error?: string } | null;
       const batchesPayload = (await batchesResponse.json().catch(() => null)) as { batches?: PlannerBatchItem[]; error?: string } | null;
+      const recordingsPayload = (await recordingsResponse.json().catch(() => null)) as { recordings?: RecordingCard[]; error?: string } | null;
 
       if (!scriptsResponse.ok) {
         throw new Error(scriptsPayload?.error ?? 'Não foi possível atualizar os conteúdos.');
@@ -1582,8 +1614,13 @@ export function PostsWorkspace({
         throw new Error(batchesPayload?.error ?? 'Não foi possível atualizar os lotes do cronograma.');
       }
 
+      if (!recordingsResponse.ok) {
+        throw new Error(recordingsPayload?.error ?? 'Não foi possível atualizar a produção.');
+      }
+
       setScriptsState(scriptsPayload?.scripts ?? []);
       setBatchesState(batchesPayload?.batches ?? []);
+      setRecordingsState(recordingsPayload?.recordings ?? []);
     } catch (error) {
       if (!silent) {
         toast.error(error instanceof Error ? error.message : 'Não foi possível atualizar a página.');
@@ -1675,6 +1712,7 @@ export function PostsWorkspace({
 
       const createdScript = payload.scripts[0];
       setScriptsState((current) => [createdScript, ...current]);
+      void refreshWorkspaceData(true);
       setManualModal('none');
       setViewingScript(createdScript);
       toast.success('Rascunho criado.');
@@ -1708,6 +1746,7 @@ export function PostsWorkspace({
       setBatchesState((current) => [payload.batch!, ...current.filter((batch) => batch.id !== payload.batch!.id)]);
       setPlannerOpen(false);
       setSelectedDate(config.startDate);
+      void refreshWorkspaceData(true);
       toast.success(
         preview.posts.length === 1
           ? '1 peça foi colocada na fila de geração.'
@@ -1732,6 +1771,7 @@ export function PostsWorkspace({
       setScriptsState(current =>
         current.map(s => s.id === scriptId ? { ...s, status: 'posted' } : s)
       );
+      void refreshWorkspaceData(true);
       toast.success('Conteúdo marcado como postado!');
     } catch {
       toast.error('Erro ao marcar como postado.');
@@ -1749,6 +1789,7 @@ export function PostsWorkspace({
       setScriptsState(current =>
         current.map(s => s.id === scriptId ? { ...s, status: 'scheduled', scheduledFor } : s)
       );
+      void refreshWorkspaceData(true);
       toast.success('Reagendado!');
     } catch {
       toast.error('Erro ao reagendar.');
@@ -1766,6 +1807,7 @@ export function PostsWorkspace({
       setScriptsState(current =>
         current.map(s => s.id === scriptId ? { ...s, status: 'scheduled', scheduledFor } : s)
       );
+      void refreshWorkspaceData(true);
       toast.success('Conteúdo agendado!');
     } catch {
       toast.error('Erro ao agendar.');
@@ -1789,6 +1831,7 @@ export function PostsWorkspace({
 
       setScriptsState((current) => current.map((script) => (script.id === payload.script!.id ? payload.script! : script)));
       setViewingScript((current) => (current?.id === payload.script!.id ? payload.script! : current));
+      void refreshWorkspaceData(true);
       toast.success('Conteúdo aprovado e enviado para Produção.');
     } catch (error) {
       toast.error(error instanceof Error ? error.message : 'Não foi possível aprovar.');
@@ -1813,6 +1856,7 @@ export function PostsWorkspace({
       setScriptsState((current) => current.filter((script) => script.id !== scriptId));
       setViewingScript((current) => (current?.id === scriptId ? null : current));
       setEditingScript((current) => (current?.id === scriptId ? null : current));
+      void refreshWorkspaceData(true);
       toast.success('Conteúdo descartado.');
     } catch (error) {
       toast.error(error instanceof Error ? error.message : 'Não foi possível descartar.');
@@ -1859,6 +1903,7 @@ export function PostsWorkspace({
       setScriptsState((current) => current.map((item) => (item.id === payload.script!.id ? payload.script! : item)));
       setViewingScript((current) => (current?.id === payload.script!.id ? payload.script! : current));
       setEditingScript(null);
+      void refreshWorkspaceData(true);
       toast.success('Conteúdo atualizado.');
     } catch (error) {
       toast.error(error instanceof Error ? error.message : 'Não foi possível atualizar.');
@@ -1894,6 +1939,7 @@ export function PostsWorkspace({
 
       setScriptsState((current) => current.map((item) => (item.id === payload.script!.id ? payload.script! : item)));
       setSelectedDate(scheduledFor);
+      void refreshWorkspaceData(true);
     } catch (error) {
       toast.error(error instanceof Error ? error.message : 'Não foi possível mover a peça.');
     } finally {
@@ -1944,27 +1990,32 @@ export function PostsWorkspace({
     [scheduledScripts]
   );
 
-  const storiesScripts = useMemo(
-    () => [...scheduledScripts].filter((script) => script.contentType === 'stories').sort((left, right) => right.scheduledFor.localeCompare(left.scheduledFor)),
-    [scheduledScripts]
-  );
-
   const draftScripts = useMemo(
     () => filteredScripts.filter((script) => script.status === 'draft').sort((left, right) => right.updatedAt.localeCompare(left.updatedAt)),
     [filteredScripts]
   );
 
+  const approvedScripts = useMemo(
+    () => filteredScripts.filter((script) => script.status === 'approved').sort((left, right) => right.updatedAt.localeCompare(left.updatedAt)),
+    [filteredScripts]
+  );
+
   const editedScripts = useMemo(
-    () => scriptsState.filter((script) => script.status === 'edited').sort((left, right) => right.updatedAt.localeCompare(left.updatedAt)),
-    [scriptsState]
+    () => filteredScripts.filter((script) => script.status === 'edited').sort((left, right) => right.updatedAt.localeCompare(left.updatedAt)),
+    [filteredScripts]
+  );
+
+  const postedScripts = useMemo(
+    () => filteredScripts.filter((script) => script.status === 'posted').sort((left, right) => right.updatedAt.localeCompare(left.updatedAt)),
+    [filteredScripts]
   );
 
   const today = new Date().toISOString().slice(0, 10);
   const atrasadoScripts = useMemo(
-    () => scriptsState.filter(
+    () => filteredScripts.filter(
       (script) => script.status === 'scheduled' && script.scheduledFor && script.scheduledFor < today
     ).sort((left, right) => left.scheduledFor.localeCompare(right.scheduledFor)),
-    [scriptsState, today]
+    [filteredScripts, today]
   );
 
   const statusCounts = useMemo(() => {
@@ -2000,6 +2051,14 @@ export function PostsWorkspace({
     });
   }, [scriptsState]);
 
+  const draftViewCount = draftScripts.length + approvedScripts.length;
+  const productionViewCount =
+    statusCounts.production + statusCounts.recording + statusCounts.drive + statusCounts.editing;
+  const editedViewCount = editedScripts.length;
+  const calendarViewCount = scheduledScripts.length;
+  const postedViewCount = postedScripts.length;
+  const overdueViewCount = atrasadoScripts.length;
+
   function prevMonth() {
     if (calMonth === 0) {
       setCalYear((year) => year - 1);
@@ -2018,14 +2077,14 @@ export function PostsWorkspace({
     setCalMonth((month) => month + 1);
   }
 
-  const tabs: WorkspaceTab[] = ['Calendário', 'Feed', 'Stories', 'Rascunhos', 'Atrasados'];
+  const tabs: WorkspaceTab[] = ['Rascunhos', 'Produção', 'Editados', 'Calendário', 'Postados', 'Atrasados'];
 
   return (
     <div className="flex h-full min-h-0 flex-col overflow-hidden">
       <PageIntro
-        eyebrow="Postagens"
-        title="Planejamento, aprovação e publicação"
-        description="O cronograma agora usa o mesmo motor de Conteúdo, gera rascunhos reais e já conversa com Produção."
+        eyebrow="Conteúdos"
+        title="Fluxo único de conteúdo"
+        description="Rascunhos, produção, calendário, publicação e atrasos vivendo na mesma entidade."
       />
 
       <div className="flex flex-wrap items-center gap-3 px-6 pb-3">
@@ -2043,7 +2102,7 @@ export function PostsWorkspace({
         {(Object.entries(statusCounts) as Array<[ScriptStatus, number]>).map(([status, count]) => (
           <div key={status} className="flex items-center gap-1.5">
             <span className={cn('h-2 w-2 rounded-full', SCRIPT_STATUS_STYLES[status].dot)} />
-            <span className="text-xs text-zinc-500">{count} {SCRIPT_STATUS_LABELS[status].toLowerCase()}</span>
+            <span className="text-xs text-zinc-500">{(status === 'atrasado' ? overdueViewCount : count)} {SCRIPT_STATUS_LABELS[status].toLowerCase()}</span>
           </div>
         ))}
 
@@ -2081,60 +2140,86 @@ export function PostsWorkspace({
               )}
             >
               {tab}
-              {tab === 'Rascunhos' && draftScripts.length > 0 ? (
+              {tab === 'Rascunhos' && draftViewCount > 0 ? (
                 <span className="ml-1 rounded-full bg-zinc-600 px-1.5 py-0.5 text-[10px] text-white">
-                  {draftScripts.length}
+                  {draftViewCount}
                 </span>
               ) : null}
-              {tab === 'Atrasados' && atrasadoScripts.length > 0 ? (
+              {tab === 'Produção' && productionViewCount > 0 ? (
+                <span className="ml-1 rounded-full bg-amber-500 px-1.5 py-0.5 text-[10px] text-white">
+                  {productionViewCount}
+                </span>
+              ) : null}
+              {tab === 'Editados' && editedViewCount > 0 ? (
+                <span className="ml-1 rounded-full bg-indigo-500 px-1.5 py-0.5 text-[10px] text-white">
+                  {editedViewCount}
+                </span>
+              ) : null}
+              {tab === 'Calendário' && calendarViewCount > 0 ? (
+                <span className="ml-1 rounded-full bg-blue-500 px-1.5 py-0.5 text-[10px] text-white">
+                  {calendarViewCount}
+                </span>
+              ) : null}
+              {tab === 'Postados' && postedViewCount > 0 ? (
+                <span className="ml-1 rounded-full bg-slate-500 px-1.5 py-0.5 text-[10px] text-white">
+                  {postedViewCount}
+                </span>
+              ) : null}
+              {tab === 'Atrasados' && overdueViewCount > 0 ? (
                 <span className="ml-1 rounded-full bg-rose-500 px-1.5 py-0.5 text-[10px] text-white">
-                  {atrasadoScripts.length}
+                  {overdueViewCount}
                 </span>
               ) : null}
             </button>
           ))}
         </div>
 
-        <div className="ml-auto flex flex-wrap items-center gap-2">
-          <select
-            value={statusFilter}
-            onChange={(event) => setStatusFilter(event.target.value as StatusFilter)}
-            className="rounded-lg border border-zinc-200 bg-white px-2 py-1.5 text-xs text-zinc-600 focus:outline-none focus:ring-2 focus:ring-zinc-900/10"
-          >
-            <option value="all">Todos os status</option>
-            {(Object.keys(SCRIPT_STATUS_LABELS) as ScriptStatus[]).map((status) => (
-              <option key={status} value={status}>
-                {SCRIPT_STATUS_LABELS[status]}
-              </option>
-            ))}
-          </select>
+        {activeTab === 'Produção' ? (
+          <div className="ml-auto rounded-lg border border-zinc-100 bg-zinc-50 px-3 py-1.5 text-[11px] font-medium text-zinc-500">
+            A produção usa filtros próprios na aba.
+          </div>
+        ) : (
+          <div className="ml-auto flex flex-wrap items-center gap-2">
+            <select
+              value={statusFilter}
+              onChange={(event) => setStatusFilter(event.target.value as StatusFilter)}
+              className="rounded-lg border border-zinc-200 bg-white px-2 py-1.5 text-xs text-zinc-600 focus:outline-none focus:ring-2 focus:ring-zinc-900/10"
+            >
+              <option value="all">Todos os status</option>
+              {(Object.keys(SCRIPT_STATUS_LABELS) as ScriptStatus[]).map((status) => (
+                <option key={status} value={status}>
+                  {SCRIPT_STATUS_LABELS[status]}
+                </option>
+              ))}
+            </select>
 
-          <select
-            value={formatFilter}
-            onChange={(event) => setFormatFilter(event.target.value as 'all' | ContentFormatKey)}
-            className="rounded-lg border border-zinc-200 bg-white px-2 py-1.5 text-xs text-zinc-600 focus:outline-none focus:ring-2 focus:ring-zinc-900/10"
-          >
-            <option value="all">Todos os formatos</option>
-            {CONTENT_FORMAT_ORDER.map((format) => (
-              <option key={format} value={format}>
-                {getContentFormatLabel(format)}
-              </option>
-            ))}
-          </select>
+            <select
+              value={formatFilter}
+              onChange={(event) => setFormatFilter(event.target.value as 'all' | ContentFormatKey)}
+              className="rounded-lg border border-zinc-200 bg-white px-2 py-1.5 text-xs text-zinc-600 focus:outline-none focus:ring-2 focus:ring-zinc-900/10"
+            >
+              <option value="all">Todos os formatos</option>
+              {CONTENT_FORMAT_ORDER.map((format) => (
+                <option key={format} value={format}>
+                  {getContentFormatLabel(format)}
+                </option>
+              ))}
+            </select>
 
-          <select
-            value={filterProductId}
-            onChange={(event) => setFilterProductId(event.target.value)}
-            className="rounded-lg border border-zinc-200 bg-white px-2 py-1.5 text-xs text-zinc-600 focus:outline-none focus:ring-2 focus:ring-zinc-900/10"
-          >
-            <option value="">Todos os produtos</option>
-            {products.map((product) => (
-              <option key={product.id} value={product.id}>
-                {product.name}
-              </option>
-            ))}
-          </select>
-        </div>
+            <select
+              value={filterProductId}
+              onChange={(event) => setFilterProductId(event.target.value)}
+              className="rounded-lg border border-zinc-200 bg-white px-2 py-1.5 text-xs text-zinc-600 focus:outline-none focus:ring-2 focus:ring-zinc-900/10"
+            >
+              <option value="">Todos os produtos</option>
+              {products.map((product) => (
+                <option key={product.id} value={product.id}>
+                  {product.name}
+                </option>
+              ))}
+            </select>
+          </div>
+        )}
       </div>
 
       {activeTab === 'Calendário' ? (
@@ -2168,99 +2253,34 @@ export function PostsWorkspace({
             />
           </div>
         </div>
+      ) : activeTab === 'Produção' ? (
+        <div className="flex-1 min-h-0 overflow-y-auto px-6 pb-6 pt-4">
+          <ProductionWorkspace workspace={workspace} initialCards={recordingsState} showIntro={false} />
+        </div>
       ) : (
         <div className="flex-1 min-h-0 overflow-y-auto px-6 pb-6 pt-4">
           <Card>
             <CardContent className="p-5">
-              {activeTab === 'Feed' ? (
-                <>
-                  <p className="mb-3 text-xs font-semibold text-zinc-500">
-                    {feedScripts.length} peça{feedScripts.length !== 1 ? 's' : ''} de feed
-                  </p>
-                  {feedScripts.length === 0 ? (
-                    <p className="text-sm italic text-zinc-400">Nenhuma peça de feed para este filtro.</p>
-                  ) : (
-                    <div className="space-y-2">
-                      {feedScripts.map((script) => (
-                        <ContentListItem key={script.id} script={script} onClick={() => setViewingScript(script)} />
-                      ))}
-                    </div>
-                  )}
-                </>
-              ) : null}
-
-              {activeTab === 'Stories' ? (
-                <>
-                  <p className="mb-3 text-xs font-semibold text-zinc-500">
-                    {storiesScripts.length} sequência{storiesScripts.length !== 1 ? 's' : ''} de stories
-                  </p>
-                  {storiesScripts.length === 0 ? (
-                    <p className="text-sm italic text-zinc-400">Nenhuma sequência de stories para este filtro.</p>
-                  ) : (
-                    <div className="space-y-2">
-                      {storiesScripts.map((script) => (
-                        <ContentListItem key={script.id} script={script} onClick={() => setViewingScript(script)} />
-                      ))}
-                    </div>
-                  )}
-                </>
-              ) : null}
-
               {activeTab === 'Rascunhos' ? (
                 <>
-                  {editedScripts.length > 0 && (
+                  {approvedScripts.length > 0 && (
                     <div className="mb-5">
                       <div className="mb-3 flex items-center gap-2">
-                        <div className="h-2 w-2 rounded-full bg-indigo-500" />
-                        <p className="text-xs font-semibold text-zinc-700">
-                          Prontos para agendar
-                        </p>
-                        <span className="rounded-full bg-indigo-100 px-1.5 py-0.5 text-[10px] font-medium text-indigo-700">
-                          {editedScripts.length}
+                        <div className="h-2 w-2 rounded-full bg-emerald-500" />
+                        <p className="text-xs font-semibold text-zinc-700">Aprovados e prontos para produção</p>
+                        <span className="rounded-full bg-emerald-100 px-1.5 py-0.5 text-[10px] font-medium text-emerald-700">
+                          {approvedScripts.length}
                         </span>
                       </div>
                       <div className="space-y-2">
-                        {editedScripts.map((script) => (
-                          <div
-                            key={script.id}
-                            className="flex flex-wrap items-center gap-3 rounded-xl border border-indigo-100 bg-indigo-50/60 p-3"
-                          >
-                            <div className="min-w-0 flex-1">
-                              <p className="truncate text-sm font-medium text-zinc-800">{script.title}</p>
-                              <div className="mt-1 flex flex-wrap items-center gap-1.5">
-                                <span className={cn('rounded-full border px-2 py-0.5 text-[10px] font-medium', getContentFormatBadgeClass(script.contentType))}>
-                                  {getContentFormatLabel(script.contentType)}
-                                </span>
-                                {script.productName ? (
-                                  <span className="text-[10px] text-violet-600">{script.productName}</span>
-                                ) : null}
-                              </div>
-                            </div>
-                            <div className="flex shrink-0 items-center gap-2">
-                              <input
-                                type="date"
-                                value={schedulingDates[script.id] ?? ''}
-                                onChange={(e) => setSchedulingDates((current) => ({ ...current, [script.id]: e.target.value }))}
-                                className="rounded-lg border border-zinc-200 bg-white px-2 py-1.5 text-xs text-zinc-700 focus:outline-none focus:ring-2 focus:ring-indigo-200"
-                              />
-                              <button
-                                type="button"
-                                disabled={!schedulingDates[script.id]}
-                                onClick={() => {
-                                  const date = schedulingDates[script.id];
-                                  if (date) void handleScheduleScript(script.id, date);
-                                }}
-                                className="rounded-lg border border-indigo-200 bg-indigo-600 px-3 py-1.5 text-[12px] font-medium text-white transition hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-40"
-                              >
-                                Agendar
-                              </button>
-                            </div>
-                          </div>
+                        {approvedScripts.map((script) => (
+                          <ContentListItem key={script.id} script={script} onClick={() => setViewingScript(script)} />
                         ))}
                       </div>
                       <div className="mt-4 border-t border-zinc-100" />
                     </div>
                   )}
+
                   <div className="mb-3 flex items-center justify-between">
                     <p className="text-xs font-semibold text-zinc-500">
                       {draftScripts.length} rascunho{draftScripts.length !== 1 ? 's' : ''}
@@ -2275,6 +2295,78 @@ export function PostsWorkspace({
                   ) : (
                     <div className="space-y-2">
                       {draftScripts.map((script) => (
+                        <ContentListItem key={script.id} script={script} onClick={() => setViewingScript(script)} />
+                      ))}
+                    </div>
+                  )}
+                </>
+              ) : null}
+
+              {activeTab === 'Editados' ? (
+                <>
+                  <div className="mb-3 flex items-center justify-between">
+                    <p className="text-xs font-semibold text-zinc-500">
+                      {editedScripts.length} conteúdo{editedScripts.length !== 1 ? 's' : ''} editado{editedScripts.length !== 1 ? 's' : ''}
+                    </p>
+                  </div>
+                  {editedScripts.length === 0 ? (
+                    <p className="text-sm italic text-zinc-400">Nenhum conteúdo editado para este filtro.</p>
+                  ) : (
+                    <div className="space-y-2">
+                      {editedScripts.map((script) => (
+                        <div
+                          key={script.id}
+                          className="flex flex-wrap items-center gap-3 rounded-xl border border-indigo-100 bg-indigo-50/60 p-3"
+                        >
+                          <div className="min-w-0 flex-1">
+                            <p className="truncate text-sm font-medium text-zinc-800">{script.title}</p>
+                            <div className="mt-1 flex flex-wrap items-center gap-1.5">
+                              <span className={cn('rounded-full border px-2 py-0.5 text-[10px] font-medium', getContentFormatBadgeClass(script.contentType))}>
+                                {getContentFormatLabel(script.contentType)}
+                              </span>
+                              {script.productName ? (
+                                <span className="text-[10px] text-violet-600">{script.productName}</span>
+                              ) : null}
+                            </div>
+                          </div>
+                          <div className="flex shrink-0 items-center gap-2">
+                            <input
+                              type="date"
+                              value={schedulingDates[script.id] ?? ''}
+                              onChange={(e) => setSchedulingDates((current) => ({ ...current, [script.id]: e.target.value }))}
+                              className="rounded-lg border border-zinc-200 bg-white px-2 py-1.5 text-xs text-zinc-700 focus:outline-none focus:ring-2 focus:ring-indigo-200"
+                            />
+                            <button
+                              type="button"
+                              disabled={!schedulingDates[script.id]}
+                              onClick={() => {
+                                const date = schedulingDates[script.id];
+                                if (date) void handleScheduleScript(script.id, date);
+                              }}
+                              className="rounded-lg border border-indigo-200 bg-indigo-600 px-3 py-1.5 text-[12px] font-medium text-white transition hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-40"
+                            >
+                              Agendar
+                            </button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </>
+              ) : null}
+
+              {activeTab === 'Postados' ? (
+                <>
+                  <div className="mb-3 flex items-center justify-between">
+                    <p className="text-xs font-semibold text-zinc-500">
+                      {postedScripts.length} conteúdo{postedScripts.length !== 1 ? 's' : ''} postado{postedScripts.length !== 1 ? 's' : ''}
+                    </p>
+                  </div>
+                  {postedScripts.length === 0 ? (
+                    <p className="text-sm italic text-zinc-400">Nenhum conteúdo postado.</p>
+                  ) : (
+                    <div className="space-y-2">
+                      {postedScripts.map((script) => (
                         <ContentListItem key={script.id} script={script} onClick={() => setViewingScript(script)} />
                       ))}
                     </div>

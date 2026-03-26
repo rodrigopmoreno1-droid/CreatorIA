@@ -3,11 +3,9 @@ import {
   ChartColumn,
   LayoutDashboard,
   Package,
-  Send,
   TrendingUp,
   UserSquare2,
-  Video,
-  Clapperboard
+  Video
 } from 'lucide-react';
 
 import type { PlatformModuleKey } from '@/types/platform';
@@ -27,25 +25,11 @@ export const platformNavigation: Array<{
     href: (workspace) => `/${workspace}/dashboard`
   },
   {
-    key: 'scripts',
-    label: 'Conteúdo',
-    description: 'Briefing, geração e aprovação',
+    key: 'contents',
+    label: 'Conteúdos',
+    description: 'Fluxo único de conteúdo',
     icon: Video,
-    href: (workspace) => `/${workspace}/scripts`
-  },
-  {
-    key: 'recordings',
-    label: 'Produção',
-    description: 'Pipeline completo de conteúdo',
-    icon: Clapperboard,
-    href: (workspace) => `/${workspace}/recordings`
-  },
-  {
-    key: 'posts',
-    label: 'Postagens',
-    description: 'Planejamento e status',
-    icon: Send,
-    href: (workspace) => `/${workspace}/posts`
+    href: (workspace) => `/${workspace}/conteudos`
   },
   {
     key: 'creators',

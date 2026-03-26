@@ -644,7 +644,7 @@ function RecordingViewModal({
               onClick={onMarkEdited}
               className="border-indigo-200 bg-indigo-600 text-white hover:bg-indigo-700"
             >
-              Marcar como Editado → Postagens
+              Marcar como Editado → Editados
             </Button>
           ) : null}
           <Button onClick={onClose}>Fechar</Button>
@@ -985,10 +985,12 @@ function RecordingEditModal({
 
 export function RecordingsWorkspace({
   workspace,
-  initialCards
+  initialCards,
+  showIntro = true
 }: {
   workspace: string;
   initialCards: RecordingCard[];
+  showIntro?: boolean;
 }) {
   const [cards, setCards] = useState(sortColumnCards(initialCards));
   const [viewMode, setViewMode] = useState<RecordingViewMode>('flow');
@@ -1267,7 +1269,7 @@ export function RecordingsWorkspace({
       if (!res.ok) throw new Error();
       setCards((current) => current.filter((c) => c.id !== cardId));
       setViewingCardId(null);
-      toast.success('Conteúdo marcado como Editado. Agora aparece em Postagens.');
+      toast.success('Conteúdo marcado como Editado. Agora aparece na aba Editados.');
     } catch {
       toast.error('Erro ao atualizar status.');
     } finally {
@@ -1388,10 +1390,12 @@ export function RecordingsWorkspace({
 
   return (
     <div className="space-y-4">
+      {showIntro ? (
       <PageIntro
-        eyebrow="Gravacoes"
-        title="Gravacoes"
-      />
+          eyebrow="Produção"
+          title="Produção"
+        />
+      ) : null}
 
       <Card className="rounded-[24px] border-border/90 bg-white/95">
         <CardContent className="space-y-4 p-4 lg:p-5">
