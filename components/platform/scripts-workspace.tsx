@@ -441,7 +441,7 @@ export function ScriptsWorkspace({
 
       setScripts((current) => [...savePayload.scripts!, ...current]);
       setStatusFilter('draft');
-      toast.success(`${savePayload.scripts!.length} roteiros salvos como rascunho.`);
+      toast.success('Roteiro salvo como rascunho.');
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Não foi possível gerar os roteiros.';
       toast.error(message);
@@ -718,7 +718,7 @@ export function ScriptsWorkspace({
                 disabled={loadingGeneration || voiceCapture.isRecording || voiceCapture.isProcessing || !canGenerate}
               >
                 {loadingGeneration ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
-                Gerar 3 roteiros
+                Gerar roteiro
               </Button>
               <Link
                 href={`/${workspace}/products`}
@@ -932,7 +932,7 @@ export function ScriptsWorkspace({
             ) : (
               <div className="rounded-[20px] border border-dashed border-border bg-muted/20 p-5 text-center text-[13px] leading-6 text-muted-foreground">
                 {statusFilter === 'all'
-                  ? 'Configure o briefing e clique em Gerar 3 roteiros. Cada variação tem um ângulo diferente e é salva automaticamente.'
+                  ? 'Configure o briefing e clique em Gerar roteiro. Cada clique gera 1 roteiro e salva automaticamente — gere quantos quiser.'
                   : statusFilter === 'draft'
                     ? 'Nenhum rascunho ainda. Gere roteiros no briefing acima.'
                     : statusFilter === 'approved'

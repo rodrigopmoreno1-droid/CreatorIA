@@ -2169,20 +2169,20 @@ async function generateStoriesVariants(input: ScriptVariantInput): Promise<Scrip
     `{"objetivo":"","textoTela":"","falado":"","visual":""}`
   ).join(',');
 
-  const fallback: ScriptDraftResponse[] = Array.from({ length: 3 }, (_, i) => ({
-    title: `Stories ${i + 1} — ${productLabel}`,
-    hook: i === 0 ? 'Ninguem te contou isso sobre [tema].' : i === 1 ? 'POV: voce finalmente resolveu [problema].' : 'Ja tentei de tudo. Isso aqui foi diferente.',
+  const fallback: ScriptDraftResponse[] = [{
+    title: `Stories — ${productLabel}`,
+    hook: 'Ninguem te contou isso sobre [tema].',
     spoken: '',
     takes: [],
     cta: 'Responde aqui embaixo ou manda DM.',
     caption: '',
     storySlides: Array.from({ length: n }, (_, j) => ({
       objetivo: j === 0 ? 'gancho' : j === n - 1 ? 'CTA' : 'valor',
-      textoTela: j === 0 ? `[Frase de gancho ${j + 1}]` : `[Conteudo ${j + 1}]`,
+      textoTela: j === 0 ? `[Frase de gancho]` : `[Conteudo ${j + 1}]`,
       falado: `Texto falado do story ${j + 1}.`,
       visual: j === 0 ? 'Selfie direto na camera, expressao de surpresa' : j === n - 1 ? 'Tela final com CTA visivel' : 'Fundo limpo com texto centralizado'
     }))
-  }));
+  }];
 
   const webQuery = buildSocialTrendQuery(input.productName ?? input.prompt, input.pain ?? '', input.benefit ?? '', 'stories instagram viral');
 
@@ -2192,9 +2192,9 @@ async function generateStoriesVariants(input: ScriptVariantInput): Promise<Scrip
     'Stories sao slides curtos, diretos, com progressao narrativa que prende o usuario.',
     '',
     '=== FORMATO DE RESPOSTA ===',
-    'Responda somente JSON valido. Array com exatamente 3 sequencias de stories.',
+    'Responda somente JSON valido. Array com exatamente 1 sequencia de stories.',
     `Cada sequencia: {"title":"","stories":[${slidesTemplate}],"cta":""}`,
-    `Cada sequencia deve ter exatamente ${n} story(ies).`,
+    `A sequencia deve ter exatamente ${n} story(ies).`,
     '',
     '=== REGRAS DOS STORIES ===',
     'textoTela: texto escrito na tela do story. Max 8 palavras. Deve ser MUITO impactante. Sem pontuacao excessiva.',
@@ -2213,10 +2213,9 @@ async function generateStoriesVariants(input: ScriptVariantInput): Promise<Scrip
     '=== BRIEFING ===',
     ...buildBriefingLines(input),
     '',
-    '=== 3 SEQUENCIAS OBRIGATORIAS (angulos diferentes) ===',
-    'Sequencia 1 — REVELACAO: primeiro story faz uma promessa ou revela um dado surpreendente. Progressao constroi curiosidade ate o final.',
-    'Sequencia 2 — POV/HISTORIA: começa com POV especifico que o publico se identifica. Desenvolve a historia slide a slide.',
-    'Sequencia 3 — LISTA/ENSINO: entrega valor direto em formato de lista ou passos. Ultimo slide converte.'
+    '=== ANGULO DA SEQUENCIA ===',
+    'Escolha o angulo mais forte para o briefing dado: REVELACAO (primeiro story faz promessa ou dado surpreendente), POV/HISTORIA (começa com POV que o publico se identifica) ou LISTA/ENSINO (entrega valor direto em passos).',
+    'Use o angulo que melhor serve o objetivo e o publico descrito no briefing.'
   ], webQuery);
 
   const parsed = parseStructuredResponse<unknown[]>(await callProvider(prompt, { maxTokens: 3200 }), []);
@@ -2247,9 +2246,9 @@ async function generateCarrosselVariants(input: ScriptVariantInput): Promise<Scr
     `{"numero":${i + 1},"titulo":"","subtitulo":"","conteudo":"","visual":""}`
   ).join(',');
 
-  const fallback: ScriptDraftResponse[] = Array.from({ length: 3 }, (_, i) => ({
-    title: `Carrossel ${i + 1} — ${productLabel}`,
-    hook: i === 0 ? 'O que ninguem te conta sobre [tema].' : i === 1 ? '[N] erros que voce esta cometendo em [tema].' : 'Como resolver [dor] em [tempo].',
+  const fallback: ScriptDraftResponse[] = [{
+    title: `Carrossel — ${productLabel}`,
+    hook: 'O que ninguem te conta sobre [tema].',
     spoken: '',
     takes: [],
     cta: 'Salva esse carrossel pra nao esquecer.',
@@ -2261,7 +2260,7 @@ async function generateCarrosselVariants(input: ScriptVariantInput): Promise<Scr
       conteudo: j === 0 ? '' : j === n - 1 ? `CTA claro relacionado a ${productLabel}` : `[Conteudo da pagina ${j + 1}]`,
       visual: j === 0 ? 'Capa impactante, fundo solido, tipografia grande' : j === n - 1 ? 'CTA visivel, cor de destaque' : 'Layout limpo, icone ou ilustracao relevante'
     }))
-  }));
+  }];
 
   const webQuery = buildSocialTrendQuery(input.productName ?? input.prompt, input.pain ?? '', input.benefit ?? '', 'carrossel instagram viral');
 
@@ -2273,9 +2272,9 @@ async function generateCarrosselVariants(input: ScriptVariantInput): Promise<Scr
     'Seus carrosseis tem altissimo rate de salvamento e compartilhamento.',
     '',
     '=== FORMATO DE RESPOSTA ===',
-    'Responda somente JSON valido. Array com exatamente 3 carrosseis.',
+    'Responda somente JSON valido. Array com exatamente 1 carrossel.',
     `Cada carrossel: {"title":"","hook":"","slides":[${slideTemplate}],"cta":"","caption":""}`,
-    `Cada carrossel deve ter exatamente ${n} slides.`,
+    `O carrossel deve ter exatamente ${n} slides.`,
     '',
     '=== REGRAS DO CARROSSEL ===',
     'titulo: texto curto da pagina. Max 6 palavras. Impacto imediato.',
@@ -2294,10 +2293,9 @@ async function generateCarrosselVariants(input: ScriptVariantInput): Promise<Scr
     '=== BRIEFING ===',
     ...buildBriefingLines(input),
     '',
-    '=== 3 CARROSSEIS OBRIGATORIOS (angulos completamente diferentes) ===',
-    'Carrossel 1 — LISTA DE ERROS/MITOS: desmonta o que o publico acredita erroneamente. Cada slide = 1 mito + correcao.',
-    'Carrossel 2 — PASSO A PASSO: guia pratico do problema a solucao. Cada slide = 1 passo acionavel.',
-    'Carrossel 3 — COMPARATIVO/TRANSFORMACAO: antes vs depois, errado vs certo, sem produto vs com produto. Formato de contraste visual.'
+    '=== ANGULO DO CARROSSEL ===',
+    'Escolha o angulo mais forte para o briefing dado: LISTA DE ERROS/MITOS (desmonta crencas erradas, cada slide = 1 mito + correcao), PASSO A PASSO (guia pratico do problema a solucao) ou COMPARATIVO (antes vs depois, contraste visual).',
+    'Use o angulo que melhor serve o objetivo e o publico descrito no briefing.'
   ], webQuery);
 
   const parsed = parseStructuredResponse<unknown[]>(await callProvider(prompt, { maxTokens }), []);
@@ -2324,20 +2322,20 @@ async function generatePostVariants(input: ScriptVariantInput): Promise<ScriptDr
   const toneLabel = resolveTonesLabel(input.tones, input.tone);
   const objectiveLabel = resolveObjectivesLabel(input.objectives, input.objective);
 
-  const fallback: ScriptDraftResponse[] = Array.from({ length: 3 }, (_, i) => ({
-    title: `Post ${i + 1} — ${productLabel}`,
-    hook: i === 0 ? '[Titulo impactante da peca]' : i === 1 ? '[Dado surpreendente]' : '[Pergunta provocadora]',
+  const fallback: ScriptDraftResponse[] = [{
+    title: `Post — ${productLabel}`,
+    hook: '[Titulo impactante da peca]',
     spoken: '',
     takes: [],
     cta: 'Salva esse post.',
     caption: `[Abertura forte]\n\n[2-3 linhas de valor]\n\n[CTA especifico]\n\n#post #${productLabel.toLowerCase().replace(/\s+/g, '')} #dica`,
     postFields: {
-      conceito: `Conceito do post ${i + 1}`,
+      conceito: `[Conceito do post]`,
       tituloPeca: `[Titulo curto e impactante]`,
       textoApoio: `[Subtitulo que complementa]`,
       direcaoVisual: `Fundo limpo, tipografia em destaque, cores da marca`
     }
-  }));
+  }];
 
   const webQuery = buildSocialTrendQuery(input.productName ?? input.prompt, input.pain ?? '', input.benefit ?? '', 'post estatico instagram viral');
 
@@ -2347,7 +2345,7 @@ async function generatePostVariants(input: ScriptVariantInput): Promise<ScriptDr
     'Seus posts param o scroll e geram salvamentos.',
     '',
     '=== FORMATO DE RESPOSTA ===',
-    'Responda somente JSON valido. Array com exatamente 3 conceitos de post.',
+    'Responda somente JSON valido. Array com exatamente 1 conceito de post.',
     'Cada post: {"title":"","conceito":"","tituloPeca":"","textoApoio":"","direcaoVisual":"","cta":"","caption":""}',
     '',
     '=== REGRAS DO POST ESTATICO ===',
@@ -2365,10 +2363,9 @@ async function generatePostVariants(input: ScriptVariantInput): Promise<ScriptDr
     '=== BRIEFING ===',
     ...buildBriefingLines(input),
     '',
-    '=== 3 CONCEITOS OBRIGATORIOS (angulos e visuais completamente diferentes) ===',
-    'Conceito 1 — DADO/ESTATISTICA: usa um numero ou fato surpreendente como titulo. Visual forte em torno do numero.',
-    'Conceito 2 — FRASE/CRENCA: uma frase que quebra uma crenca comum ou valida uma experiencia do publico.',
-    'Conceito 3 — LISTA VISUAL: um mini-ranking ou lista numerada que entrega valor rapidamente.'
+    '=== ANGULO DO POST ===',
+    'Escolha o angulo mais forte para o briefing dado: DADO/ESTATISTICA (numero ou fato surpreendente como titulo), FRASE/CRENCA (frase que quebra uma crenca ou valida uma experiencia) ou LISTA VISUAL (mini-ranking ou lista com valor imediato).',
+    'Use o angulo que melhor serve o objetivo e o publico descrito no briefing.'
   ], webQuery);
 
   const parsed = parseStructuredResponse<unknown[]>(await callProvider(prompt, { maxTokens: 2500 }), []);
@@ -2417,20 +2414,10 @@ async function generateReelsVariants(input: ScriptVariantInput) {
   const painOrTopic = input.pain ?? input.prompt;
   const benefitOrTopic = input.benefit ?? input.prompt;
 
-  const fallback = Array.from({ length: 3 }, (_, index) => ({
-    title: `Roteiro ${index + 1} — ${productLabel}`,
-    hook:
-      index === 0
-        ? `Fiz isso por meses sem resultado. Ate descobrir o que eu estava errando.`
-        : index === 1
-          ? `Ninguem te conta o motivo real de ${painOrTopic.toLowerCase().slice(0, 40)}.`
-          : `Parei de fazer o obvio. O que aconteceu depois mudou tudo.`,
-    spoken:
-      index === 0
-        ? `Tentei de tudo pra resolver ${painOrTopic.toLowerCase().slice(0, 60)}. Gastei tempo, dinheiro, energia. Nada funcionava de verdade. Ate que uma coisa especifica mudou minha abordagem. Eu descobri que o problema nao era o que eu achava que era. Era [X]. E quando eu corrigi isso com ${productLabel}, o resultado veio rapido. Em semanas, nao meses.`
-        : index === 1
-          ? `Existe um motivo especifico pelo qual a maioria das pessoas nao consegue ${benefitOrTopic.toLowerCase().slice(0, 60)}. E nao e forca de vontade. E uma informacao que ningem explica direito. Vou te contar em 30 segundos o que levei meses pra entender. Depois que voce sabe isso, ${productLabel} faz muito mais sentido.`
-          : `Passei por uma fase em que ${painOrTopic.toLowerCase().slice(0, 50)} era meu problema principal. Testei o que todo mundo recomenda. Nao funcionou. Testei o contrario. Funcionou. ${productLabel} foi parte do que funcionou, mas o que realmente mudou foi a minha logica sobre o problema.`,
+  const fallback = [{
+    title: `Roteiro — ${productLabel}`,
+    hook: `Fiz isso por meses sem resultado. Ate descobrir o que eu estava errando.`,
+    spoken: `Tentei de tudo pra resolver ${painOrTopic.toLowerCase().slice(0, 60)}. Gastei tempo, dinheiro, energia. Nada funcionava de verdade. Ate que uma coisa especifica mudou minha abordagem. Eu descobri que o problema nao era o que eu achava que era. Era [X]. E quando eu corrigi isso com ${productLabel}, o resultado veio rapido. Em semanas, nao meses.`,
     takes: [
       'Close no rosto, expressao de quem esta contando algo importante',
       'Corte para momento de tensao ou situacao especifica',
@@ -2438,14 +2425,9 @@ async function generateReelsVariants(input: ScriptVariantInput) {
       'Resultado visual ou texto na tela com dado especifico',
       'CTA com energia, olho na camera'
     ],
-    cta:
-      index === 0
-        ? 'Salva esse video pra nao esquecer o que eu falei aqui.'
-        : index === 1
-          ? 'Marca alguem que precisa saber disso.'
-          : 'Comenta embaixo se voce ja passou por isso — quero ler.',
+    cta: 'Salva esse video pra nao esquecer o que eu falei aqui.',
     caption: `${painOrTopic.slice(0, 55)}? Existe uma razao especifica pra isso.\n\nA maioria nao sabe. Eu so descobri quando parei de fazer o que todo mundo faz.\n\n#reels #${productLabel.toLowerCase().replace(/\s+/g, '')} #conteudo #dica`
-  }));
+  }];
 
   const webQuery = buildSocialTrendQuery(
     input.productName ?? input.prompt,
@@ -2462,7 +2444,7 @@ async function generateReelsVariants(input: ScriptVariantInput) {
     'Voce pensa como creator, storyteller e social media — nao como redator de publicidade.',
     '',
     '=== FORMATO DE RESPOSTA ===',
-    'Responda somente JSON valido. Array com exatamente 3 objetos.',
+    'Responda somente JSON valido. Array com exatamente 1 objeto.',
     'Formato: [{"title":"","hook":"","spoken":"","takes":["","","","",""],"cta":"","caption":""}]',
     '',
     '=== MENTALIDADE AO ESCREVER ===',
@@ -2519,19 +2501,11 @@ async function generateReelsVariants(input: ScriptVariantInput) {
     input.referenceContext ? `Referencias adicionais: ${input.referenceContext}` : null,
     input.prompt ? `Instrucao extra: ${input.prompt}` : null,
     '',
-    '=== 3 VARIACOES OBRIGATORIAS (angulos completamente diferentes) ===',
+    '=== ANGULO DO ROTEIRO ===',
     isTrend
-      ? 'Variacao 1 — TREND FORMAT A: escolha um formato viral (ex: POV), adapte o produto a ele naturalmente.'
-      : 'Variacao 1 — HISTORIA PESSOAL: começa com uma situacao especifica e real. O produto e a revelacao no meio da historia, nao o final. A pessoa assiste pelo story, nao pelo produto.',
-    isTrend
-      ? 'Variacao 2 — TREND FORMAT B: escolha outro formato viral diferente (ex: antes/depois filmado), adapte.'
-      : 'Variacao 2 — DADO E CONTRASTE: abre com fato surpreendente ou contraste inesperado. Explica a logica por tras. O produto entra como prova, com resultado especifico.',
-    isTrend
-      ? 'Variacao 3 — TREND FORMAT C: escolha um terceiro formato viral (ex: rotina revelada ou ranking). Adapte.'
-      : 'Variacao 3 — CURIOSIDADE E EDUCACAO: abre com curiosity gap ou dado que intriga. Ensina algo util sobre o tema. O produto aparece como ferramenta, nao como solucao magica.',
-    '',
-    'Cada variacao: hook diferente, estrutura diferente, tom ligeiramente diferente.',
-    'Use dados, referencias de trends e formatos virais captados na busca web quando fortalecerem o gancho.',
+      ? 'MODO TREND: escolha o formato viral mais relevante para o briefing (ex: POV, antes/depois filmado, rotina revelada, expectativa vs realidade, ranking ironico). O formato define a estrutura — o produto entra naturalmente dentro dele.'
+      : 'Escolha o angulo mais forte para o briefing: HISTORIA PESSOAL (situacao especifica e real, produto como revelacao no meio), DADO E CONTRASTE (fato surpreendente ou contraste inesperado, produto como prova) ou CURIOSIDADE E EDUCACAO (curiosity gap, ensina algo util, produto como ferramenta).',
+    'Use dados e formatos virais captados na busca web quando fortalecerem o gancho.',
     'Se nao houver dados reais disponiveis, invente uma historia verossimil especifica — nao generica.'
   ], webQuery);
 
