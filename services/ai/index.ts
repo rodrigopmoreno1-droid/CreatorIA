@@ -3642,9 +3642,11 @@ export async function organizeCompetitorAnalysis(input: CompetitorAnalysisInput)
     'Responda somente JSON valido.',
     'Formato esperado:',
     '{"generatedAt":"","model":"","overview":{"toneOfVoice":"","positioning":"","apparentAudience":"","visualStyle":""},"sections":[{"id":"","title":"","description":"","items":[{"id":"","kind":"","title":"","summary":"","rationale":"","tags":[""],"hookType":"","ctaType":"","format":"","sample":"","sourceUrl":""}]}],"practicalSuggestions":{"toContent":[""],"toCreatorAi":[""],"toReferenceBank":[""]},"sourceSnapshot":{"fetchedAt":"","instagram":null,"website":null,"postsAnalyzed":0,"reelsAnalyzed":0,"feedAnalyzed":0,"captureNotes":[""],"topPosts":[]}}',
-    'Crie secoes exatamente com estes ids: overview, patterns, ideas, adaptation, actions.',
+    'Crie secoes exatamente com estes ids: overview, engineering, patterns, ideas, adaptation, actions.',
     'Cada secao deve ter de 2 a 5 itens realmente acionaveis.',
-    'Os itens de ideas, hook, cta e action devem soar como algo que um social media usaria na pratica.',
+    'A secao engineering deve ser um resumo operacional rapido com duracao media, cadencia, abertura, CTA, gravacao, prova social, cenarios, formatos e sinais de trend.',
+    'A secao ideas deve separar claramente Hooks, Estruturas de roteiro, Ideias de Reels, Ideias de Stories, Ideias de Carrossel, CTAs, Angulos de copy, Storytelling, Ofertas e Provas sociais.',
+    'Os itens de ideas, hook, cta, engineering e action devem soar como algo que um social media usaria na pratica.',
     'Se houver sourceUrl no sample, preserve.',
     `Dados capturados:\n${JSON.stringify(summary)}`
   ].join('\n\n');

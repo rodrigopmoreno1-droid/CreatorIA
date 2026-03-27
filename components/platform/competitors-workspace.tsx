@@ -26,12 +26,16 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
-import { buildReferencePayloadFromInsight } from '@/lib/competitor-reference-payload';
+import { buildReferencePayloadFromInsight, buildReferencePayloadFromGeneratedContent } from '@/lib/competitor-reference-payload';
+import { buildCompetitorContentIdeas } from '@/lib/competitor-content-ideas';
 import { cn } from '@/lib/utils';
 import type {
   CompetitorAnalysis,
   CompetitorAnalysisStatus,
+  CompetitorGeneratedContentItem,
+  CompetitorGeneratedContentPack,
   CompetitorInsight,
+  CompetitorReferenceCategory,
   CompetitorRecord,
   CompetitorType,
   ContentReferenceRecord
@@ -51,6 +55,7 @@ type CompetitorFormState = {
 type ReferenceFormState = {
   title: string;
   content: string;
+  category: CompetitorReferenceCategory;
   hookType: string;
   ctaType: string;
   format: string;
@@ -110,6 +115,31 @@ const HOOK_TYPES = [
 
 const CTA_TYPES = ['Vendas', 'Engajamento', 'Comentarios', 'Salvar', 'Compartilhar', 'Seguir', 'Direct', 'Outro'];
 const FORMAT_TYPES = ['Reels', 'Stories', 'Carrossel', 'Post', 'Video curto', 'Outro'];
+const REFERENCE_CATEGORY_LABELS: Record<CompetitorReferenceCategory, string> = {
+  hook: 'Hook',
+  cta: 'CTA',
+  structure: 'Estrutura',
+  content_idea: 'Ideia de conteúdo',
+  storytelling: 'Storytelling',
+  copy_angle: 'Ângulo de copy',
+  offer: 'Oferta',
+  social_proof: 'Prova social',
+  format: 'Formato',
+  other: 'Outro'
+};
+
+const REFERENCE_CATEGORY_OPTIONS: Array<{ value: CompetitorReferenceCategory; label: string }> = [
+  { value: 'hook', label: 'Hook' },
+  { value: 'cta', label: 'CTA' },
+  { value: 'structure', label: 'Estrutura' },
+  { value: 'content_idea', label: 'Ideia de conteúdo' },
+  { value: 'storytelling', label: 'Storytelling' },
+  { value: 'copy_angle', label: 'Ângulo de copy' },
+  { value: 'offer', label: 'Oferta' },
+  { value: 'social_proof', label: 'Prova social' },
+  { value: 'format', label: 'Formato' },
+  { value: 'other', label: 'Outro' }
+];
 
 function emptyCompetitorForm(): CompetitorFormState {
   return {
@@ -128,6 +158,7 @@ function emptyReferenceForm(): ReferenceFormState {
   return {
     title: '',
     content: '',
+    category: 'content_idea',
     hookType: 'Curiosidade',
     ctaType: 'Engajamento',
     format: 'Reels',
@@ -155,6 +186,25 @@ function formatDateLabel(value: string) {
     hour: '2-digit',
     minute: '2-digit'
   }).format(parsed);
+}
+
+function formatReferenceCategoryLabel(value: string) {
+  if (!value) {
+    return 'Sem categoria';
+  }
+
+  const key = value as CompetitorReferenceCategory;
+  return REFERENCE_CATEGORY_LABELS[key] ?? (
+    {
+      manual: 'Outro',
+      idea: 'Ideia de conteúdo',
+      action: 'Ideia de conteúdo',
+      overview: 'Ângulo de copy',
+      theme: 'Ângulo de copy',
+      visual: 'Formato',
+      adaptation: 'Estrutura'
+    } as Record<string, string>
+  )[value] ?? value;
 }
 
 function AnalysisStatusBadge({ status }: { status: CompetitorAnalysisStatus }) {
@@ -253,7 +303,7 @@ function ReferenceCard({
             <p className="text-sm font-semibold text-zinc-900">{reference.title || 'Referencia salva'}</p>
             {reference.category ? (
               <span className="rounded-full border border-zinc-200 bg-zinc-50 px-2 py-0.5 text-[10px] font-medium text-zinc-500">
-                {reference.category}
+                {formatReferenceCategoryLabel(reference.category)}
               </span>
             ) : null}
             {reference.format ? (
@@ -570,7 +620,17 @@ function AddReferenceModal({
             <Textarea value={form.content} onChange={(event) => field('content', event.target.value)} rows={5} placeholder="Gancho, estrutura, insight ou CTA que merece ir para o banco..." required />
           </div>
 
-          <div className="grid gap-4 sm:grid-cols-3">
+          <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+            <div className="sm:col-span-2 xl:col-span-1">
+              <label className="mb-1.5 block text-xs font-medium text-zinc-700">Categoria</label>
+              <select value={form.category} onChange={(event) => field('category', event.target.value as CompetitorReferenceCategory)} className="w-full rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-900">
+                {REFERENCE_CATEGORY_OPTIONS.map((item) => (
+                  <option key={item.value} value={item.value}>
+                    {item.label}
+                  </option>
+                ))}
+              </select>
+            </div>
             <div>
               <label className="mb-1.5 block text-xs font-medium text-zinc-700">Tipo de gancho</label>
               <select value={form.hookType} onChange={(event) => field('hookType', event.target.value)} className="w-full rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-900">
@@ -784,6 +844,79 @@ function InsightCard({
   );
 }
 
+function GeneratedContentCard({
+  item,
+  saved,
+  onToggleSave
+}: {
+  item: CompetitorGeneratedContentItem;
+  saved: boolean;
+  onToggleSave: () => void;
+}) {
+  return (
+    <div className="rounded-2xl border border-zinc-200 bg-white p-4">
+      <div className="flex items-start gap-3">
+        <div className="flex-1 space-y-2">
+          <div className="flex flex-wrap items-center gap-2">
+            <p className="text-sm font-semibold text-zinc-900">{item.title}</p>
+            <span className="rounded-full border border-zinc-200 bg-zinc-50 px-2 py-0.5 text-[10px] font-medium text-zinc-500">
+              {formatReferenceCategoryLabel(item.saveCategory)}
+            </span>
+            {item.format ? (
+              <span className="rounded-full border border-blue-200 bg-blue-50 px-2 py-0.5 text-[10px] font-medium text-blue-700">
+                {item.format}
+              </span>
+            ) : null}
+          </div>
+
+          <p className="text-sm leading-relaxed text-zinc-700">{item.summary}</p>
+          <p className="text-xs leading-relaxed text-zinc-500">{item.rationale}</p>
+
+          {item.structure ? (
+            <div className="rounded-xl border border-zinc-200 bg-zinc-50 px-3 py-2 text-xs leading-relaxed text-zinc-600">
+              <span className="font-medium text-zinc-700">Estrutura:</span> {item.structure}
+            </div>
+          ) : null}
+
+          {item.angle ? (
+            <div className="rounded-xl border border-violet-100 bg-violet-50 px-3 py-2 text-xs leading-relaxed text-violet-700">
+              <span className="font-medium">Angulo:</span> {item.angle}
+            </div>
+          ) : null}
+
+          <div className="flex flex-wrap items-center gap-2 text-[11px] text-zinc-400">
+            {item.hookType ? <span>Gancho: {item.hookType}</span> : null}
+            {item.ctaType ? <span>CTA: {item.ctaType}</span> : null}
+            {item.sample ? <span className="text-zinc-500">Exemplo: {item.sample}</span> : null}
+          </div>
+
+          <div className="flex flex-wrap gap-1.5">
+            {item.tags.slice(0, 5).map((tag) => (
+              <span key={tag} className="rounded-full bg-zinc-100 px-2 py-0.5 text-[10px] text-zinc-500">
+                {tag}
+              </span>
+            ))}
+          </div>
+        </div>
+
+        <button
+          type="button"
+          onClick={onToggleSave}
+          className={cn(
+            'rounded-full border p-2 transition',
+            saved
+              ? 'border-pink-200 bg-pink-50 text-pink-600'
+              : 'border-zinc-200 bg-white text-zinc-400 hover:text-pink-500'
+          )}
+          title={saved ? 'Remover do banco de referencias' : 'Salvar no banco de referencias'}
+        >
+          <Heart className={cn('h-4 w-4', saved && 'fill-current')} />
+        </button>
+      </div>
+    </div>
+  );
+}
+
 function CompetitorDetailModal({
   workspace,
   competitor,
@@ -810,6 +943,8 @@ function CompetitorDetailModal({
   const [addingReference, setAddingReference] = useState(false);
   const [manualCaptureMode, setManualCaptureMode] = useState<'captions' | 'script' | null>(null);
   const [generatingAnalysis, setGeneratingAnalysis] = useState(false);
+  const [generatingContent, setGeneratingContent] = useState(false);
+  const [generatedContent, setGeneratedContent] = useState<CompetitorGeneratedContentPack | null>(null);
   const [referenceFilter, setReferenceFilter] = useState<'all' | 'liked'>('all');
 
   const competitorReferences = useMemo(
@@ -824,9 +959,19 @@ function CompetitorDetailModal({
     () => new Set(references.filter((reference) => reference.liked).map((reference) => reference.sourceInsightId).filter(Boolean)),
     [references]
   );
+  const savedGeneratedContentIds = useMemo(
+    () =>
+      new Set(
+        references
+          .map((reference) => reference.sourceInsightId)
+          .filter((value): value is string => typeof value === 'string' && value.startsWith('generated_'))
+      ),
+    [references]
+  );
 
   async function handleGenerateAnalysis() {
     setGeneratingAnalysis(true);
+    setGeneratedContent(null);
     try {
       const response = await fetch(`/api/workspaces/${workspace}/competitors/${competitor.id}/analyze`, {
         method: 'POST'
@@ -851,8 +996,28 @@ function CompetitorDetailModal({
     }
   }
 
+  function handleGenerateContentIdeas() {
+    if (!analysis) {
+      toast.error('Gere ou carregue uma analise completa antes de montar conteudos baseados nela.');
+      return;
+    }
+
+    setGeneratingContent(true);
+    try {
+      const pack = buildCompetitorContentIdeas(analysis, competitor);
+      setGeneratedContent(pack);
+      toast.success('Pacote de conteudos baseado na analise pronto.');
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Nao foi possivel gerar os conteudos.';
+      toast.error(message);
+    } finally {
+      setGeneratingContent(false);
+    }
+  }
+
   async function handleManualCapture(mode: 'captions' | 'script', content: string) {
     setGeneratingAnalysis(true);
+    setGeneratedContent(null);
     try {
       const response = await fetch(`/api/workspaces/${workspace}/competitors/${competitor.id}/capture-manual`, {
         method: 'POST',
@@ -885,7 +1050,7 @@ function CompetitorDetailModal({
     onClose();
   }
 
-  async function handleInsightToggle(insight: CompetitorInsight) {
+  async function handleInsightToggle(insight: CompetitorInsight, sectionId?: string) {
     const existing = references.find((reference) => reference.sourceInsightId === insight.id);
 
     if (existing) {
@@ -893,7 +1058,18 @@ function CompetitorDetailModal({
       return;
     }
 
-    await onSaveReference(buildReferencePayloadFromInsight(competitor, insight));
+    await onSaveReference(buildReferencePayloadFromInsight(competitor, insight, sectionId));
+  }
+
+  async function handleGeneratedContentToggle(item: CompetitorGeneratedContentItem) {
+    const existing = references.find((reference) => reference.sourceInsightId === item.id);
+
+    if (existing) {
+      await onToggleReferenceLike(existing);
+      return;
+    }
+
+    await onSaveReference(buildReferencePayloadFromGeneratedContent(competitor, item));
   }
 
   const tabs = [
@@ -1048,15 +1224,27 @@ function CompetitorDetailModal({
               <div className="space-y-5">
                 <div className="flex flex-wrap items-center justify-between gap-3">
                   <div>
-                    <p className="text-sm font-semibold text-zinc-900">Analise de mercado e referencias</p>
+                    <p className="text-sm font-semibold text-zinc-900">Análise de mercado e referências</p>
                     <p className="mt-1 text-xs text-zinc-500">
-                      Coleta perfil, bio, feed, legendas, formatos e organiza os sinais em insights utilizaveis.
+                      Coleta perfil, bio, feed, legendas, formatos e traduz os sinais em engenharia de conteúdo, ideias e ação.
                     </p>
                   </div>
-                  <Button onClick={handleGenerateAnalysis} disabled={generatingAnalysis} className="min-w-[180px]">
-                    {generatingAnalysis ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Brain className="mr-2 h-4 w-4" />}
-                    {analysis ? 'Regenerar analise' : 'Gerar analise'}
-                  </Button>
+                  <div className="flex flex-wrap gap-2">
+                    <Button onClick={handleGenerateAnalysis} disabled={generatingAnalysis} className="min-w-[180px]">
+                      {generatingAnalysis ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Brain className="mr-2 h-4 w-4" />}
+                      {analysis ? 'Regenerar analise' : 'Gerar analise'}
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      onClick={handleGenerateContentIdeas}
+                      disabled={!analysis || generatingAnalysis || generatingContent}
+                      className="min-w-[240px] border-violet-200 bg-violet-50 text-violet-700 hover:bg-violet-100"
+                    >
+                      {generatingContent ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Sparkles className="mr-2 h-4 w-4" />}
+                      Gerar conteúdos baseados nessa análise
+                    </Button>
+                  </div>
                 </div>
 
                 {competitor.analysisStatus === 'error' ? (
@@ -1231,6 +1419,41 @@ function CompetitorDetailModal({
                       </Card>
                     ) : null}
 
+                    {generatedContent ? (
+                      <Card className="rounded-2xl border-zinc-200">
+                        <CardContent className="space-y-4 p-5">
+                          <div className="flex flex-wrap items-start justify-between gap-3">
+                            <div>
+                        <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-zinc-400">Conteúdos baseados nessa análise</p>
+                              <p className="mt-1 max-w-2xl text-xs leading-relaxed text-zinc-500">{generatedContent.summary}</p>
+                            </div>
+                            <span className="text-[11px] text-zinc-400">Gerado em {formatDateLabel(generatedContent.generatedAt)}</span>
+                          </div>
+
+                          <div className="space-y-3">
+                            {generatedContent.sections.map((section) => (
+                              <div key={section.id} className="space-y-2">
+                                <div>
+                                  <p className="text-sm font-semibold text-zinc-900">{section.title}</p>
+                                  <p className="mt-1 text-xs leading-relaxed text-zinc-500">{section.description}</p>
+                                </div>
+                                <div className="space-y-3">
+                                  {section.items.map((item) => (
+                                    <GeneratedContentCard
+                                      key={item.id}
+                                      item={item}
+                                      saved={savedGeneratedContentIds.has(item.id)}
+                                      onToggleSave={() => handleGeneratedContentToggle(item)}
+                                    />
+                                  ))}
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        </CardContent>
+                      </Card>
+                    ) : null}
+
                     {analysis ? (
                       <div className="space-y-4">
                         {analysis.sections.map((section) => (
@@ -1240,13 +1463,13 @@ function CompetitorDetailModal({
                                 <p className="text-sm font-semibold text-zinc-900">{section.title}</p>
                                 <p className="mt-1 text-xs leading-relaxed text-zinc-500">{section.description}</p>
                               </div>
-                              <div className="grid gap-3 xl:grid-cols-2">
+                              <div className={cn('grid gap-3', section.id === 'engineering' ? 'sm:grid-cols-2 xl:grid-cols-3' : 'xl:grid-cols-2')}>
                                 {section.items.map((insight) => (
                                   <InsightCard
                                     key={insight.id}
                                     insight={insight}
                                     saved={savedInsightIds.has(insight.id)}
-                                    onToggleSave={() => handleInsightToggle(insight)}
+                                    onToggleSave={() => handleInsightToggle(insight, section.id)}
                                   />
                                 ))}
                               </div>
@@ -1351,20 +1574,21 @@ function CompetitorDetailModal({
               competitorName: competitor.name,
               title: data.title,
               content: data.content,
+              category: data.category,
               hookType: data.hookType,
               ctaType: data.ctaType,
               format: data.format,
               imageUrl: data.imageUrl,
               notes: data.notes,
               liked: data.liked,
-              category: 'manual',
               source: 'manual',
               sourceInsightId: '',
               sourceUrl: '',
               metadata: {
                 origin: 'manual-reference',
                 competitorType: competitor.type,
-                niche: competitor.niche
+                niche: competitor.niche,
+                category: data.category
               }
             });
           }}

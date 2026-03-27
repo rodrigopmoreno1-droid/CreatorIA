@@ -22,6 +22,18 @@ export type CompetitorContentFormat =
   | 'mixed'
   | 'unknown';
 
+export type CompetitorReferenceCategory =
+  | 'hook'
+  | 'cta'
+  | 'structure'
+  | 'content_idea'
+  | 'storytelling'
+  | 'copy_angle'
+  | 'offer'
+  | 'social_proof'
+  | 'format'
+  | 'other';
+
 export type CompetitorInsightKind =
   | 'overview'
   | 'theme'
@@ -32,7 +44,8 @@ export type CompetitorInsightKind =
   | 'visual'
   | 'idea'
   | 'adaptation'
-  | 'action';
+  | 'action'
+  | 'engineering';
 
 export type CompetitorCapturedPost = {
   id: string;
@@ -49,6 +62,7 @@ export type CompetitorCapturedPost = {
     comments: number;
     views: number;
     engagementScore: number;
+    durationSeconds: number | null;
   };
   accessibilityCaption: string;
   hookPattern: string;
@@ -145,6 +159,50 @@ export type CompetitorAnalysisSection = {
   title: string;
   description: string;
   items: CompetitorInsight[];
+};
+
+export type CompetitorGeneratedContentKind =
+  | 'hook'
+  | 'structure'
+  | 'reels'
+  | 'stories'
+  | 'carrossel'
+  | 'cta'
+  | 'copy_angle'
+  | 'storytelling'
+  | 'offer'
+  | 'social_proof';
+
+export type CompetitorGeneratedContentItem = {
+  id: string;
+  kind: CompetitorGeneratedContentKind;
+  title: string;
+  summary: string;
+  rationale: string;
+  tags: string[];
+  hookType: string;
+  ctaType: string;
+  format: string;
+  sample: string;
+  sourceUrl: string;
+  saveCategory: CompetitorReferenceCategory;
+  structure: string;
+  angle: string;
+};
+
+export type CompetitorGeneratedContentSection = {
+  id: string;
+  title: string;
+  description: string;
+  items: CompetitorGeneratedContentItem[];
+};
+
+export type CompetitorGeneratedContentPack = {
+  generatedAt: string;
+  model: string;
+  summary: string;
+  sections: CompetitorGeneratedContentSection[];
+  sourceSnapshot: CompetitorSourceSnapshot;
 };
 
 export type CompetitorAnalysis = {

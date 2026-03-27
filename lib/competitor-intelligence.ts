@@ -22,6 +22,7 @@ export type CompetitorAnalysisFacts = {
   toneHints: string[];
   visualHints: string[];
   cadenceLabel: string;
+  averageVideoDuration: number | null;
   topAngles: string[];
   topCaptions: string[];
 };
@@ -324,11 +325,17 @@ function mapInstagramNode(node: RawInstagramNode) {
   const likes = toNumber(getObject(node.edge_media_preview_like)?.count || getObject(node.edge_liked_by)?.count);
   const comments = toNumber(getObject(node.edge_media_to_comment)?.count);
   const views = toNumber(node.video_view_count);
+  const durationSeconds = pickApifyDurationSeconds(
+    node,
+    ['video_duration', 'videoDuration', 'duration', 'duration_seconds', 'durationSeconds'],
+    ['video_duration_ms', 'videoDurationMs', 'duration_ms', 'durationMs']
+  );
   const metrics = {
     likes,
     comments,
     views,
-    engagementScore: computeEngagementScore({ likes, comments, views })
+    engagementScore: computeEngagementScore({ likes, comments, views }),
+    durationSeconds
   };
 
   const mapped: CompetitorCapturedPost = {
@@ -443,6 +450,36 @@ function pickApifyNumber(node: RawInstagramNode, keys: string[]) {
   return 0;
 }
 
+function pickApifyDurationSeconds(node: RawInstagramNode, secondsKeys: string[], millisecondsKeys: string[] = []) {
+  for (const key of secondsKeys) {
+    const value = node[key];
+    if (typeof value === 'number' && Number.isFinite(value)) {
+      return value;
+    }
+    if (typeof value === 'string' && value.trim()) {
+      const parsed = Number(value);
+      if (Number.isFinite(parsed)) {
+        return parsed;
+      }
+    }
+  }
+
+  for (const key of millisecondsKeys) {
+    const value = node[key];
+    if (typeof value === 'number' && Number.isFinite(value)) {
+      return value / 1000;
+    }
+    if (typeof value === 'string' && value.trim()) {
+      const parsed = Number(value);
+      if (Number.isFinite(parsed)) {
+        return parsed / 1000;
+      }
+    }
+  }
+
+  return null;
+}
+
 function pickApifyArray(node: RawInstagramNode, keys: string[]) {
   for (const key of keys) {
     const value = node[key];
@@ -543,6 +580,11 @@ function mapApifyPost(node: RawInstagramNode, overrideFormat?: CompetitorContent
   const likes = pickApifyNumber(node, ['likes', 'likeCount', 'likesCount', 'likes_count', 'edge_media_preview_like_count', 'edge_media_preview_like']);
   const comments = pickApifyNumber(node, ['comments', 'commentCount', 'commentsCount', 'comments_count', 'edge_media_to_comment_count', 'edge_media_to_comment']);
   const views = pickApifyNumber(node, ['views', 'viewCount', 'video_view_count', 'videoViewCount', 'playCount']);
+  const durationSeconds = pickApifyDurationSeconds(
+    node,
+    ['video_duration', 'videoDuration', 'duration', 'duration_seconds', 'durationSeconds'],
+    ['video_duration_ms', 'videoDurationMs', 'duration_ms', 'durationMs']
+  );
   const timestampRaw = pickApifyField(node, ['taken_at_timestamp', 'timestamp', 'takenAtTimestamp', 'createdAt', 'publishedAt', 'date']);
   const timestamp = Number(timestampRaw);
   const postedAt = Number.isFinite(timestamp)
@@ -578,7 +620,8 @@ function mapApifyPost(node: RawInstagramNode, overrideFormat?: CompetitorContent
       likes,
       comments,
       views,
-      engagementScore: computeEngagementScore({ likes, comments, views })
+      engagementScore: computeEngagementScore({ likes, comments, views }),
+      durationSeconds
     },
     accessibilityCaption,
     hookPattern: detectHookPattern(collectApifyText(node) || caption),
@@ -880,6 +923,20 @@ function cadenceLabel(posts: CompetitorCapturedPost[]) {
   return 'publicacao mais espaçada';
 }
 
+function averageVideoDurationSeconds(posts: CompetitorCapturedPost[]) {
+  const durations = posts
+    .filter((post) => post.format === 'reels' || post.format === 'video')
+    .map((post) => post.metrics.durationSeconds)
+    .filter((duration): duration is number => typeof duration === 'number' && Number.isFinite(duration) && duration > 0);
+
+  if (!durations.length) {
+    return null;
+  }
+
+  const total = durations.reduce((sum, duration) => sum + duration, 0);
+  return total / durations.length;
+}
+
 function toneHintsFromTexts(texts: string[]) {
   const source = texts.join('\n').toLowerCase();
   const hints = new Set<string>();
@@ -975,6 +1032,7 @@ export function buildCompetitorFacts(snapshot: CompetitorSourceSnapshot, competi
     toneHints: toneHintsFromTexts([snapshot.instagram?.bio ?? '', ...captions, competitor.notes]),
     visualHints: visualHintsFromFormats(mix),
     cadenceLabel: cadenceLabel(posts),
+    averageVideoDuration: averageVideoDurationSeconds(posts),
     topAngles: topAnglesFromPosts(posts),
     topCaptions: posts
       .slice(0, 6)
@@ -1097,6 +1155,7 @@ export function buildCompetitorPatternPayload(input: {
     cta_patterns: input.facts.ctaPatterns,
     pattern_summary: {
       cadenceLabel: input.facts.cadenceLabel,
+      averageVideoDuration: input.facts.averageVideoDuration,
       visualHints: input.facts.visualHints,
       toneHints: input.facts.toneHints,
       topCaptions: input.facts.topCaptions,
@@ -1240,7 +1299,8 @@ export function buildManualCompetitorSnapshot(input: {
           likes: Math.max(0, samples.length - index),
           comments: 0,
           views: 0,
-          engagementScore: Math.max(0, samples.length - index)
+          engagementScore: Math.max(0, samples.length - index),
+          durationSeconds: input.mode === 'script' ? 45 : null
         },
         accessibilityCaption: '',
         hookPattern: detectHookPattern(normalized),
@@ -1319,6 +1379,104 @@ function formatShareLabel(format: CompetitorContentFormat) {
   }
 }
 
+function formatDurationLabel(seconds: number | null) {
+  if (!seconds || !Number.isFinite(seconds) || seconds <= 0) {
+    return 'Nao capturado publicamente';
+  }
+
+  if (seconds < 60) {
+    return `~${Math.round(seconds)}s`;
+  }
+
+  const minutes = seconds / 60;
+  if (minutes < 60) {
+    return `~${minutes.toFixed(minutes < 10 ? 1 : 0)} min`;
+  }
+
+  const hours = minutes / 60;
+  return `~${hours.toFixed(1)} h`;
+}
+
+function describeRecordingStyle(facts: CompetitorAnalysisFacts, dominantFormat: CompetitorContentFormat | undefined) {
+  if (!dominantFormat) {
+    return 'Nao foi possivel ler um estilo dominante com confianca.';
+  }
+
+  if (dominantFormat === 'reels' || dominantFormat === 'video') {
+    if (facts.toneHints.includes('conversacional')) {
+      return 'Selfie com fala direta e ritmo de narração.';
+    }
+
+    if (facts.toneHints.includes('autoridade')) {
+      return 'Narração objetiva com cortes curtos e foco em explicação.';
+    }
+
+    return 'Video vertical com cortes curtos e fala guiada por gancho.';
+  }
+
+  if (dominantFormat === 'carrossel') {
+    return 'Carrossel com texto na tela e progressao por blocos.';
+  }
+
+  if (dominantFormat === 'image') {
+    return 'Post estatico com legenda forte e leitura rapida no feed.';
+  }
+
+  return 'Formato misto com adaptacoes por tema.';
+}
+
+function describeProofSocial(facts: CompetitorAnalysisFacts) {
+  if (facts.storytellingPatterns.includes('prova social')) {
+    return 'Depoimento, resultado real e validacao externa.';
+  }
+
+  if (facts.storytellingPatterns.includes('transformacao')) {
+    return 'Antes e depois e comparacao de resultado.';
+  }
+
+  if (facts.storytellingPatterns.includes('historia pessoal')) {
+    return 'Relato pessoal como forma de validacao.';
+  }
+
+  return 'Prova social nao ficou evidente na captura publica.';
+}
+
+function describeTextOnScreen(facts: CompetitorAnalysisFacts, dominantFormat: CompetitorContentFormat | undefined) {
+  if (dominantFormat === 'reels' || dominantFormat === 'video' || dominantFormat === 'carrossel') {
+    return 'Sim, aparece com frequencia.';
+  }
+
+  if (facts.visualHints.some((hint) => hint.includes('visual'))) {
+    return 'Parcialmente, sobretudo em chamadas de capa.';
+  }
+
+  return 'Nao ficou evidente na captura publica.';
+}
+
+function describeSpokenCaption(facts: CompetitorAnalysisFacts, dominantFormat: CompetitorContentFormat | undefined) {
+  if (dominantFormat === 'reels' || dominantFormat === 'video') {
+    if (facts.toneHints.includes('conversacional') || facts.toneHints.includes('educativo')) {
+      return 'Sim, com roteiro falado ou leitura guiada.';
+    }
+
+    return 'Parcialmente, com falas curtas e diretas.';
+  }
+
+  return 'Nao apareceu com clareza na captura pública.';
+}
+
+function describeTrendUse(facts: CompetitorAnalysisFacts) {
+  if (facts.toneHints.includes('humor/trend')) {
+    return 'Sim, com sinais claros de trend/humor.';
+  }
+
+  if (facts.hookPatterns.some((pattern) => ['POV', 'lista numerada', 'pergunta'].includes(pattern))) {
+    return 'Parcialmente, com formatos sociais que lembram trend.';
+  }
+
+  return 'Pouco evidente na amostra publica.';
+}
+
 export function buildCompetitorAnalysisFallback(input: CompetitorAnalysisInput): CompetitorAnalysis {
   const { competitor, facts, snapshot } = input;
   const dominantFormat = facts.formatMix[0];
@@ -1328,12 +1486,14 @@ export function buildCompetitorAnalysisFallback(input: CompetitorAnalysisInput):
   const storytelling = facts.storytellingPatterns[0] ?? 'problema-solucao';
   const topTheme = facts.recurringThemes[0] ?? competitor.niche ?? 'topico central do nicho';
   const secondTheme = facts.recurringThemes[1] ?? 'tema adjacente';
-  const visualStyle = facts.visualHints.join(', ');
+  const visualStyle = facts.visualHints.join(', ') || 'sem volume suficiente para ler o estilo visual';
   const tone = facts.toneHints.join(', ');
   const audience = competitor.niche
     ? `publico interessado em ${competitor.niche.toLowerCase()}`
     : 'publico que acompanha conteudo de descoberta e repertorio';
   const positioning = snapshot.website?.title || snapshot.instagram?.bio || competitor.notes || `marca de ${competitor.niche || 'conteudo'} com forte presenca em social`;
+  const dominantFormatLabel = dominantFormat ? formatShareLabel(dominantFormat.format) : 'Misto';
+  const averageVideoDuration = formatDurationLabel(facts.averageVideoDuration);
 
   const sections = [
     {
@@ -1351,8 +1511,8 @@ export function buildCompetitorAnalysisFallback(input: CompetitorAnalysisInput):
           sample: snapshot.website?.description || snapshot.instagram?.bio || competitor.notes,
           sourceUrl: competitor.website || (snapshot.instagram ? `https://www.instagram.com/${snapshot.instagram.handle}/` : '')
         }),
-        buildInsight('visual', 'Estilo visual aparente', visualStyle, 'Inferido pela mistura de formatos e pelo tipo de publicacao que domina o perfil.', {
-          format: dominantFormat ? formatShareLabel(dominantFormat.format) : '',
+        buildInsight('visual', 'Estilo visual aparente', visualStyle || 'sem volume suficiente para ler o estilo visual', 'Inferido pela mistura de formatos e pelo tipo de publicacao que domina o perfil.', {
+          format: dominantFormat ? dominantFormatLabel : '',
           sourceUrl: topPost?.sourceUrl ?? ''
         }),
         buildInsight('overview', 'Publico aparente', audience, 'Estimativa baseada no nicho informado e nos temas mais recorrentes do perfil.', {
@@ -1361,16 +1521,74 @@ export function buildCompetitorAnalysisFallback(input: CompetitorAnalysisInput):
       ]
     },
     {
+      id: 'engineering',
+      title: 'ENGENHARIA DE CONTEÚDO',
+      description: 'Leitura rapida do que sustenta a estrutura de publicacao do perfil.',
+      items: [
+        buildInsight('engineering', 'Duracao media dos videos', averageVideoDuration, facts.averageVideoDuration ? 'Média calculada a partir dos videos/reels capturados.' : 'Amostra sem duracao publica suficiente para calcular a media.', {
+          format: dominantFormat ? dominantFormatLabel : '',
+          sourceUrl: topPost?.sourceUrl ?? ''
+        }),
+        buildInsight('engineering', 'Frequencia de posts por semana', facts.cadenceLabel, 'Leitura do intervalo medio entre publicacoes capturadas.', {
+          sourceUrl: topPost?.sourceUrl ?? ''
+        }),
+        buildInsight('engineering', 'Frequencia de stories por dia', 'Nao observavel na captura publica.', 'Stories nao aparecem no feed aberto; use material manual ou referencia extra para fechar essa leitura.', {
+          sourceUrl: snapshot.instagram ? `https://www.instagram.com/${snapshot.instagram.handle}/` : ''
+        }),
+        buildInsight('engineering', 'Tipo de abertura mais comum', hookPattern, 'Padrao detectado nos inicios das legendas e chamadas que mais aparecem no feed.', {
+          hookType: hookPattern,
+          sample: facts.topCaptions[0] ?? '',
+          sourceUrl: topPost?.sourceUrl ?? ''
+        }),
+        buildInsight('engineering', 'Estrutura mais comum', storytelling, 'Resumo do arco narrativo que mais se repete nas publicacoes observadas.', {
+          tags: facts.storytellingPatterns,
+          sourceUrl: topPost?.sourceUrl ?? ''
+        }),
+        buildInsight('engineering', 'Tipo de CTA', ctaPattern, 'Mostra como o perfil normalmente tenta mover a audiencia para a proxima acao.', {
+          ctaType: ctaPattern,
+          sample: facts.topCaptions[1] ?? '',
+          sourceUrl: topPost?.sourceUrl ?? ''
+        }),
+        buildInsight('engineering', 'Estilo de gravacao', describeRecordingStyle(facts, dominantFormat?.format), 'Inferido pela combinacao de formato dominante, tom e ritmo de publicacao.', {
+          format: dominantFormat ? dominantFormatLabel : '',
+          sourceUrl: topPost?.sourceUrl ?? ''
+        }),
+        buildInsight('engineering', 'Tipo de prova social', describeProofSocial(facts), 'Sinal de validacao mais aparente na amostra publica.', {
+          tags: facts.storytellingPatterns,
+          sourceUrl: topPost?.sourceUrl ?? ''
+        }),
+        buildInsight('engineering', 'Cenarios mais usados', 'Nao observavel na captura publica.', 'Cenarios dependem de imagem aberta, enquadramento ou referencia manual mais rica.', {
+          sourceUrl: snapshot.instagram ? `https://www.instagram.com/${snapshot.instagram.handle}/` : ''
+        }),
+        buildInsight('engineering', 'Formatos dominantes', dominantFormat ? `${dominantFormatLabel} lidera o mix com ${Math.round(dominantFormat.share * 100)}% das amostras analisadas.` : 'Nao houve volume suficiente para ler o mix de formatos.', 'Mostra onde o perfil concentra energia de publicacao.', {
+          format: dominantFormat ? dominantFormatLabel : '',
+          sourceUrl: topPost?.sourceUrl ?? ''
+        }),
+        buildInsight('engineering', 'Uso de texto na tela', describeTextOnScreen(facts, dominantFormat?.format), 'Sinal de estrutura visual e de retenção nas pecas capturadas.', {
+          format: dominantFormat ? dominantFormatLabel : '',
+          sourceUrl: topPost?.sourceUrl ?? ''
+        }),
+        buildInsight('engineering', 'Uso de legenda falada', describeSpokenCaption(facts, dominantFormat?.format), 'Sinal de fala guiada, narração ou leitura do roteiro.', {
+          format: dominantFormat ? dominantFormatLabel : '',
+          sourceUrl: topPost?.sourceUrl ?? ''
+        }),
+        buildInsight('engineering', 'Uso de trend', describeTrendUse(facts), 'Sinal de linguagem, formato e repertorio social que lembra trend.', {
+          tags: facts.hookPatterns,
+          sourceUrl: topPost?.sourceUrl ?? ''
+        })
+      ]
+    },
+    {
       id: 'patterns',
-      title: 'Padroes de conteudo',
+      title: 'Padrões de conteúdo',
       description: 'O que aparece com mais frequencia no conteudo publicado.',
       items: [
         buildInsight('theme', 'Temas recorrentes', `Temas que mais se repetem: ${facts.recurringThemes.slice(0, 5).join(', ') || 'sem repeticao clara ainda'}.`, 'Ajuda a entender quais assuntos estruturam o repertorio do perfil.', {
           tags: facts.recurringThemes.slice(0, 5),
           sourceUrl: topPost?.sourceUrl ?? ''
         }),
-        buildInsight('format', 'Formatos mais usados', dominantFormat ? `${formatShareLabel(dominantFormat.format)} lidera o mix com ${Math.round(dominantFormat.share * 100)}% das amostras analisadas.` : 'Nao houve volume suficiente para ler o mix de formatos.', 'Mostra onde o perfil concentra energia de publicacao.', {
-          format: dominantFormat ? formatShareLabel(dominantFormat.format) : '',
+        buildInsight('format', 'Formatos mais usados', dominantFormat ? `${dominantFormatLabel} lidera o mix com ${Math.round(dominantFormat.share * 100)}% das amostras analisadas.` : 'Nao houve volume suficiente para ler o mix de formatos.', 'Mostra onde o perfil concentra energia de publicacao.', {
+          format: dominantFormat ? dominantFormatLabel : '',
           sourceUrl: topPost?.sourceUrl ?? ''
         }),
         buildInsight('hook', 'Tipo de abertura mais comum', hookPattern, 'Padrao detectado nos inicios das legendas e chamadas que mais aparecem no feed.', {
@@ -1391,27 +1609,48 @@ export function buildCompetitorAnalysisFallback(input: CompetitorAnalysisInput):
     },
     {
       id: 'ideas',
-      title: 'Ideias aproveitaveis',
-      description: 'O que vale transformar em repertorio para conteudo novo.',
+      title: 'Ideias aproveitáveis',
+      description: 'Separado por tipo para virar repertorio acionavel sem copiar o perfil.',
       items: [
-        buildInsight('idea', `Gancho para ${topTheme}`, `Abrir com ${hookPattern.toLowerCase()} conectando ${topTheme} com um problema concreto do publico.`, 'Traduz o padrao do perfil em um hook que pode ser adaptado sem copiar.', {
+        buildInsight('hook', 'Hooks', `Abrir com ${hookPattern.toLowerCase()} conectando ${topTheme} a uma dor concreta do publico.`, 'Traduz o padrao do perfil em uma abertura adaptavel para redes sociais.', {
           hookType: hookPattern,
-          format: dominantFormat ? formatShareLabel(dominantFormat.format) : 'Reels',
+          format: dominantFormat ? dominantFormatLabel : 'Reels',
           sample: topPost?.captionLead ?? '',
           sourceUrl: topPost?.sourceUrl ?? ''
         }),
-        buildInsight('idea', `CTA inspirado em ${ctaPattern}`, `Fechar com CTA de ${ctaPattern} depois de provar valor em um formato de ${formatShareLabel(dominantFormat?.format ?? 'reels').toLowerCase()}.`, 'Mantem a logica de conversao observada, mas aplicada ao seu contexto.', {
+        buildInsight('idea', 'Estruturas de roteiro', `Problema -> prova -> solucao -> CTA usando ${storytelling.toLowerCase()} como espinha dorsal.`, 'Entrega um esqueleto de roteiro pronto para gravacao.', {
+          format: dominantFormat ? dominantFormatLabel : 'Reels',
+          sourceUrl: topPost?.sourceUrl ?? ''
+        }),
+        buildInsight('idea', 'Ideias de Reels', `Video vertical sobre ${topTheme} com gancho ${hookPattern.toLowerCase()} e CTA de ${ctaPattern}.`, 'Versao pratica do que pode virar video curto com mais aderencia ao padrao observado.', {
+          hookType: hookPattern,
           ctaType: ctaPattern,
-          format: formatShareLabel(dominantFormat?.format ?? 'reels')
-        }),
-        buildInsight('storytelling', 'Estrutura de storytelling', `Combinar ${storytelling.toLowerCase()} com o tema ${secondTheme} para dar contexto antes da oferta.`, 'Aproveita a narrativa dominante do perfil em um formato mais gravavel.', {
-          format: dominantFormat ? formatShareLabel(dominantFormat.format) : '',
-          sample: facts.topCaptions[2] ?? '',
+          format: 'Reels',
           sourceUrl: topPost?.sourceUrl ?? ''
         }),
-        buildInsight('idea', 'Formato para testar', dominantFormat ? `Produzir ${formatShareLabel(dominantFormat.format)} focado em ${topTheme} com CTA de ${ctaPattern}.` : `Produzir conteudo curto focado em ${topTheme}.`, 'Direciona a referencia para uma acao concreta no calendario.', {
-          format: formatShareLabel(dominantFormat?.format ?? 'reels'),
+        buildInsight('idea', 'Ideias de Stories', `Sequencia de 3 stories: contexto, prova e CTA sobre ${secondTheme}.`, 'Ajuda a transformar o repertorio em sequencia gravavel e simples.', {
+          format: 'Stories'
+        }),
+        buildInsight('idea', 'Ideias de Carrossel', `Carrossel com capa de promessa forte e paginas internas mostrando ${topTheme}.`, 'Boa forma de aprofundar contexto sem perder retenção.', {
+          format: 'Carrossel'
+        }),
+        buildInsight('cta', 'CTAs', `Fechar com CTA de ${ctaPattern} depois de entregar prova ou valor.`, 'Mantem a logica de conversao observada, mas aplicada ao seu contexto.', {
+          ctaType: ctaPattern,
+          format: dominantFormat ? dominantFormatLabel : ''
+        }),
+        buildInsight('idea', 'Angulos de copy', `Dor + desejo + prova: transformar ${topTheme} em uma mensagem de conversao clara.`, 'Organiza a mensagem em um angulo de copia que o time consegue repetir.', {
+          tags: [topTheme, secondTheme]
+        }),
+        buildInsight('storytelling', 'Storytelling', `Mini historia pessoal ou antes/depois conectando ${storytelling} e ${secondTheme}.`, 'Aproveita a narrativa dominante do perfil em um formato mais gravavel.', {
+          tags: facts.storytellingPatterns,
+          format: dominantFormat ? dominantFormatLabel : '',
           sourceUrl: topPost?.sourceUrl ?? ''
+        }),
+        buildInsight('idea', 'Ofertas', `Oferta curta com beneficio claro, prova social e urgencia leve para ${topTheme}.`, 'Traduz o repertorio em um angulo comercial util.', {
+          tags: [topTheme, ctaPattern]
+        }),
+        buildInsight('adaptation', 'Provas sociais', describeProofSocial(facts), 'Mostra como a validacao pode entrar sem copiar a peca original.', {
+          tags: facts.storytellingPatterns
         })
       ]
     },
@@ -1420,7 +1659,7 @@ export function buildCompetitorAnalysisFallback(input: CompetitorAnalysisInput):
       title: 'O que podemos aproveitar',
       description: 'Aproveitamento seguro sem copiar formula pronta.',
       items: [
-        buildInsight('adaptation', 'Vale adaptar', `A combinacao de ${topTheme} com ${hookPattern.toLowerCase()} e ${formatShareLabel(dominantFormat?.format ?? 'reels').toLowerCase()} tende a ser a melhor referencia para adaptar.`, 'Mostra o nucleo que parece mais forte no perfil.', {
+        buildInsight('adaptation', 'Vale adaptar', `A combinacao de ${topTheme} com ${hookPattern.toLowerCase()} e ${dominantFormatLabel.toLowerCase()} tende a ser a melhor referencia para adaptar.`, 'Mostra o nucleo que parece mais forte no perfil.', {
           tags: [topTheme, hookPattern],
           sourceUrl: topPost?.sourceUrl ?? ''
         }),
@@ -1431,13 +1670,13 @@ export function buildCompetitorAnalysisFallback(input: CompetitorAnalysisInput):
     },
     {
       id: 'actions',
-      title: 'Sugestoes praticas',
+      title: 'Sugestões práticas',
       description: 'O que ja pode virar acao dentro da plataforma.',
       items: [
-        buildInsight('action', 'Enviar para Conteudo', `Gerar uma pauta sobre ${topTheme} e outra sobre ${secondTheme}, mantendo ${hookPattern.toLowerCase()} como linha de abertura.`, 'Transforma a leitura em pauta acionavel.', {
-          format: formatShareLabel(dominantFormat?.format ?? 'reels')
+        buildInsight('action', 'Enviar para Conteudo', `Gerar uma pauta sobre ${topTheme}, outra sobre ${secondTheme} e uma sequencia de stories com a mesma logica de ${hookPattern.toLowerCase()}.`, 'Transforma a leitura em pauta acionavel.', {
+          format: dominantFormat ? dominantFormatLabel : 'Reels'
         }),
-        buildInsight('action', 'Enviar para Creator AI', `Pedir ao Creator AI ${formatShareLabel(dominantFormat?.format ?? 'reels')} com tom ${facts.toneHints[0] ?? 'direto'} e CTA de ${ctaPattern}.`, 'Ja sai pronto para virar prompt interno.', {
+        buildInsight('action', 'Enviar para Creator AI', `Pedir ao Creator AI ${dominantFormatLabel} com tom ${facts.toneHints[0] ?? 'direto'} e CTA de ${ctaPattern}.`, 'Ja sai pronto para virar prompt interno.', {
           ctaType: ctaPattern,
           hookType: hookPattern
         }),
@@ -1447,6 +1686,10 @@ export function buildCompetitorAnalysisFallback(input: CompetitorAnalysisInput):
       ]
     }
   ];
+
+  const sectionById = (id: string) => sections.find((section) => section.id === id)?.items ?? [];
+  const ideasItems = sectionById('ideas');
+  const actionItems = sectionById('actions');
 
   return {
     generatedAt: new Date().toISOString(),
@@ -1459,9 +1702,16 @@ export function buildCompetitorAnalysisFallback(input: CompetitorAnalysisInput):
     },
     sections,
     practicalSuggestions: {
-      toContent: sections[4]?.items.slice(0, 1).map((item) => item.summary) ?? [],
-      toCreatorAi: sections[4]?.items.slice(1, 2).map((item) => item.summary) ?? [],
-      toReferenceBank: sections[4]?.items.slice(2, 3).map((item) => item.summary) ?? []
+      toContent: ideasItems
+        .filter((item) => ['Ideias de Reels', 'Ideias de Stories', 'Ideias de Carrossel'].includes(item.title))
+        .map((item) => item.summary),
+      toCreatorAi: ideasItems
+        .filter((item) => ['Hooks', 'Estruturas de roteiro', 'CTAs'].includes(item.title))
+        .map((item) => item.summary),
+      toReferenceBank: ideasItems
+        .filter((item) => ['Storytelling', 'Angulos de copy', 'Provas sociais'].includes(item.title) || ['Storytelling', 'Ângulos de copy', 'Provas sociais'].includes(item.title))
+        .map((item) => item.summary)
+        .concat(actionItems.slice(2, 3).map((item) => item.summary))
     },
     sourceSnapshot: snapshot
   };
