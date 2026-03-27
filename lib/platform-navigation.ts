@@ -1,5 +1,4 @@
 import {
-  CalendarDays,
   Bot,
   CalendarRange,
   ChartColumn,
@@ -32,13 +31,6 @@ export const platformNavigation: Array<{
     description: 'Briefing e geração',
     icon: PencilLine,
     href: (workspace) => `/${workspace}/roteiros`
-  },
-  {
-    key: 'posts',
-    label: 'Postagens',
-    description: 'Calendário e publicação',
-    icon: CalendarDays,
-    href: (workspace) => `/${workspace}/posts`
   },
   {
     key: 'calendario',
@@ -87,7 +79,7 @@ export const platformNavigation: Array<{
 /**
  * Columns shown in the Produção kanban.
  * Approved scripts enter here when moved from Conteúdo.
- * Cards in 'editing' can be promoted to 'edited' → they move to Postagens.
+ * Cards in 'editing' can be promoted to 'edited' → they move para o fluxo de calendário/publicação.
  */
 export const recordingColumns: Array<{
   key: 'production' | 'recording' | 'drive' | 'editing';

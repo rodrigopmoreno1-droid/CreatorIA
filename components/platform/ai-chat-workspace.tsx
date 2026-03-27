@@ -558,22 +558,8 @@ type SaveAction = {
   id: string;
   label: string;
   icon: string;
-  type: 'post' | 'product' | 'idea';
+  type: 'product' | 'idea';
   color: string;
-};
-
-type LocalPost = {
-  id: string;
-  title: string;
-  channel: 'Feed' | 'Reels' | 'Stories';
-  status: 'production' | 'ready' | 'scheduled' | 'posted';
-  scheduledFor: string;
-  caption: string;
-  imageUrl: string;
-  notes: string;
-  productId?: string;
-  productName?: string;
-  createdAt: string;
 };
 
 type ContentIdea = {
@@ -592,16 +578,6 @@ type ContentIdea = {
 function getSaveActions(message: AiMessage): SaveAction[] {
   const content = message.content.toLowerCase();
   const actions: SaveAction[] = [];
-
-  if (/legenda|caption|hashtag|#|publicar|post|feed|stories|reels|agendar/.test(content) && content.length > 100) {
-    actions.push({
-      id: 'save-post',
-      label: 'Salvar em Postagens',
-      icon: '📅',
-      type: 'post',
-      color: 'bg-blue-50 text-blue-700 border-blue-200 hover:bg-blue-100'
-    });
-  }
 
   if (
     /produto|preço|público|benefício|público-alvo|dor|solução|oferta|restrição/.test(content) &&
@@ -634,24 +610,6 @@ function getSaveActions(message: AiMessage): SaveAction[] {
 
 // ─── localStorage helpers ─────────────────────────────────────────────────────
 
-function loadLocalPosts(workspace: string): LocalPost[] {
-  if (typeof window === 'undefined') return [];
-  try {
-    const raw = localStorage.getItem(`creatorai:posts:${workspace}`);
-    return raw ? (JSON.parse(raw) as LocalPost[]) : [];
-  } catch {
-    return [];
-  }
-}
-
-function saveLocalPosts(workspace: string, posts: LocalPost[]) {
-  try {
-    localStorage.setItem(`creatorai:posts:${workspace}`, JSON.stringify(posts));
-  } catch {
-    // ignore
-  }
-}
-
 function loadContentIdeas(workspace: string): ContentIdea[] {
   if (typeof window === 'undefined') return [];
   try {
@@ -668,137 +626,6 @@ function saveContentIdeas(workspace: string, ideas: ContentIdea[]) {
   } catch {
     // ignore
   }
-}
-
-// ─── SavePostModal ────────────────────────────────────────────────────────────
-
-function SavePostModal({
-  message,
-  workspace,
-  onClose
-}: {
-  message: AiMessage;
-  workspace: string;
-  onClose: () => void;
-}) {
-  const firstLine = message.content.split('\n').find((l) => l.trim()) ?? 'Post sem título';
-  const [title, setTitle] = useState(firstLine.slice(0, 80));
-  const [channel, setChannel] = useState<'Feed' | 'Reels' | 'Stories'>('Feed');
-  const [status, setStatus] = useState<'production' | 'ready' | 'scheduled' | 'posted'>('production');
-  const [scheduledFor, setScheduledFor] = useState(new Date().toISOString().slice(0, 10));
-  const [caption, setCaption] = useState(message.content);
-  const [notes, setNotes] = useState('');
-
-  function handleSave() {
-    const post: LocalPost = {
-      id: crypto.randomUUID(),
-      title: title.trim() || 'Post sem título',
-      channel,
-      status,
-      scheduledFor,
-      caption,
-      imageUrl: '',
-      notes,
-      createdAt: new Date().toISOString()
-    };
-    const existing = loadLocalPosts(workspace);
-    saveLocalPosts(workspace, [...existing, post]);
-    toast.success('Post salvo em Postagens!');
-    onClose();
-  }
-
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-[rgba(15,23,42,0.34)] p-4 backdrop-blur-sm">
-      <div className="w-full max-w-lg rounded-[28px] border border-border bg-white shadow-[0_30px_90px_rgba(15,23,42,0.18)]">
-        <div className="flex items-start gap-3 border-b border-border px-5 py-4">
-          <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl border border-blue-200 bg-blue-50 text-blue-600 text-xl">
-            📅
-          </div>
-          <div className="min-w-0">
-            <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-muted-foreground">Salvar em Postagens</p>
-            <h3 className="mt-1 text-lg font-semibold text-foreground">Nova postagem</h3>
-          </div>
-        </div>
-
-        <div className="max-h-[60vh] space-y-3 overflow-y-auto px-5 py-4">
-          <div className="space-y-1.5">
-            <label className="text-[12px] font-medium text-foreground">Título</label>
-            <input
-              value={title}
-              onChange={(e) => setTitle(e.target.value)}
-              className="w-full rounded-[14px] border border-border bg-muted/20 px-3 py-2 text-[13px] text-foreground outline-none focus:ring-2 focus:ring-foreground/10"
-            />
-          </div>
-
-          <div className="grid grid-cols-2 gap-3">
-            <div className="space-y-1.5">
-              <label className="text-[12px] font-medium text-foreground">Canal</label>
-              <select
-                value={channel}
-                onChange={(e) => setChannel(e.target.value as 'Feed' | 'Reels' | 'Stories')}
-                className="w-full rounded-[14px] border border-border bg-muted/20 px-3 py-2 text-[13px] text-foreground outline-none focus:ring-2 focus:ring-foreground/10"
-              >
-                <option value="Feed">Feed</option>
-                <option value="Reels">Reels</option>
-                <option value="Stories">Stories</option>
-              </select>
-            </div>
-
-            <div className="space-y-1.5">
-              <label className="text-[12px] font-medium text-foreground">Status</label>
-              <select
-                value={status}
-                onChange={(e) => setStatus(e.target.value as 'production' | 'ready' | 'scheduled' | 'posted')}
-                className="w-full rounded-[14px] border border-border bg-muted/20 px-3 py-2 text-[13px] text-foreground outline-none focus:ring-2 focus:ring-foreground/10"
-              >
-                <option value="production">Em produção</option>
-                <option value="ready">Pronto</option>
-                <option value="scheduled">Agendado</option>
-                <option value="posted">Publicado</option>
-              </select>
-            </div>
-          </div>
-
-          <div className="space-y-1.5">
-            <label className="text-[12px] font-medium text-foreground">Data</label>
-            <input
-              type="date"
-              value={scheduledFor}
-              onChange={(e) => setScheduledFor(e.target.value)}
-              className="w-full rounded-[14px] border border-border bg-muted/20 px-3 py-2 text-[13px] text-foreground outline-none focus:ring-2 focus:ring-foreground/10"
-            />
-          </div>
-
-          <div className="space-y-1.5">
-            <label className="text-[12px] font-medium text-foreground">Legenda</label>
-            <textarea
-              value={caption}
-              onChange={(e) => setCaption(e.target.value)}
-              rows={5}
-              className="w-full resize-none rounded-[14px] border border-border bg-muted/20 px-3 py-2 text-[13px] text-foreground outline-none focus:ring-2 focus:ring-foreground/10"
-            />
-          </div>
-
-          <div className="space-y-1.5">
-            <label className="text-[12px] font-medium text-foreground">Notas</label>
-            <textarea
-              value={notes}
-              onChange={(e) => setNotes(e.target.value)}
-              rows={2}
-              className="w-full resize-none rounded-[14px] border border-border bg-muted/20 px-3 py-2 text-[13px] text-foreground outline-none focus:ring-2 focus:ring-foreground/10"
-            />
-          </div>
-        </div>
-
-        <div className="flex items-center justify-end gap-2 border-t border-border px-5 py-4">
-          <Button variant="outline" onClick={onClose}>
-            Cancelar
-          </Button>
-          <Button onClick={handleSave}>Salvar postagem</Button>
-        </div>
-      </div>
-    </div>
-  );
 }
 
 // ─── SaveIdeaModal ────────────────────────────────────────────────────────────
@@ -1877,14 +1704,6 @@ export function AiChatWorkspace({
         }}
         processing={deletingConversationId === pendingDelete?.conversation.id}
       />
-
-      {saveModal?.action.type === 'post' && (
-        <SavePostModal
-          message={saveModal.message}
-          workspace={workspace}
-          onClose={() => setSaveModal(null)}
-        />
-      )}
 
       {saveModal?.action.type === 'idea' && (
         <SaveIdeaModal

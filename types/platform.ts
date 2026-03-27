@@ -1,7 +1,6 @@
 export type PlatformModuleKey =
   | 'dashboard'
   | 'roteiros'
-  | 'posts'
   | 'calendario'
   | 'creators'
   | 'metrics'
@@ -51,7 +50,7 @@ export const CONTENT_STATUSES: ScriptStatus[] = ['draft', 'approved'];
 /** Statuses that appear in the Produção kanban */
 export const PRODUCTION_STATUSES: ScriptStatus[] = ['production', 'recording', 'drive', 'editing'];
 
-/** Statuses that appear in the Postagens page */
+/** Statuses that appear in the calendário/publicação flow */
 export const POSTING_STATUSES: ScriptStatus[] = ['edited', 'scheduled', 'posted', 'atrasado'];
 
 export type ScriptPlannerMeta = {

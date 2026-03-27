@@ -656,7 +656,7 @@ function CreatorDetailModal({
                   </div>
                 ) : (
                   <p className="text-[13px] leading-6 text-muted-foreground">
-                    Nenhum conteúdo atribuído a {creator.name} ainda. Atribua conteúdos na página de Produção.
+                    Nenhum conteúdo atribuído a {creator.name} ainda. Atribua conteúdos no fluxo atual de conteúdo.
                   </p>
                 )}
               </div>

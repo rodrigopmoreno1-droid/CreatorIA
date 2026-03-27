@@ -8,6 +8,11 @@ const nextConfig = {
         source: '/:workspace/recordings',
         destination: '/:workspace/roteiros',
         permanent: false
+      },
+      {
+        source: '/:workspace/posts',
+        destination: '/:workspace/calendario',
+        permanent: false
       }
     ];
   },
