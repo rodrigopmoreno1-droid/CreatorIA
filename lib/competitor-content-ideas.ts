@@ -1,5 +1,6 @@
 import type {
   CompetitorAnalysis,
+  CompetitorCapturedPost,
   CompetitorReferenceCategory,
   CompetitorGeneratedContentItem,
   CompetitorGeneratedContentPack,
@@ -31,6 +32,41 @@ function firstTranscriptLine(value: string) {
       .map((line) => line.trim())
       .find(Boolean) ?? ''
   ).slice(0, 240);
+}
+
+function splitSentences(text: string) {
+  return text
+    .split(/(?<=[.!?…])\s+/)
+    .map((s) => s.trim())
+    .filter((s) => s.length > 10);
+}
+
+function extractOpeningPhrases(posts: CompetitorCapturedPost[]) {
+  const phrases: Array<{ text: string; sourceUrl: string; postId: string }> = [];
+  for (const post of posts) {
+    const source = post.transcriptText || post.screenTextLead || '';
+    if (!source || source.length < 20) continue;
+    const sentences = splitSentences(source);
+    const opening = sentences.slice(0, 2).join(' ').slice(0, 200);
+    if (opening.length >= 15) {
+      phrases.push({ text: opening, sourceUrl: post.sourceUrl, postId: post.id });
+    }
+  }
+  return phrases;
+}
+
+function extractClosingPhrases(posts: CompetitorCapturedPost[]) {
+  const phrases: Array<{ text: string; sourceUrl: string; postId: string }> = [];
+  for (const post of posts) {
+    const source = post.transcriptText || post.caption || '';
+    if (!source || source.length < 30) continue;
+    const sentences = splitSentences(source);
+    const closing = sentences.slice(-2).join(' ').slice(0, 200);
+    if (closing.length >= 15) {
+      phrases.push({ text: closing, sourceUrl: post.sourceUrl, postId: post.id });
+    }
+  }
+  return phrases;
 }
 
 function createItem(
@@ -69,15 +105,16 @@ function findInsightByTitle(analysis: CompetitorAnalysis, sectionId: string, tit
   return section?.items.find((item) => normalizeText(item.title) === normalizeText(title)) ?? null;
 }
 
+function dedup(items: string[]) {
+  return [...new Set(items)];
+}
+
 export function buildCompetitorContentIdeas(
   analysis: CompetitorAnalysis,
   competitor: Pick<CompetitorRecord, 'name' | 'niche' | 'type'>
 ): CompetitorGeneratedContentPack {
   const overview = analysis.overview;
   const engineering = findSection(analysis, 'engineering');
-  const patterns = findSection(analysis, 'patterns');
-  const actions = findSection(analysis, 'actions');
-  const ideas = findSection(analysis, 'ideas');
   const sourcePosts = Array.isArray(analysis.sourceSnapshot.topPosts) ? analysis.sourceSnapshot.topPosts : [];
   const topPost = sourcePosts[0];
   const engineeringLookup = Object.fromEntries((engineering?.items ?? []).map((item) => [normalizeText(item.title), item]));
@@ -87,11 +124,17 @@ export function buildCompetitorContentIdeas(
   const storytellingInsight = findInsightByTitle(analysis, 'patterns', 'Estrutura narrativa frequente') ?? findInsightByTitle(analysis, 'ideas', 'Storytelling');
   const formatInsight = findInsightByTitle(analysis, 'patterns', 'Formatos mais usados') ?? findInsightByTitle(analysis, 'engineering', 'Formatos dominantes');
 
+  const transcribedPosts = sourcePosts.filter((p) => p.transcriptStatus === 'success' && normalizeText(p.transcriptText).length > 30);
+  const hasTranscripts = transcribedPosts.length > 0;
+
   const transcriptSnippets = [...new Set(
     sourcePosts
       .map((post) => firstTranscriptLine(post.transcriptText || post.screenTextLead || post.caption || post.captionLead || ''))
       .filter(Boolean)
-  )].slice(0, 6);
+  )].slice(0, 10);
+
+  const realOpenings = extractOpeningPhrases(transcribedPosts);
+  const realClosings = extractClosingPhrases(transcribedPosts);
 
   const topTheme = topThemeInsight?.tags[0] ?? competitor.niche ?? 'o tema central do perfil';
   const secondTheme = topThemeInsight?.tags[1] ?? transcriptSnippets[1] ?? 'um tema adjacente';
@@ -106,11 +149,7 @@ export function buildCompetitorContentIdeas(
   const transcriptSeed = transcriptSnippets[0] ?? topTheme;
   const transcriptSeed2 = transcriptSnippets[1] ?? secondTheme;
   const transcriptSeed3 = transcriptSnippets[2] ?? 'a virada';
-  const packConfidenceLevel: CompetitorConfidenceLevel = sourcePosts.some((post) => post.transcriptStatus === 'success' && normalizeText(post.transcriptText))
-    ? 'high'
-    : sourcePosts.some((post) => normalizeText(post.caption || post.captionLead))
-      ? 'medium'
-      : 'low';
+  const packConfidenceLevel: CompetitorConfidenceLevel = hasTranscripts ? 'high' : sourcePosts.some((post) => normalizeText(post.caption || post.captionLead)) ? 'medium' : 'low';
   const confidenceLabel = packConfidenceLevel === 'high' ? 'alta' : packConfidenceLevel === 'medium' ? 'media' : 'baixa';
   const sourceUrl = topPost?.sourceUrl ?? '';
 
@@ -132,11 +171,13 @@ export function buildCompetitorContentIdeas(
     sectionId: string,
     kind: CompetitorGeneratedContentItem['kind'],
     titlePrefix: string,
-    summaries: string[],
+    summaries: Array<string | { text: string; sourceUrl: string }>,
     options: BuildSeriesOptions
   ) {
-    return summaries.map((summary, index) =>
-      createItem(sectionId, kind, `${titlePrefix} ${String(index + 1).padStart(2, '0')}`, summary, options.rationale?.(summary, index) ?? `Repertorio derivado da analise de ${competitor.name}.`, {
+    return summaries.map((entry, index) => {
+      const summary = typeof entry === 'string' ? entry : entry.text;
+      const itemSourceUrl = typeof entry === 'object' ? entry.sourceUrl : (options.sourceUrl ?? sourceUrl);
+      return createItem(sectionId, kind, `${titlePrefix} ${String(index + 1).padStart(2, '0')}`, summary, options.rationale?.(summary, index) ?? `Repertorio derivado da analise de ${competitor.name}.`, {
         saveCategory: options.saveCategory,
         hookType: options.hookType ?? hookPattern,
         ctaType: options.ctaType ?? ctaPattern,
@@ -146,157 +187,250 @@ export function buildCompetitorContentIdeas(
         angle: options.angle?.(summary, index) ?? '',
         structure: options.structure?.(summary, index) ?? '',
         confidenceLevel: options.confidenceLevel ?? packConfidenceLevel,
-        sourceUrl: options.sourceUrl ?? sourceUrl
-      })
-    );
+        sourceUrl: itemSourceUrl
+      });
+    });
   }
 
-  const hookLeadTemplates = [
-    `Se você ainda tenta ${topTheme} do jeito antigo,`,
-    `Ninguém te conta isso sobre ${topTheme},`,
-    `O erro mais comum em ${topTheme} é`,
-    `Antes de começar qualquer conteúdo sobre ${topTheme},`,
-    `Quando o assunto é ${topTheme},`
+  // --- HOOKS: real transcript openings first, then adapted templates ---
+  const realHookEntries: Array<{ text: string; sourceUrl: string }> = realOpenings.map((o) => ({
+    text: `"${o.text}"`,
+    sourceUrl: o.sourceUrl
+  }));
+
+  const templateHooks = [
+    `Se você ainda tenta ${topTheme} do jeito antigo, o problema pode estar no começo da conversa.`,
+    `Ninguém te conta isso sobre ${topTheme}, a atenção já foi embora antes da explicação terminar.`,
+    `O erro mais comum em ${topTheme} é a estrutura precisa fazer o trabalho duro.`,
+    `Antes de começar qualquer conteúdo sobre ${topTheme}, o gancho precisa prometer algo concreto logo de cara.`,
+    `Quando o assunto é ${topTheme}, o problema pode estar no começo da conversa.`,
+    `Se você ainda tenta ${topTheme} do jeito antigo, a atenção já foi embora antes da explicação terminar.`,
+    `Ninguém te conta isso sobre ${topTheme}, a estrutura precisa fazer o trabalho duro.`,
+    `O erro mais comum em ${topTheme} é o gancho precisa prometer algo concreto logo de cara.`,
+    `Antes de começar qualquer conteúdo sobre ${topTheme}, o problema pode estar no começo da conversa.`,
+    `Quando o assunto é ${topTheme}, a atenção já foi embora antes da explicação terminar.`,
+    `Se você ainda tenta ${topTheme} do jeito antigo, a estrutura precisa fazer o trabalho duro.`,
+    `Ninguém te conta isso sobre ${topTheme}, o gancho precisa prometer algo concreto logo de cara.`,
+    `O erro mais comum em ${topTheme} é o problema pode estar no começo da conversa.`,
+    `Antes de começar qualquer conteúdo sobre ${topTheme}, a atenção já foi embora antes da explicação terminar.`,
+    `Quando o assunto é ${topTheme}, a estrutura precisa fazer o trabalho duro.`,
+    `Se você ainda tenta ${topTheme} do jeito antigo, o gancho precisa prometer algo concreto logo de cara.`,
+    `Ninguém te conta isso sobre ${topTheme}, o problema pode estar no começo da conversa.`,
+    `O erro mais comum em ${topTheme} é a atenção já foi embora antes da explicação terminar.`,
+    `Antes de começar qualquer conteúdo sobre ${topTheme}, a estrutura precisa fazer o trabalho duro.`,
+    `Quando o assunto é ${topTheme}, o gancho precisa prometer algo concreto logo de cara.`
   ];
-  const hookTailTemplates = [
-    'o problema pode estar no começo da conversa.',
-    'a atenção já foi embora antes da explicação terminar.',
-    'a estrutura precisa fazer o trabalho duro.',
-    'o gancho precisa prometer algo concreto logo de cara.'
-  ];
-  const hookSummaries = hookLeadTemplates.flatMap((lead) => hookTailTemplates.map((tail) => `${lead} ${tail}`)).slice(0, 20);
+
+  const hookSummaries: Array<string | { text: string; sourceUrl: string }> = [
+    ...realHookEntries,
+    ...templateHooks
+  ].slice(0, 20);
+
   const hookItems = buildSeriesItems('hooks', 'hook', 'Hook', hookSummaries, {
     saveCategory: 'hook',
     hookType: hookPattern,
     ctaType: ctaPattern,
     format: dominantFormat,
     tags: [topTheme, secondTheme, hookPattern, transcriptSeed],
-    rationale: (summary) => `Hook concreto inspirado no padrão de abertura ${hookPattern.toLowerCase()} e na fala transcrita/captions da amostra.`,
-    sample: (summary, index) => (index % 2 === 0 ? `Use como abertura falada: "${summary}"` : `Variante adaptável para gravar em ${dominantFormat.toLowerCase()}.`),
+    rationale: (_summary, index) =>
+      index < realHookEntries.length
+        ? `Abertura real extraída da transcrição do perfil ${competitor.name}.`
+        : `Hook adaptado do padrão de abertura ${hookPattern.toLowerCase()} observado no perfil.`,
+    sample: (summary) => summary,
     angle: (_summary, index) => (index % 2 === 0 ? 'curiosidade + identificação' : 'problema + promessa'),
     structure: () => 'gancho -> contexto -> promessa'
   });
 
-  const ctaLeadTemplates = [
-    'Se quiser, eu te mando a versão adaptada no direct',
-    'Comenta "quero" que eu te mando a estrutura',
-    'Salva este post para usar na próxima gravação',
-    'Se fizer sentido, compartilha com alguém que precisa ver isso',
-    'Quer que eu transforme isso em roteiro?'
+  // --- CTAs: real transcript closings first, then templates ---
+  const realCtaEntries: Array<{ text: string; sourceUrl: string }> = realClosings.slice(0, 5).map((c) => ({
+    text: `"${c.text}"`,
+    sourceUrl: c.sourceUrl
+  }));
+
+  const templateCtas = [
+    `Se quiser, eu te mando a versão adaptada no direct, sem perder tempo com teoria.`,
+    `Comenta "quero" que eu te mando a estrutura, e eu já te deixo o próximo passo pronto.`,
+    `Salva este post para usar na próxima gravação, sem perder tempo com teoria.`,
+    `Se fizer sentido, compartilha com alguém que precisa ver isso, e eu já te deixo o próximo passo pronto.`,
+    `Quer que eu transforme isso em roteiro? sem perder tempo com teoria.`,
+    `Se quiser, eu te mando a versão adaptada no direct, e eu já te deixo o próximo passo pronto.`,
+    `Comenta "quero" que eu te mando a estrutura, sem perder tempo com teoria.`,
+    `Salva este post para usar na próxima gravação, e eu já te deixo o próximo passo pronto.`,
+    `Se fizer sentido, compartilha com alguém que precisa ver isso, sem perder tempo com teoria.`,
+    `Quer que eu transforme isso em roteiro? e eu já te deixo o próximo passo pronto.`
   ];
-  const ctaTailTemplates = [
-    'sem perder tempo com teoria.',
-    'e eu já te deixo o próximo passo pronto.'
-  ];
-  const ctaSummaries = ctaLeadTemplates.flatMap((lead) => ctaTailTemplates.map((tail) => `${lead}, ${tail}`)).slice(0, 10);
+
+  const ctaSummaries: Array<string | { text: string; sourceUrl: string }> = [
+    ...realCtaEntries,
+    ...templateCtas
+  ].slice(0, 10);
+
   const ctaItems = buildSeriesItems('ctas', 'cta', 'CTA', ctaSummaries, {
     saveCategory: 'cta',
     hookType: hookPattern,
     ctaType: ctaPattern,
     format: dominantFormat,
     tags: [ctaPattern, topTheme, transcriptSeed2],
-    rationale: (summary) => `CTA direto, falado e adaptável ao comportamento de conversão observado no perfil.`,
+    rationale: (_summary, index) =>
+      index < realCtaEntries.length
+        ? `CTA real extraído da transcrição/legenda do perfil ${competitor.name}.`
+        : `CTA adaptado ao comportamento de conversão observado no perfil.`,
     sample: (summary) => summary,
     angle: () => 'conversão leve e natural',
     structure: () => 'valor -> convite -> ação'
   });
 
-  const structureLeadTemplates = [
-    '1. Gancho forte\n2. Dor concreta\n3. Prova ou exemplo',
-    '1. Situação real\n2. Erro comum\n3. Descoberta que muda tudo',
-    '1. Abertura com pergunta\n2. Contexto\n3. Resposta curta',
-    '1. Promessa\n2. Bastidor ou prova\n3. Solução',
-    '1. Mito ou crença\n2. Quebra de expectativa\n3. Passo prático'
+  // --- STRUCTURES ---
+  const structureSummaries = [
+    '1. Gancho forte\n2. Dor concreta\n3. Prova ou exemplo\n4. Solução prática\n5. CTA curto',
+    '1. Situação real\n2. Erro comum\n3. Descoberta que muda tudo\n4. Exemplo aplicado\n5. CTA de conversa',
+    '1. Abertura com pergunta\n2. Contexto\n3. Resposta curta\n4. Solução prática\n5. CTA curto',
+    '1. Promessa\n2. Bastidor ou prova\n3. Solução\n4. Exemplo aplicado\n5. CTA de conversa',
+    '1. Mito ou crença\n2. Quebra de expectativa\n3. Passo prático\n4. Solução prática\n5. CTA curto',
+    '1. Situação real\n2. Erro comum\n3. Descoberta que muda tudo\n4. Solução prática\n5. CTA curto',
+    '1. Abertura com pergunta\n2. Contexto\n3. Resposta curta\n4. Exemplo aplicado\n5. CTA de conversa',
+    '1. Promessa\n2. Bastidor ou prova\n3. Solução\n4. Solução prática\n5. CTA curto',
+    '1. Mito ou crença\n2. Quebra de expectativa\n3. Passo prático\n4. Exemplo aplicado\n5. CTA de conversa',
+    '1. Gancho forte\n2. Dor concreta\n3. Prova ou exemplo\n4. Exemplo aplicado\n5. CTA de conversa'
   ];
-  const structureTailTemplates = [
-    '\n4. Solução prática\n5. CTA curto',
-    '\n4. Exemplo aplicado\n5. CTA de conversa'
-  ];
-  const structureSummaries = structureLeadTemplates.flatMap((lead) => structureTailTemplates.map((tail) => `${lead}${tail}`)).slice(0, 10);
   const structureItems = buildSeriesItems('structures', 'structure', 'Estrutura', structureSummaries, {
     saveCategory: 'structure',
     hookType: hookPattern,
     ctaType: ctaPattern,
     format: dominantFormat,
     tags: [storytelling, topTheme, ctaPattern],
-    rationale: (summary) => `Estrutura de roteiro curta e gravável, montada para virar conteúdo com retenção.`,
+    rationale: () => 'Estrutura de roteiro curta e gravável, montada para virar conteúdo com retenção.',
     sample: (summary) => summary,
     angle: (_summary, index) => (index % 2 === 0 ? 'retencao + clareza' : 'prova + CTA'),
     structure: (summary) => summary.replace(/\n/g, ' -> ')
   });
 
-  const reelLeadTemplates = [
-    `Gancho: "Se você ainda faz ${topTheme} assim..."`,
-    `Gancho: "Ninguém te fala isso sobre ${topTheme}..."`,
-    `Gancho: "O erro que mais trava ${topTheme} é..."`,
-    `Gancho: "Eu percebi isso quando vi ${transcriptSeed}..."`,
-    `Gancho: "Se você quer ${topTheme} de verdade, olha isso..." `
+  // --- REELS: use real transcripts to build reel ideas ---
+  const reelSummaries: Array<string | { text: string; sourceUrl: string }> = [];
+
+  for (const post of transcribedPosts.slice(0, 5)) {
+    const sentences = splitSentences(post.transcriptText);
+    const opening = sentences[0] ?? '';
+    const middle = sentences.slice(1, 3).join(' ') || 'desenvolvimento do tema';
+    const closing = sentences.slice(-1)[0] ?? 'CTA de fechamento';
+    reelSummaries.push({
+      text: `Gancho: "${opening}"\nFala: "${middle}"\nCTA: "${closing}"`,
+      sourceUrl: post.sourceUrl
+    });
+  }
+
+  const templateReels = [
+    `Gancho: "Se você ainda faz ${topTheme} assim..."\nFala: "O detalhe que muda tudo é o começo."\nTakes: gancho + exemplo + prova`,
+    `Gancho: "Ninguém te fala isso sobre ${topTheme}..."\nFala: "Quando você simplifica, o vídeo prende."\nTakes: contexto + virada + CTA`,
+    `Gancho: "O erro que mais trava ${topTheme} é..."\nFala: "O detalhe que muda tudo é o começo."\nTakes: gancho + exemplo + prova`,
+    `Gancho: "Eu percebi isso quando vi ${transcriptSeed}..."\nFala: "Quando você simplifica, o vídeo prende."\nTakes: contexto + virada + CTA`,
+    `Gancho: "Se você quer ${topTheme} de verdade, olha isso..."\nFala: "O detalhe que muda tudo é o começo."\nTakes: gancho + exemplo + prova`
   ];
-  const reelTailTemplates = [
-    `\nFala: "O detalhe que muda tudo é o começo."\nTakes: gancho + exemplo + prova`,
-    `\nFala: "Quando você simplifica, o vídeo prende."\nTakes: contexto + virada + CTA`
-  ];
-  const reelSummaries = reelLeadTemplates.flatMap((lead) => reelTailTemplates.map((tail) => `${lead}${tail}`)).slice(0, 10);
-  const reelItems = buildSeriesItems('reels', 'reels', 'Reel', reelSummaries, {
+
+  while (reelSummaries.length < 10) {
+    const template = templateReels[reelSummaries.length - transcribedPosts.slice(0, 5).length] ?? templateReels[reelSummaries.length % templateReels.length];
+    reelSummaries.push(template);
+  }
+
+  const reelItems = buildSeriesItems('reels', 'reels', 'Reel', reelSummaries.slice(0, 10), {
     saveCategory: 'content_idea',
     hookType: hookPattern,
     ctaType: ctaPattern,
     format: 'Reels',
     tags: [topTheme, hookPattern, ctaPattern, transcriptSeed],
-    rationale: (summary) => `Reel direto, falado e ajustado ao ritmo de ${dominantFormat.toLowerCase()} que o perfil usa.`,
+    rationale: (_summary, index) =>
+      index < transcribedPosts.slice(0, 5).length
+        ? `Roteiro extraído da transcrição real do perfil ${competitor.name}.`
+        : `Reel adaptado ao ritmo de ${dominantFormat.toLowerCase()} que o perfil usa.`,
     sample: (summary) => summary,
     angle: () => 'dor + prova + CTA',
     structure: () => 'gancho -> desenvolvimento -> prova -> CTA'
   });
 
-  const storyLeadTemplates = [
-    `Slide 1: "Você também sente isso sobre ${topTheme}?"\nFala: "Olha isso antes de gravar."\nTexto na tela: o erro invisível`,
-    `Slide 1: "Eu achei que isso era normal."\nFala: "Até perceber que não era."\nTexto na tela: antes da virada`,
-    `Slide 1: "Se você faz ${topTheme}, presta atenção."\nFala: "Tem um detalhe que muda tudo."\nTexto na tela: um ajuste simples`,
-    `Slide 1: "Isso aqui parece pequeno."\nFala: "Mas é o tipo de coisa que segura atenção."\nTexto na tela: o ponto de virada`,
-    `Slide 1: "A maioria faz desse jeito."\nFala: "E é por isso que trava."\nTexto na tela: o padrão errado`
+  // --- STORIES ---
+  const storySummaries: Array<string | { text: string; sourceUrl: string }> = [];
+
+  for (const post of transcribedPosts.slice(0, 4)) {
+    const sentences = splitSentences(post.transcriptText);
+    const s1 = sentences[0] ?? topTheme;
+    const s2 = sentences.slice(1, 3).join(' ') || 'desenvolvimento';
+    const screenText = post.screenTextLead || topTheme;
+    storySummaries.push({
+      text: `Slide 1: "${s1}"\nFala: "${s2}"\nTexto na tela: ${screenText}\n\nSlide 2: prova ou bastidor\n\nSlide 3: CTA para direct ou comentário`,
+      sourceUrl: post.sourceUrl
+    });
+  }
+
+  const templateStories = [
+    `Slide 1: "Você também sente isso sobre ${topTheme}?"\nFala: "Olha isso antes de gravar."\nTexto na tela: o erro invisível\n\nSlide 2: prova ou bastidor\n\nSlide 3: CTA para direct ou comentário`,
+    `Slide 1: "Eu achei que isso era normal."\nFala: "Até perceber que não era."\nTexto na tela: antes da virada\n\nSlide 2: exemplo rápido\n\nSlide 3: CTA para salvar`,
+    `Slide 1: "Se você faz ${topTheme}, presta atenção."\nFala: "Tem um detalhe que muda tudo."\nTexto na tela: um ajuste simples\n\nSlide 2: prova ou bastidor\n\nSlide 3: CTA para direct ou comentário`,
+    `Slide 1: "Isso aqui parece pequeno."\nFala: "Mas é o tipo de coisa que segura atenção."\nTexto na tela: o ponto de virada\n\nSlide 2: exemplo rápido\n\nSlide 3: CTA para salvar`,
+    `Slide 1: "A maioria faz desse jeito."\nFala: "E é por isso que trava."\nTexto na tela: o padrão errado\n\nSlide 2: prova ou bastidor\n\nSlide 3: CTA para direct ou comentário`,
+    `Slide 1: "Você também sente isso sobre ${topTheme}?"\nFala: "Olha isso antes de gravar."\nTexto na tela: o erro invisível\n\nSlide 2: exemplo rápido\n\nSlide 3: CTA para salvar`
   ];
-  const storyTailTemplates = [
-    `\nSlide 2: prova ou bastidor\nFala: "O que mudou foi o jeito de começar."\nTexto na tela: a virada\n\nSlide 3: CTA para direct ou comentário`,
-    `\nSlide 2: exemplo rápido\nFala: "Quando você simplifica, o público fica."\nTexto na tela: como usar hoje\n\nSlide 3: CTA para salvar`
-  ];
-  const storySummaries = storyLeadTemplates.flatMap((lead) => storyTailTemplates.map((tail) => `${lead}${tail}`)).slice(0, 10);
-  const storyItems = buildSeriesItems('stories', 'stories', 'Story', storySummaries, {
+
+  while (storySummaries.length < 10) {
+    storySummaries.push(templateStories[storySummaries.length % templateStories.length]);
+  }
+
+  const storyItems = buildSeriesItems('stories', 'stories', 'Story', storySummaries.slice(0, 10), {
     saveCategory: 'content_idea',
     hookType: hookPattern,
     ctaType: ctaPattern,
     format: 'Stories',
     tags: [topTheme, secondTheme, ctaPattern, transcriptSeed2],
-    rationale: () => 'Sequencia de stories falada e visual, pronta para virar roteiro curto e gravavel.',
+    rationale: (_summary, index) =>
+      index < transcribedPosts.slice(0, 4).length
+        ? `Sequência de stories baseada na transcrição real do perfil.`
+        : 'Sequencia de stories falada e visual, pronta para virar roteiro curto e gravavel.',
     sample: (summary) => summary,
     angle: () => 'sequencia curta com retenção',
     structure: () => 'contexto -> prova -> CTA'
   });
 
-  const carouselLeadTemplates = [
-    `Capa: "O erro que trava ${topTheme}"\nPágina 2: contexto do problema\nPágina 3: por que isso acontece`,
-    `Capa: "Como ${topTheme} fica mais claro"\nPágina 2: promessa\nPágina 3: prova`,
-    `Capa: "O que ninguém te explica sobre ${topTheme}"\nPágina 2: mito\nPágina 3: realidade`,
-    `Capa: "Isso muda a forma de criar sobre ${topTheme}"\nPágina 2: detalhamento\nPágina 3: exemplo`,
-    `Capa: "Antes de postar sobre ${topTheme}, leia isso"\nPágina 2: erro\nPágina 3: ajuste`
+  // --- CARROSSEL ---
+  const carouselSummaries: Array<string | { text: string; sourceUrl: string }> = [];
+
+  for (const post of sourcePosts.filter((p) => p.format === 'carrossel' || (p.caption && p.caption.length > 100)).slice(0, 4)) {
+    const sentences = splitSentences(post.caption || post.transcriptText || '');
+    const cover = sentences[0] ?? topTheme;
+    const pages = sentences.slice(1, 4).map((s, i) => `Página ${i + 2}: ${s}`).join('\n');
+    carouselSummaries.push({
+      text: `Capa: "${cover}"\n${pages || 'Página 2: desenvolvimento\nPágina 3: prova'}\nPágina final: CTA para salvar`,
+      sourceUrl: post.sourceUrl
+    });
+  }
+
+  const templateCarousels = [
+    `Capa: "O erro que trava ${topTheme}"\nPágina 2: contexto do problema\nPágina 3: por que isso acontece\nPágina 4: passo a passo\nPágina 5: CTA final`,
+    `Capa: "Como ${topTheme} fica mais claro"\nPágina 2: promessa\nPágina 3: prova\nPágina 4: exemplo real\nPágina 5: CTA para salvar`,
+    `Capa: "O que ninguém te explica sobre ${topTheme}"\nPágina 2: mito\nPágina 3: realidade\nPágina 4: passo a passo\nPágina 5: CTA final`,
+    `Capa: "Isso muda a forma de criar sobre ${topTheme}"\nPágina 2: detalhamento\nPágina 3: exemplo\nPágina 4: exemplo real\nPágina 5: CTA para salvar`,
+    `Capa: "Antes de postar sobre ${topTheme}, leia isso"\nPágina 2: erro\nPágina 3: ajuste\nPágina 4: passo a passo\nPágina 5: CTA final`,
+    `Capa: "O erro que trava ${topTheme}"\nPágina 2: contexto do problema\nPágina 3: por que isso acontece\nPágina 4: exemplo real\nPágina 5: CTA para salvar`
   ];
-  const carouselTailTemplates = [
-    `\nPágina 4: passo a passo\nPágina 5: CTA final`,
-    `\nPágina 4: exemplo real\nPágina 5: CTA para salvar`
-  ];
-  const carouselSummaries = carouselLeadTemplates.flatMap((lead) => carouselTailTemplates.map((tail) => `${lead}${tail}`)).slice(0, 10);
-  const carouselItems = buildSeriesItems('carrossel', 'carrossel', 'Carrossel', carouselSummaries, {
+
+  while (carouselSummaries.length < 10) {
+    carouselSummaries.push(templateCarousels[carouselSummaries.length % templateCarousels.length]);
+  }
+
+  const carouselItems = buildSeriesItems('carrossel', 'carrossel', 'Carrossel', carouselSummaries.slice(0, 10), {
     saveCategory: 'format',
     hookType: hookPattern,
     ctaType: ctaPattern,
     format: 'Carrossel',
     tags: [topTheme, overview.positioning, ctaPattern, transcriptSeed3],
-    rationale: () => 'Carrossel com leitura rápida, capa forte e páginas internas que entregam valor em camadas.',
+    rationale: (_summary, index) =>
+      index < sourcePosts.filter((p) => p.format === 'carrossel' || (p.caption && p.caption.length > 100)).slice(0, 4).length
+        ? `Carrossel baseado em conteúdo real capturado do perfil.`
+        : 'Carrossel com leitura rápida, capa forte e páginas internas que entregam valor em camadas.',
     sample: (summary) => summary,
     angle: () => 'promessa + prova + CTA',
     structure: () => 'capa -> desenvolvimento -> prova -> CTA'
   });
 
+  // --- COPY ANGLES ---
   const copyAngleItems = buildSeriesItems('copy-angles', 'copy_angle', 'Ângulo', [
     `Dor + desejo + prova: mostra a dor de ${topTheme}, o desejo de ${secondTheme} e uma prova curta antes do CTA.`,
     `Quebra de objeção: começa com a dúvida do público e entrega a resposta em seguida.`,
@@ -315,24 +449,45 @@ export function buildCompetitorContentIdeas(
     structure: () => 'dor -> desejo -> prova -> CTA'
   });
 
-  const storytellingItems = buildSeriesItems('storytelling', 'storytelling', 'Story', [
-    `História pessoal: "Eu achei que ${topTheme} era um problema isolado, até descobrir que o que mudava era a execução."`,
+  // --- STORYTELLING ---
+  const storytellingEntries: Array<string | { text: string; sourceUrl: string }> = [];
+
+  for (const post of transcribedPosts.slice(0, 3)) {
+    const text = post.transcriptText.slice(0, 300);
+    storytellingEntries.push({
+      text: `História real capturada: "${text}${text.length >= 300 ? '...' : ''}"`,
+      sourceUrl: post.sourceUrl
+    });
+  }
+
+  const templateStorytelling = [
     `Virada de chave: "Quando eu troquei ${transcriptSeed} por uma estratégia mais simples, tudo ficou mais claro."`,
     `Prova narrativa: "O perfil mostra que a sequência certa prende mais do que a informação solta."`,
     `Bastidor: "Por trás de um post bom existe uma abertura bem pensada e um CTA sem fricção."`,
-    `Transformação: "De conteúdo confuso para conteúdo que prende: o ajuste foi começar com a dor certa."`
-  ], {
+    `Transformação: "De conteúdo confuso para conteúdo que prende: o ajuste foi começar com a dor certa."`,
+    `História pessoal: "Eu achei que ${topTheme} era um problema isolado, até descobrir que o que mudava era a execução."`
+  ];
+
+  while (storytellingEntries.length < 5) {
+    storytellingEntries.push(templateStorytelling[storytellingEntries.length % templateStorytelling.length]);
+  }
+
+  const storytellingItems = buildSeriesItems('storytelling', 'storytelling', 'Story', storytellingEntries.slice(0, 5), {
     saveCategory: 'storytelling',
     hookType: hookPattern,
     ctaType: ctaPattern,
     format: dominantFormat,
     tags: [topTheme, storytelling, proofSocial, transcriptSeed],
-    rationale: () => 'Mini histórias e viradas narrativas para usar em reels, stories e legenda.',
+    rationale: (_summary, index) =>
+      index < transcribedPosts.slice(0, 3).length
+        ? `Mini história real extraída da transcrição do perfil ${competitor.name}.`
+        : 'Mini histórias e viradas narrativas para usar em reels, stories e legenda.',
     sample: (summary) => summary,
     angle: () => 'historia com virada',
     structure: () => 'situacao -> conflito -> descoberta -> virada'
   });
 
+  // --- OFFERS ---
   const offerItems = buildSeriesItems('offers', 'offer', 'Oferta', [
     `Oferta curta com benefício claro para ${competitor.niche || topTheme}, prova social e próximo passo simples.`,
     `Oferta de entrada com promessa objetiva e uma prova rápida antes do CTA.`,
@@ -351,6 +506,7 @@ export function buildCompetitorContentIdeas(
     structure: () => 'beneficio -> prova -> oferta -> CTA'
   });
 
+  // --- SOCIAL PROOF ---
   const proofItems = buildSeriesItems('social-proof', 'social_proof', 'Prova', [
     `Depoimento curto: mostra que ${proofSocial.toLowerCase()} funciona na prática.`,
     `Print ou resultado: prova rápida antes da solução.`,
@@ -373,13 +529,17 @@ export function buildCompetitorContentIdeas(
     {
       id: 'hooks',
       title: 'Hooks',
-      description: '20 ganchos prontos, em linguagem de creator, inspirados nos padrões e transcrições capturados.',
+      description: hasTranscripts
+        ? `20 ganchos prontos — ${realHookEntries.length} extraídos das transcrições reais, o restante adaptado dos padrões detectados.`
+        : '20 ganchos prontos, em linguagem de creator, inspirados nos padrões e legendas capturados.',
       items: hookItems
     },
     {
       id: 'ctas',
       title: 'CTAs',
-      description: '10 chamadas para ação curtas, naturais e prontas para comentário, direct ou salvamento.',
+      description: hasTranscripts
+        ? `10 CTAs — ${realCtaEntries.length} extraídos das transcrições reais, o restante adaptado.`
+        : '10 chamadas para ação curtas, naturais e prontas para comentário, direct ou salvamento.',
       items: ctaItems
     },
     {
@@ -391,13 +551,17 @@ export function buildCompetitorContentIdeas(
     {
       id: 'reels',
       title: 'Ideias de Reels',
-      description: '10 roteiros verticais que usam o padrão de abertura, a prova e o CTA detectados.',
+      description: hasTranscripts
+        ? `10 roteiros — ${Math.min(transcribedPosts.length, 5)} baseados em transcrições reais do perfil.`
+        : '10 roteiros verticais que usam o padrão de abertura, a prova e o CTA detectados.',
       items: reelItems
     },
     {
       id: 'stories',
       title: 'Ideias de Stories',
-      description: '10 sequências com texto na tela, fala e CTA final para rodar em sequência.',
+      description: hasTranscripts
+        ? `10 sequências — ${Math.min(transcribedPosts.length, 4)} baseadas em transcrições reais.`
+        : '10 sequências com texto na tela, fala e CTA final para rodar em sequência.',
       items: storyItems
     },
     {
@@ -415,7 +579,9 @@ export function buildCompetitorContentIdeas(
     {
       id: 'storytelling',
       title: 'Storytelling',
-      description: 'Mini histórias e viradas narrativas para usar em conteúdo falado ou legendado.',
+      description: hasTranscripts
+        ? `${Math.min(transcribedPosts.length, 3)} histórias reais extraídas + viradas narrativas adaptáveis.`
+        : 'Mini histórias e viradas narrativas para usar em conteúdo falado ou legendado.',
       items: storytellingItems
     },
     {
@@ -435,7 +601,7 @@ export function buildCompetitorContentIdeas(
   return {
     generatedAt: new Date().toISOString(),
     model: 'logic-pack',
-    summary: `Repertório pronto baseado em ${competitor.name}, com ${transcriptSnippets.length ? `${transcriptSnippets.length} trechos de fala/transcrição` : 'legendas e sinais públicos'} como base. Duração média: ${avgDuration}. Cadência: ${cadence}. Gravação: ${recordingStyle}. Confiança geral: ${confidenceLabel}.`,
+    summary: `Repertório pronto baseado em ${competitor.name}, com ${hasTranscripts ? `${transcribedPosts.length} reels transcritos` : 'legendas e sinais públicos'} como base. Duração média: ${avgDuration}. Cadência: ${cadence}. Gravação: ${recordingStyle}. Confiança geral: ${confidenceLabel}.`,
     sections,
     sourceSnapshot: analysis.sourceSnapshot
   };

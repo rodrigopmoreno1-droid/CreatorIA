@@ -1885,14 +1885,14 @@ function CompetitorDetailModal({
                             <div className="grid gap-3 lg:grid-cols-3">
                               <EvidenceList
                                 title="Top aberturas reais"
-                                description="Primeiras frases e aberturas recorrentes extraídas da legenda, transcript ou texto detectado."
+                                description="Primeiras frases e aberturas reais extraídas do transcript (prioridade), depois legenda e texto na tela."
                                 items={openingEvidence}
                                 emptyLabel="Sem abertura observável suficiente. Use mais legendas ou transcrições reais."
                                 onViewSource={openSourcePreview}
                               />
                               <EvidenceList
                                 title="Top CTAs reais"
-                                description="Chamadas para ação que aparecem com mais frequência nas falas e legendas capturadas."
+                                description="CTAs reais extraídos do transcript e legendas, priorizando a fala transcrita."
                                 items={ctaEvidence}
                                 emptyLabel="Sem CTA observável suficiente. Tente nova captura ou material manual."
                                 onViewSource={openSourcePreview}

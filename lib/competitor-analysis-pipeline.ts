@@ -53,6 +53,70 @@ function toPipelineCompetitorInput(row: PersistedCompetitorRow): CompetitorAnaly
   };
 }
 
+function buildPostRow(companyId: string, competitorId: string, post: CompetitorAnalysisInput['snapshot']['topPosts'][number]) {
+  return {
+    company_id: companyId,
+    competitor_id: competitorId,
+    published_at: post.postedAt,
+    post_type: post.format,
+    caption: post.caption,
+    metrics: post.metrics,
+    media_url: post.mediaUrl || null,
+    source_url: post.sourceUrl || null,
+    thumbnail_url: post.thumbnailUrl || null,
+    transcript_text: post.transcriptText || null,
+    transcript_status: post.transcriptStatus || 'missing',
+    transcript_source: post.transcriptSource || 'none',
+    transcript_confidence: post.transcriptConfidence ?? null,
+    transcript_error: post.transcriptError || null,
+    screen_text_lead: post.screenTextLead || null,
+    metadata: {
+      captionLead: post.captionLead,
+      accessibilityCaption: post.accessibilityCaption,
+      transcriptText: post.transcriptText,
+      transcriptStatus: post.transcriptStatus,
+      transcriptSource: post.transcriptSource,
+      transcriptConfidence: post.transcriptConfidence,
+      transcriptError: post.transcriptError,
+      screenTextLead: post.screenTextLead,
+      downloadedVideoUrl: post.downloadedVideoUrl,
+      hookPattern: post.hookPattern,
+      ctaPatterns: post.ctaPatterns,
+      storytellingPatterns: post.storytellingPatterns,
+      shortcode: post.shortcode
+    }
+  };
+}
+
+function buildPostRowSafe(companyId: string, competitorId: string, post: CompetitorAnalysisInput['snapshot']['topPosts'][number]) {
+  return {
+    company_id: companyId,
+    competitor_id: competitorId,
+    published_at: post.postedAt,
+    post_type: post.format,
+    caption: post.caption,
+    metrics: post.metrics,
+    media_url: post.mediaUrl || null,
+    source_url: post.sourceUrl || null,
+    thumbnail_url: post.thumbnailUrl || null,
+    metadata: {
+      captionLead: post.captionLead,
+      accessibilityCaption: post.accessibilityCaption,
+      transcriptText: post.transcriptText,
+      transcriptStatus: post.transcriptStatus,
+      transcriptSource: post.transcriptSource,
+      transcriptConfidence: post.transcriptConfidence,
+      transcriptError: post.transcriptError,
+      screenTextLead: post.screenTextLead,
+      downloadedVideoUrl: post.downloadedVideoUrl,
+      hookPattern: post.hookPattern,
+      ctaPatterns: post.ctaPatterns,
+      storytellingPatterns: post.storytellingPatterns,
+      shortcode: post.shortcode
+    }
+  };
+}
+
 async function replaceCompetitorPosts(
   admin: SupabaseAdminClient,
   companyId: string,
@@ -65,40 +129,18 @@ async function replaceCompetitorPosts(
     return;
   }
 
-  const { error } = await admin.from('competitor_posts').insert(
-    snapshot.topPosts.map((post) => ({
-      company_id: companyId,
-      competitor_id: competitorId,
-      published_at: post.postedAt,
-      post_type: post.format,
-      caption: post.caption,
-      metrics: post.metrics,
-      media_url: post.mediaUrl || null,
-      source_url: post.sourceUrl || null,
-      thumbnail_url: post.thumbnailUrl || null,
-      transcript_text: post.transcriptText || null,
-      transcript_status: post.transcriptStatus,
-      transcript_source: post.transcriptSource,
-      transcript_confidence: post.transcriptConfidence,
-      transcript_error: post.transcriptError || null,
-      metadata: {
-        captionLead: post.captionLead,
-        accessibilityCaption: post.accessibilityCaption,
-        transcriptText: post.transcriptText,
-        transcriptStatus: post.transcriptStatus,
-        transcriptSource: post.transcriptSource,
-        transcriptConfidence: post.transcriptConfidence,
-        transcriptError: post.transcriptError,
-        screenTextLead: post.screenTextLead,
-        hookPattern: post.hookPattern,
-        ctaPatterns: post.ctaPatterns,
-        storytellingPatterns: post.storytellingPatterns,
-        shortcode: post.shortcode
-      }
-    }))
-  );
+  const rows = snapshot.topPosts.map((post) => buildPostRow(companyId, competitorId, post));
+  const { error } = await admin.from('competitor_posts').insert(rows);
 
   if (error) {
+    if (/column|schema|screen_text_lead|transcript_/i.test(error.message)) {
+      const safeRows = snapshot.topPosts.map((post) => buildPostRowSafe(companyId, competitorId, post));
+      const { error: safeError } = await admin.from('competitor_posts').insert(safeRows);
+      if (safeError) {
+        throw new Error(safeError.message);
+      }
+      return;
+    }
     throw new Error(error.message);
   }
 }

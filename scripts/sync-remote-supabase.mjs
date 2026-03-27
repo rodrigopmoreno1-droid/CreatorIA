@@ -2,7 +2,6 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
-import { spawnSync } from 'node:child_process';
 
 function parseEnvFile(filePath) {
   if (!fs.existsSync(filePath)) {
@@ -41,46 +40,93 @@ function readRequiredFile(filePath, label) {
   return fs.readFileSync(filePath, 'utf8').trim();
 }
 
-function runCommand(command, args, extraEnv = {}) {
-  const result = spawnSync(command, args, {
-    stdio: 'inherit',
-    env: {
-      ...process.env,
-      ...extraEnv
-    }
-  });
-
-  if (result.error) {
-    throw result.error;
-  }
-
-  if (result.status !== 0) {
-    throw new Error(`${command} ${args.join(' ')} falhou com status ${result.status ?? 'desconhecido'}.`);
-  }
+function escapeSqlLiteral(value) {
+  return `'${String(value).replace(/'/g, "''")}'`;
 }
 
-async function createTemporaryLoginRole({ accessToken, projectRef }) {
-  const response = await fetch(`https://api.supabase.com/v1/projects/${projectRef}/cli/login-role`, {
+function collectMigrationFiles(root) {
+  const migrationsDir = path.join(root, 'supabase/migrations');
+
+  if (!fs.existsSync(migrationsDir)) {
+    throw new Error(`Diretorio de migrations nao encontrado em ${migrationsDir}`);
+  }
+
+  return fs
+    .readdirSync(migrationsDir)
+    .filter((file) => /^(\d{4})_[a-z0-9_]+\.sql$/i.test(file))
+    .sort()
+    .map((file) => {
+      const match = file.match(/^(\d{4})_(.+)\.sql$/i);
+      if (!match) {
+        return null;
+      }
+
+      return {
+        version: match[1],
+        name: match[2],
+        filePath: path.join(migrationsDir, file),
+        sql: fs.readFileSync(path.join(migrationsDir, file), 'utf8').trim()
+      };
+    })
+    .filter(Boolean);
+}
+
+async function runDatabaseQuery({ accessToken, projectRef, query, readOnly = false }) {
+  const response = await fetch(`https://api.supabase.com/v1/projects/${projectRef}/database/query`, {
     method: 'POST',
     headers: {
       Authorization: `Bearer ${accessToken}`,
-      'Content-Type': 'application/json'
+      'Content-Type': 'application/json',
+      Accept: 'application/json'
     },
-    body: JSON.stringify({ read_only: false })
+    body: JSON.stringify({ query, read_only: readOnly })
   });
 
   const text = await response.text();
 
   if (!response.ok) {
-    throw new Error(`Nao foi possivel criar login temporario do Supabase: ${text}`);
+    throw new Error(`Falha ao executar query no Supabase: ${text}`);
   }
 
-  const payload = JSON.parse(text);
-  if (!payload?.password) {
-    throw new Error('Supabase nao retornou senha temporaria para a CLI.');
-  }
+  return text ? JSON.parse(text) : [];
+}
 
-  return payload;
+async function loadAppliedMigrationVersions({ accessToken, projectRef }) {
+  const rows = await runDatabaseQuery({
+    accessToken,
+    projectRef,
+    readOnly: true,
+    query: 'select version from supabase_migrations.schema_migrations order by version;'
+  });
+
+  return new Set(rows.map((row) => String(row.version)));
+}
+
+async function applyMigration({ accessToken, projectRef, migration }) {
+  console.log(`Aplicando migration ${migration.version} (${migration.name})...`);
+
+  await runDatabaseQuery({
+    accessToken,
+    projectRef,
+    readOnly: false,
+    query: migration.sql
+  });
+
+  await runDatabaseQuery({
+    accessToken,
+    projectRef,
+    readOnly: false,
+    query: `insert into supabase_migrations.schema_migrations (version, name, statements)
+values (${escapeSqlLiteral(migration.version)}, ${escapeSqlLiteral(migration.name)}, ARRAY[${escapeSqlLiteral(migration.sql)}]::text[])
+on conflict (version) do nothing;`
+  });
+
+  await runDatabaseQuery({
+    accessToken,
+    projectRef,
+    readOnly: false,
+    query: "select pg_notification_queue_usage(); notify pgrst, 'reload schema';"
+  });
 }
 
 async function main() {
@@ -93,21 +139,24 @@ async function main() {
     throw new Error('SUPABASE_ACCESS_TOKEN nao encontrado.');
   }
 
-  const projectRef = process.env.SUPABASE_PROJECT_REF ?? readRequiredFile(path.join(root, 'supabase/.temp/project-ref'), 'Project ref');
-  const loginRole = await createTemporaryLoginRole({ accessToken, projectRef });
-  const databaseUrl = new URL(`postgresql://${encodeURIComponent(loginRole.role)}@db.${projectRef}.supabase.co:5432/postgres`);
-  databaseUrl.password = loginRole.password;
+  const projectRef =
+    process.env.SUPABASE_PROJECT_REF ??
+    readRequiredFile(path.join(root, 'supabase/.temp/project-ref'), 'Project ref');
 
-  console.log(`Login temporario criado: ${loginRole.role} (TTL ${loginRole.ttl_seconds}s)`);
-  console.log(`Conectando no projeto ${projectRef} para revisar e aplicar migrations...`);
+  const migrations = collectMigrationFiles(root);
+  const appliedVersions = await loadAppliedMigrationVersions({ accessToken, projectRef });
+  const pendingMigrations = migrations.filter((migration) => !appliedVersions.has(migration.version));
 
-  const cliEnv = {
-    npm_config_cache: '/tmp/contentos-npm-cache'
-  };
+  if (!pendingMigrations.length) {
+    console.log(`Nenhuma migration pendente para ${projectRef}.`);
+    return;
+  }
 
-  runCommand('npx', ['supabase', 'migration', 'list', '--db-url', databaseUrl.toString(), '--yes'], cliEnv);
-  runCommand('npx', ['supabase', 'db', 'push', '--db-url', databaseUrl.toString(), '--dry-run', '--yes'], cliEnv);
-  runCommand('npx', ['supabase', 'db', 'push', '--db-url', databaseUrl.toString(), '--yes'], cliEnv);
+  console.log(`Sincronizando ${pendingMigrations.length} migration(s) no projeto ${projectRef}...`);
+
+  for (const migration of pendingMigrations) {
+    await applyMigration({ accessToken, projectRef, migration });
+  }
 
   console.log(`Migrations sincronizadas com sucesso em ${projectRef}.`);
 }

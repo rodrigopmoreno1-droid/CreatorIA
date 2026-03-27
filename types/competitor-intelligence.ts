@@ -58,6 +58,7 @@ export type CompetitorCapturedPost = {
   captionLead: string;
   thumbnailUrl: string;
   mediaUrl: string;
+  downloadedVideoUrl: string;
   postedAt: string;
   metrics: {
     likes: number;

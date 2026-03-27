@@ -413,6 +413,7 @@ function mapInstagramNode(node: RawInstagramNode) {
     captionLead: firstCaptionLine(caption),
     thumbnailUrl: normalizeText(node.thumbnail_src) || normalizeText(node.display_url),
     mediaUrl: normalizeText(node.video_url) || normalizeText(node.display_url),
+    downloadedVideoUrl: '',
     postedAt: (() => {
       const timestamp = toNumber(node.taken_at_timestamp);
       return timestamp ? new Date(timestamp * 1000).toISOString() : new Date().toISOString();
@@ -665,6 +666,9 @@ function mapApifyPost(node: RawInstagramNode, overrideFormat?: CompetitorContent
   const thumbnailUrl = normalizeText(
     pickApifyField(node, ['thumbnailUrl', 'thumbnail_url', 'thumbnail', 'displayUrl', 'display_url', 'imageUrl', 'image_url'])
   );
+  const downloadedVideoUrl = normalizeText(
+    pickApifyField(node, ['downloadedVideo', 'downloadedVideoUrl', 'downloaded_video', 'downloaded_video_url'])
+  );
   const mediaUrl = normalizeText(
     pickApifyField(node, ['videoUrl', 'video_url', 'url', 'mediaUrl', 'media_url'])
   );
@@ -706,6 +710,7 @@ function mapApifyPost(node: RawInstagramNode, overrideFormat?: CompetitorContent
     captionLead: firstCaptionLine(caption),
     thumbnailUrl,
     mediaUrl,
+    downloadedVideoUrl,
     postedAt,
     metrics: {
       likes,
@@ -1108,6 +1113,20 @@ function topAnglesFromPosts(posts: CompetitorCapturedPost[]) {
   return [...angles].slice(0, 6);
 }
 
+const MIN_APIFY_TRANSCRIPT_LENGTH = 200;
+
+function isApifyTranscriptGood(text: string) {
+  const trimmed = normalizeText(text);
+  if (!trimmed || trimmed.length < MIN_APIFY_TRANSCRIPT_LENGTH) {
+    return false;
+  }
+  const wordCount = trimmed.split(/\s+/).length;
+  if (wordCount < 15) {
+    return false;
+  }
+  return true;
+}
+
 async function enrichPostsWithTranscripts(posts: CompetitorCapturedPost[], limit = 10) {
   const enriched = [...posts];
   const transcriptCandidates = enriched
@@ -1116,12 +1135,15 @@ async function enrichPostsWithTranscripts(posts: CompetitorCapturedPost[], limit
     .slice(0, limit);
 
   for (const candidate of transcriptCandidates) {
-    if (candidate.transcriptText && candidate.transcriptStatus === 'success') {
+    if (candidate.transcriptText && candidate.transcriptStatus === 'success' && isApifyTranscriptGood(candidate.transcriptText)) {
       continue;
     }
 
-    const mediaUrl = normalizeText(candidate.mediaUrl || candidate.sourceUrl);
-    if (!mediaUrl) {
+    const transcriptionUrl = normalizeText(candidate.downloadedVideoUrl) || normalizeText(candidate.mediaUrl) || normalizeText(candidate.sourceUrl);
+    if (!transcriptionUrl) {
+      if (candidate.transcriptText && candidate.transcriptStatus === 'success') {
+        continue;
+      }
       candidate.transcriptStatus = 'missing';
       candidate.transcriptSource = 'none';
       candidate.transcriptConfidence = null;
@@ -1130,7 +1152,7 @@ async function enrichPostsWithTranscripts(posts: CompetitorCapturedPost[], limit
       continue;
     }
 
-    const transcript = await transcribeMediaFromUrl({ sourceUrl: mediaUrl });
+    const transcript = await transcribeMediaFromUrl({ sourceUrl: transcriptionUrl });
     if (transcript.status === 'success' && transcript.text) {
       candidate.transcriptText = transcript.text;
       candidate.transcriptStatus = 'success';
@@ -1141,10 +1163,14 @@ async function enrichPostsWithTranscripts(posts: CompetitorCapturedPost[], limit
       candidate.hookPattern = detectHookPattern(buildPostEvidenceText(candidate));
       candidate.ctaPatterns = detectCtaPatterns(buildPostEvidenceText(candidate));
       candidate.storytellingPatterns = detectStorytellingPatterns(buildPostEvidenceText(candidate));
+    } else if (candidate.transcriptText && normalizeText(candidate.transcriptText).length > 30) {
+      candidate.transcriptStatus = 'success';
+      candidate.transcriptConfidence = candidate.transcriptConfidence ?? 0.6;
+      candidate.transcriptError = '';
     } else {
-      candidate.transcriptStatus = candidate.transcriptText ? 'success' : 'missing';
-      candidate.transcriptSource = candidate.transcriptText ? candidate.transcriptSource : 'none';
-      candidate.transcriptConfidence = candidate.transcriptText ? candidate.transcriptConfidence ?? 0.75 : null;
+      candidate.transcriptStatus = 'missing';
+      candidate.transcriptSource = 'none';
+      candidate.transcriptConfidence = null;
       candidate.transcriptError = transcript.error || candidate.transcriptError || 'Sem transcript disponivel para este reel.';
       candidate.screenTextLead = transcript.screenTextLead || candidate.screenTextLead || candidate.accessibilityCaption || '';
     }
@@ -1187,7 +1213,7 @@ export function buildCompetitorFacts(snapshot: CompetitorSourceSnapshot, competi
     topAngles: topAnglesFromPosts(posts),
     topCaptions: posts
       .slice(0, 6)
-      .map((post) => post.captionLead || post.transcriptText || post.caption)
+      .map((post) => post.transcriptText || post.captionLead || post.caption)
       .filter(Boolean)
       .slice(0, 6)
   };
@@ -1467,6 +1493,7 @@ export function buildManualCompetitorSnapshot(input: {
         captionLead: firstCaptionLine(normalized),
         thumbnailUrl: '',
         mediaUrl: '',
+        downloadedVideoUrl: '',
         postedAt: new Date(now - index * 60 * 1000).toISOString(),
         metrics: {
           likes: Math.max(0, samples.length - index),
