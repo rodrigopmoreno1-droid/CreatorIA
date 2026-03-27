@@ -2,6 +2,15 @@
 const nextConfig = {
   reactStrictMode: true,
   typedRoutes: true,
+  async redirects() {
+    return [
+      {
+        source: '/:workspace/recordings',
+        destination: '/:workspace/roteiros',
+        permanent: false
+      }
+    ];
+  },
   images: {
     remotePatterns: [
       {

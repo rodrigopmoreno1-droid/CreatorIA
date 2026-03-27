@@ -1,6 +1,5 @@
 import {
   CalendarDays,
-  Clapperboard,
   Bot,
   CalendarRange,
   ChartColumn,
@@ -33,13 +32,6 @@ export const platformNavigation: Array<{
     description: 'Briefing e geração',
     icon: PencilLine,
     href: (workspace) => `/${workspace}/roteiros`
-  },
-  {
-    key: 'production',
-    label: 'Produção',
-    description: 'Gravação e edição',
-    icon: Clapperboard,
-    href: (workspace) => `/${workspace}/recordings`
   },
   {
     key: 'posts',
