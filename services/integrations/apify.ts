@@ -1,5 +1,3 @@
-import 'server-only';
-
 type ApifyDatasetItem = Record<string, unknown>;
 
 export type ApifyInstagramCapture = {
@@ -11,13 +9,17 @@ export type ApifyInstagramCapture = {
 };
 
 const APIFY_ACTORS = {
-  profile: 'apify/instagram-profile-scraper',
-  posts: 'apify/instagram-scraper',
-  reels: 'apify/instagram-reel-scraper'
+  profile: 'apify~instagram-profile-scraper',
+  posts: 'apify~instagram-scraper',
+  reels: 'apify~instagram-reel-scraper'
 } as const;
 
 function getApifyToken() {
   return process.env.APIFY_API_TOKEN?.trim() ?? '';
+}
+
+function getApifyUserId() {
+  return process.env.APIFY_USER_ID?.trim() ?? '';
 }
 
 function asArray(value: unknown) {
@@ -79,10 +81,9 @@ export async function fetchApifyInstagramCapture(handle: string): Promise<ApifyI
 
   const profileUrl = `https://www.instagram.com/${normalizedHandle}/`;
 
-  const [profileResult, postsResult, reelsResult] = await Promise.allSettled([
-    runActorDatasetItems(APIFY_ACTORS.profile, { usernames: [normalizedHandle] }, 1),
-    runActorDatasetItems(APIFY_ACTORS.posts, { directUrls: [profileUrl], resultsType: 'posts', resultsLimit: 30 }, 30),
-    runActorDatasetItems(APIFY_ACTORS.reels, { username: [normalizedHandle], resultsLimit: 20 }, 20)
+  const [profileResult, postsResult] = await Promise.allSettled([
+    runActorDatasetItems(APIFY_ACTORS.profile, { usernames: [normalizedHandle], maxPosts: 8 }, 1),
+    runActorDatasetItems(APIFY_ACTORS.posts, { directUrls: [profileUrl], resultsType: 'posts', resultsLimit: 15 }, 15),
   ]);
 
   const notes: string[] = [];
@@ -97,12 +98,22 @@ export async function fetchApifyInstagramCapture(handle: string): Promise<ApifyI
     notes.push(`Instagram Scraper: ${postsResult.reason instanceof Error ? postsResult.reason.message : 'falha na captura.'}`);
   }
 
-  const reelItems = reelsResult.status === 'fulfilled' ? reelsResult.value : [];
-  if (reelsResult.status === 'rejected') {
-    notes.push(`Instagram Reel Scraper: ${reelsResult.reason instanceof Error ? reelsResult.reason.message : 'falha na captura.'}`);
-  }
-
   const profile = profileItems[0] ?? null;
+  const shouldFetchReels = Boolean(profile) && postItems.length < 8;
+  let reelItems: ApifyDatasetItem[] = [];
+
+  if (shouldFetchReels) {
+    const reelsResult = await runActorDatasetItems(
+      APIFY_ACTORS.reels,
+      { username: normalizedHandle, num: 6 },
+      6
+    ).catch((error: unknown) => {
+      notes.push(`Instagram Reel Scraper: ${error instanceof Error ? error.message : 'falha na captura.'}`);
+      return [];
+    });
+
+    reelItems = reelsResult;
+  }
 
   if (!profile && !postItems.length && !reelItems.length) {
     return null;
@@ -112,7 +123,11 @@ export async function fetchApifyInstagramCapture(handle: string): Promise<ApifyI
     profile,
     posts: postItems,
     reels: reelItems,
-    notes: notes.length ? notes : ['Captura realizada com Apify.'],
+    notes: [
+      getApifyUserId() ? `Apify user configurado: ${getApifyUserId()}.` : 'Apify user nao configurado.',
+      shouldFetchReels ? 'Instagram Reel Scraper executado para complementar a captura.' : 'Instagram Reel Scraper nao foi necessario nesta captura.',
+      ...(notes.length ? notes : ['Captura realizada com Apify.'])
+    ],
     used: true
   };
 }
