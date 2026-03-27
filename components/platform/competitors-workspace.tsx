@@ -34,6 +34,7 @@ import { buildCompetitorContentIdeas } from '@/lib/competitor-content-ideas';
 import { cn } from '@/lib/utils';
 import type {
   CompetitorAnalysis,
+  CompetitorActionRecommendation,
   CompetitorAnalysisStatus,
   CompetitorGeneratedContentItem,
   CompetitorGeneratedContentPack,
@@ -210,7 +211,7 @@ function formatDateLabel(value: string) {
 function confidenceBadgeLabel(level: CompetitorConfidenceLevel) {
   return {
     high: 'Alta confiança',
-    medium: 'Confiança média',
+    medium: 'Parcial',
     low: 'Baixa confiança'
   }[level];
 }
@@ -400,7 +401,7 @@ function EvidenceList({
 }: {
   title: string;
   description: string;
-  items: Array<{ title: string; value: string; sourceUrl: string; count?: number }>;
+  items: Array<{ title: string; value: string; sourceUrl: string; count?: number; score?: number; meta?: string; sourceLabel?: string }>;
   emptyLabel: string;
   onViewSource: (sourceUrl: string, fallbackTitle: string) => void;
 }) {
@@ -428,10 +429,22 @@ function EvidenceList({
             <div key={`${item.sourceUrl}-${item.value}-${index}`} className="rounded-xl border border-zinc-200 bg-zinc-50 px-3 py-2">
               <div className="flex flex-wrap items-start justify-between gap-2">
                 <div className="min-w-0 flex-1">
-                  <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-zinc-400">{item.title}</p>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-zinc-400">{item.title}</p>
+                    {item.sourceLabel ? (
+                      <span className="rounded-full border border-zinc-200 bg-white px-2 py-0.5 text-[10px] font-medium text-zinc-500">
+                        {item.sourceLabel}
+                      </span>
+                    ) : null}
+                  </div>
                   <p className="mt-1 text-sm leading-relaxed text-zinc-700">{item.value}</p>
+                  {item.meta ? <p className="mt-1 text-[11px] text-zinc-400">{item.meta}</p> : null}
                 </div>
-                {typeof item.count === 'number' ? (
+                {typeof item.score === 'number' ? (
+                  <span className="rounded-full border border-zinc-200 bg-white px-2 py-0.5 text-[10px] font-medium text-zinc-500">
+                    {Math.round(item.score)} pts
+                  </span>
+                ) : typeof item.count === 'number' ? (
                   <span className="rounded-full border border-zinc-200 bg-white px-2 py-0.5 text-[10px] font-medium text-zinc-500">
                     {item.count}x
                   </span>
@@ -1117,6 +1130,41 @@ function InsightCard({
   );
 }
 
+function actionImpactClass(impact: CompetitorActionRecommendation['impact']) {
+  return {
+    Conteudo: 'border-sky-200 bg-sky-50 text-sky-700',
+    'Creator AI': 'border-violet-200 bg-violet-50 text-violet-700',
+    Banco: 'border-emerald-200 bg-emerald-50 text-emerald-700'
+  }[impact];
+}
+
+function ActionRecommendationCard({
+  action,
+  onExecute,
+  disabled = false
+}: {
+  action: CompetitorActionRecommendation;
+  onExecute: () => void;
+  disabled?: boolean;
+}) {
+  return (
+    <div className="rounded-2xl border border-zinc-200 bg-white p-4">
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0 flex-1 space-y-2">
+          <div className="flex flex-wrap items-center gap-2">
+            <p className="text-sm font-semibold text-zinc-900">{action.title}</p>
+            <span className={cn('rounded-full border px-2 py-0.5 text-[10px] font-medium', actionImpactClass(action.impact))}>{action.impact}</span>
+          </div>
+          <p className="text-sm leading-relaxed text-zinc-700">{action.why}</p>
+        </div>
+        <Button type="button" size="sm" variant="outline" onClick={onExecute} disabled={disabled} className="shrink-0">
+          {action.executeLabel || 'Executar'}
+        </Button>
+      </div>
+    </div>
+  );
+}
+
 function GeneratedContentCard({
   item,
   saved,
@@ -1368,10 +1416,14 @@ function CompetitorDetailModal({
       }
 
       onUpdateCompetitor(payload.competitor);
-      if (payload.competitor.analysisStatus === 'insufficient_data') {
+      const completedCoverage = payload.competitor.analysis?.signalReview?.transcriptCoverage ?? payload.competitor.analysisProgress?.transcriptCoverage ?? 0;
+
+      if (payload.competitor.analysisStatus === 'completed' && completedCoverage >= 0.7) {
+        toast.success('Analise concluida com dados reais do perfil.');
+      } else if (payload.competitor.analysisStatus === 'insufficient_data') {
         toast.warning('Captura concluida, mas ainda faltam dados publicos suficientes para uma analise completa.');
       } else {
-        toast.success('Analise concluida com dados reais do perfil.');
+        toast.warning('Analise em processamento. A transcricao ainda nao atingiu a cobertura minima.');
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Nao foi possivel gerar a analise.';
@@ -1382,8 +1434,13 @@ function CompetitorDetailModal({
   }
 
   function handleGenerateContentIdeas() {
+    if (!analysisReady) {
+      toast.error('A analise ainda esta em processamento. Aguarde a transcricao e validacao completas.');
+      return;
+    }
+
     if (!analysis) {
-      toast.error('Gere ou carregue uma analise completa antes de montar conteudos baseados nela.');
+      toast.error('Nao foi possivel gerar repertorio sem analise concluida.');
       return;
     }
 
@@ -1467,29 +1524,104 @@ function CompetitorDetailModal({
   const analysis = competitor.analysis && Array.isArray(competitor.analysis.sections) && competitor.analysis.sourceSnapshot ? competitor.analysis : null;
   const sourceSnapshot = analysis?.sourceSnapshot ?? competitor.sourceSnapshot;
   const insufficientData = competitor.analysisStatus === 'insufficient_data';
-  const isAnalyzing =
-    generatingAnalysis ||
-    competitor.analysisStatus === 'running' ||
-    competitor.analysisStatus === 'capturing' ||
-    competitor.analysisStatus === 'processing';
-
-  const actionInsights = analysis?.sections.find((section) => section.id === 'actions')?.items ?? [];
-  const engineeringInsights = analysis?.sections.find((section) => section.id === 'engineering')?.items ?? [];
-  const overviewInsights = analysis?.sections.find((section) => section.id === 'overview')?.items ?? [];
-  const adaptationInsights = analysis?.sections.find((section) => section.id === 'adaptation')?.items ?? [];
-  const overallConfidence = sourceSnapshot
-    ? sourceSnapshot.topPosts.some((post) => post.transcriptStatus === 'success' && post.transcriptText.trim())
-      ? 'high'
-      : sourceSnapshot.topPosts.some((post) => post.caption.trim() || post.captionLead.trim() || post.screenTextLead.trim())
-        ? 'medium'
-      : 'low'
-    : 'low';
+  const analysisProgress = competitor.analysisProgress;
+  const signalReview = analysis?.signalReview ?? null;
   const totalTranscriptedReels =
     sourceSnapshot?.topPosts.filter((post) => (post.format === 'reels' || post.format === 'video') && post.transcriptStatus === 'success' && post.transcriptText.trim()).length ?? 0;
   const totalVideoReels = sourceSnapshot?.topPosts.filter((post) => post.format === 'reels' || post.format === 'video').length ?? 0;
-  const openingEvidence = sourceSnapshot ? buildOpeningEvidence(sourceSnapshot.topPosts) : [];
-  const ctaEvidence = sourceSnapshot ? buildCtaEvidence(sourceSnapshot.topPosts) : [];
-  const repeatedPhraseEvidence = sourceSnapshot ? buildRepeatedPhraseEvidence(sourceSnapshot.topPosts) : [];
+  const reelsTotal = signalReview?.reelsTotal ?? analysisProgress?.reelsTotal ?? totalVideoReels ?? sourceSnapshot?.reelsAnalyzed ?? 0;
+  const reelsTranscribed = signalReview?.reelsTranscribed ?? analysisProgress?.reelsTranscribed ?? totalTranscriptedReels;
+  const transcriptCoverage = signalReview?.transcriptCoverage ?? analysisProgress?.transcriptCoverage ?? (reelsTotal ? reelsTranscribed / reelsTotal : 0);
+  const isProcessing = generatingAnalysis || competitor.analysisStatus === 'running' || competitor.analysisStatus === 'capturing' || competitor.analysisStatus === 'processing';
+  const progressStage = analysisProgress?.stage ?? null;
+  const progressIsTerminal = progressStage === 'completed' || progressStage === 'incomplete' || progressStage === 'error';
+  const shouldPollAnalysis = isProcessing && !progressIsTerminal;
+  const analysisReady = Boolean(
+    analysis &&
+      signalReview &&
+      signalReview.status === 'completed' &&
+      signalReview.transcriptCoverage >= 0.7 &&
+      competitor.analysisStatus === 'completed'
+  );
+  const analysisConfidence: CompetitorConfidenceLevel = analysisReady ? 'high' : 'low';
+  const analysisStatusMessage = analysisReady
+    ? 'Analise pronta com repertorio validado.'
+    : analysisProgress?.message ||
+      (shouldPollAnalysis
+        ? 'Processando (incompleto): aguardando capturas e transcricoes suficientes.'
+        : transcriptCoverage > 0
+          ? `Processando (incompleto): cobertura de transcricao em ${(transcriptCoverage * 100).toFixed(0)}%.`
+          : 'Processando (incompleto).');
+
+  const legacyOpeningEvidence = sourceSnapshot ? buildOpeningEvidence(sourceSnapshot.topPosts) : [];
+  const legacyCtaEvidence = sourceSnapshot ? buildCtaEvidence(sourceSnapshot.topPosts) : [];
+  const legacyThemeEvidence = sourceSnapshot ? buildRepeatedPhraseEvidence(sourceSnapshot.topPosts) : [];
+  const hookEvidence = signalReview?.hooks.length
+    ? signalReview.hooks.map((item) => ({
+        title: 'Gancho',
+        value: item.text,
+        sourceUrl: item.sourceUrl,
+        sourceLabel: item.source,
+        score: item.score,
+        meta: item.source === 'transcript' ? 'Baseado no que foi falado' : 'Fallback de legenda'
+      }))
+    : legacyOpeningEvidence.map((item) => ({
+        title: 'Gancho',
+        value: item.value,
+        sourceUrl: item.sourceUrl,
+        sourceLabel: item.title === 'Transcript' ? 'transcript' : 'caption',
+        count: item.count,
+        meta: item.title === 'Transcript' ? 'Trecho falado detectado' : 'Legenda como fallback'
+      }));
+  const ctaEvidence = signalReview?.ctas.length
+    ? signalReview.ctas.map((item) => ({
+        title: 'CTA',
+        value: item.text,
+        sourceUrl: item.sourceUrl,
+        sourceLabel: item.source,
+        score: item.score,
+        meta: item.category
+      }))
+    : legacyCtaEvidence.map((item) => ({
+        title: 'CTA',
+        value: item.value,
+        sourceUrl: item.sourceUrl,
+        sourceLabel: 'caption',
+        count: item.count,
+        meta: 'Fallback de legenda'
+      }));
+  const themeEvidence = signalReview?.themes.length
+    ? signalReview.themes.map((item) => ({
+        title: 'Tema',
+        value: item.text,
+        sourceUrl: item.sourceUrl,
+        sourceLabel: item.source,
+        score: item.score,
+        meta: item.example
+      }))
+    : legacyThemeEvidence.map((item) => ({
+        title: 'Tema',
+        value: item.value,
+        sourceUrl: item.sourceUrl,
+      sourceLabel: 'caption',
+      count: item.count,
+      meta: 'Termo recorrente da amostra'
+    }));
+  const recommendedActions = analysisReady ? signalReview?.actions ?? [] : [];
+  const engineeringInsights = analysis?.sections.find((section) => section.id === 'engineering')?.items ?? [];
+  const overviewInsights = analysis?.sections.find((section) => section.id === 'overview')?.items ?? [];
+  const adaptationInsights = analysis?.sections.find((section) => section.id === 'adaptation')?.items ?? [];
+  const missingEngineeringSignals = [
+    !sourceSnapshot?.captureNotes.length ? 'Captura: dados insuficientes' : null,
+    !sourceSnapshot?.topPosts.some((post) => post.format === 'stories') ? 'Stories por dia: dados insuficientes' : null,
+    !sourceSnapshot?.topPosts.some((post) => post.screenTextLead.trim()) ? 'Texto na tela: dados insuficientes' : null,
+    !sourceSnapshot?.topPosts.some((post) => post.transcriptStatus === 'success') ? 'Legenda falada: dados insuficientes' : null
+  ].filter((item): item is string => Boolean(item));
+  const highSignalEngineering = engineeringInsights.filter((insight) => !isLowSignalInsight(insight));
+  const isAnalyzing = shouldPollAnalysis;
+  const overallConfidence = analysisConfidence;
+  const openingEvidence = hookEvidence;
+  const repeatedPhraseEvidence = themeEvidence;
 
   function openSourcePreview(sourceUrl: string, fallbackTitle: string) {
     if (!sourceSnapshot || !sourceUrl) {
@@ -1510,6 +1642,43 @@ function CompetitorDetailModal({
       toast.error('Nao foi possivel copiar o texto.');
     }
   }
+
+  useEffect(() => {
+    if (!shouldPollAnalysis) {
+      return undefined;
+    }
+
+    let cancelled = false;
+    let timer: number | undefined;
+
+    async function pollAnalysis() {
+      try {
+        const response = await fetch(`/api/workspaces/${workspace}/competitors/${competitor.id}`, {
+          cache: 'no-store'
+        });
+        const payload = (await response.json().catch(() => null)) as { competitor?: CompetitorRecord; error?: string } | null;
+
+        if (!cancelled && response.ok && payload?.competitor) {
+          onUpdateCompetitor(payload.competitor);
+        }
+      } catch {
+        // noop
+      } finally {
+        if (!cancelled) {
+          timer = window.setTimeout(pollAnalysis, 1500);
+        }
+      }
+    }
+
+    void pollAnalysis();
+
+    return () => {
+      cancelled = true;
+      if (timer) {
+        window.clearTimeout(timer);
+      }
+    };
+  }, [workspace, competitor.id, shouldPollAnalysis, onUpdateCompetitor]);
 
   return (
     <>
@@ -1665,16 +1834,6 @@ function CompetitorDetailModal({
                   </div>
                 ) : null}
 
-                {isAnalyzing ? (
-                  <div className="flex flex-col items-center justify-center rounded-3xl border border-zinc-200 bg-zinc-50 py-16 text-center">
-                    <Loader2 className="mb-4 h-10 w-10 animate-spin text-zinc-400" />
-                    <p className="text-sm font-medium text-zinc-700">Capturando fontes, processando padroes e organizando os insights...</p>
-                    <p className="mt-2 max-w-md text-xs text-zinc-500">
-                      O sistema esta separando captura, leitura logica e analise final para evitar respostas genricas sem base real.
-                    </p>
-                  </div>
-                ) : null}
-
                 {insufficientData && !isAnalyzing ? (
                   <div className="space-y-4 rounded-3xl border border-orange-200 bg-orange-50 p-5">
                     <div className="flex items-start gap-3">
@@ -1724,86 +1883,143 @@ function CompetitorDetailModal({
                   </div>
                 ) : null}
 
-                {sourceSnapshot && !isAnalyzing ? (
+                {sourceSnapshot || shouldPollAnalysis ? (
                   <>
                     <Card className="rounded-3xl border-zinc-200">
-                      <CardContent className="space-y-5 p-5">
-                        <div className="flex flex-wrap items-start justify-between gap-3">
+                    <CardContent className="space-y-5 p-5">
+                      <div className="flex flex-wrap items-start justify-between gap-3">
+                        <div>
+                          <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-zinc-400">Ações</p>
+                          <p className="mt-1 text-sm text-zinc-900">Transforme a captura em repertório pronto e próximos passos concretos.</p>
+                        </div>
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span className={cn('inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-medium', confidenceBadgeClass(analysisConfidence))}>
+                            <span className={cn('h-1.5 w-1.5 rounded-full', confidenceDotClass(analysisConfidence))} />
+                            {analysisReady ? 'Alta confiança' : analysisStatusMessage}
+                          </span>
+                          <span className="text-[11px] text-zinc-400">Atualizada em {formatDateLabel(analysis?.generatedAt ?? analysisProgress?.updatedAt ?? sourceSnapshot?.fetchedAt ?? '')}</span>
+                        </div>
+                      </div>
+
+                      <div className="flex flex-wrap gap-2">
+                        <Button onClick={handleGenerateAnalysis} disabled={generatingAnalysis} className="min-w-[180px]">
+                          {generatingAnalysis ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Brain className="mr-2 h-4 w-4" />}
+                          {analysis ? 'Regenerar análise' : 'Gerar análise'}
+                        </Button>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          onClick={handleGenerateContentIdeas}
+                          disabled={!analysisReady || generatingAnalysis || generatingContent}
+                          className="min-w-[240px] border-violet-200 bg-violet-50 text-violet-700 hover:bg-violet-100"
+                        >
+                          {generatingContent ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Sparkles className="mr-2 h-4 w-4" />}
+                          Gerar conteúdos baseados nessa análise
+                        </Button>
+                      </div>
+
+                      <div className="rounded-2xl border border-zinc-200 bg-zinc-50 p-4">
+                        <div className="flex flex-wrap items-center justify-between gap-2">
                           <div>
-                            <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-zinc-400">Ações</p>
-                            <p className="mt-1 text-sm text-zinc-900">Transforme a captura em repertório pronto e próximos passos concretos.</p>
+                            <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-zinc-400">Status da pipeline</p>
+                            <p className="mt-1 text-sm font-medium text-zinc-900">{analysisStatusMessage}</p>
                           </div>
-                          <div className="flex flex-wrap items-center gap-2">
-                            <span className={cn('inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-medium', confidenceBadgeClass(overallConfidence))}>
-                              <span className={cn('h-1.5 w-1.5 rounded-full', confidenceDotClass(overallConfidence))} />
-                              {confidenceBadgeLabel(overallConfidence)}
+                          <span className="rounded-full border border-zinc-200 bg-white px-2 py-0.5 text-[10px] font-medium text-zinc-500">
+                            Reels transcritos {reelsTranscribed}/{reelsTotal || sourceSnapshot?.reelsAnalyzed || 0}
+                          </span>
+                        </div>
+                        <div className="mt-3 h-2 overflow-hidden rounded-full bg-zinc-200">
+                          <div
+                            className={cn(
+                              'h-full rounded-full transition-all',
+                              transcriptCoverage >= 0.7 ? 'bg-emerald-500' : 'bg-amber-500'
+                            )}
+                            style={{ width: `${Math.min(100, Math.round(transcriptCoverage * 100))}%` }}
+                          />
+                        </div>
+                        <div className="mt-3 grid gap-3 sm:grid-cols-3">
+                          <div className="rounded-2xl border border-zinc-200 bg-white p-3">
+                            <p className="text-[11px] text-zinc-400">Posts capturados</p>
+                            <p className="mt-1 text-lg font-semibold text-zinc-900">{sourceSnapshot?.postsAnalyzed ?? 0}</p>
+                          </div>
+                          <div className="rounded-2xl border border-zinc-200 bg-white p-3">
+                            <p className="text-[11px] text-zinc-400">Reels / vídeos</p>
+                            <p className="mt-1 text-lg font-semibold text-zinc-900">{reelsTotal || sourceSnapshot?.reelsAnalyzed || 0}</p>
+                          </div>
+                          <div className="rounded-2xl border border-zinc-200 bg-white p-3">
+                            <p className="text-[11px] text-zinc-400">Cobertura de transcrição</p>
+                            <p className="mt-1 text-lg font-semibold text-zinc-900">{Math.round(transcriptCoverage * 100)}%</p>
+                          </div>
+                        </div>
+                      </div>
+
+                      {analysisReady && recommendedActions.length ? (
+                        <div className="space-y-3">
+                          <div className="flex items-center justify-between gap-2">
+                            <div>
+                              <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-zinc-400">AÇÕES RECOMENDADAS</p>
+                              <p className="mt-1 text-sm text-zinc-900">Lista curta de próximos passos com impacto real.</p>
+                            </div>
+                            <span className="rounded-full border border-zinc-200 bg-zinc-50 px-2 py-0.5 text-[10px] font-medium text-zinc-500">
+                              {recommendedActions.length} ações
                             </span>
-                            <span className="text-[11px] text-zinc-400">Atualizada em {formatDateLabel(analysis?.generatedAt ?? sourceSnapshot.fetchedAt)}</span>
                           </div>
-                        </div>
+                          <div className="space-y-3">
+                            {recommendedActions.slice(0, 6).map((action) => (
+                              <ActionRecommendationCard
+                                key={`${action.priority}-${action.title}`}
+                                action={action}
+                                onExecute={async () => {
+                                  if (action.impact === 'Conteudo') {
+                                    handleGenerateContentIdeas();
+                                    return;
+                                  }
 
-                        <div className="flex flex-wrap gap-2">
-                          <Button onClick={handleGenerateAnalysis} disabled={generatingAnalysis} className="min-w-[180px]">
-                            {generatingAnalysis ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Brain className="mr-2 h-4 w-4" />}
-                            {analysis ? 'Regenerar análise' : 'Gerar análise'}
-                          </Button>
-                          <Button
-                            type="button"
-                            variant="outline"
-                            onClick={handleGenerateContentIdeas}
-                            disabled={!analysis || generatingAnalysis || generatingContent}
-                            className="min-w-[240px] border-violet-200 bg-violet-50 text-violet-700 hover:bg-violet-100"
-                          >
-                            {generatingContent ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Sparkles className="mr-2 h-4 w-4" />}
-                            Gerar conteúdos baseados nessa análise
-                          </Button>
-                        </div>
+                                  if (action.impact === 'Creator AI') {
+                                    await copyText(`${competitor.name}: ${action.title} — ${action.why}`);
+                                    toast.success('Ação copiada para o Creator AI.');
+                                    return;
+                                  }
 
-                        {analysis && actionInsights.length ? (
-                          <div className="grid gap-3 md:grid-cols-3">
-                            {actionInsights.map((insight) => (
-                              <InsightCard
-                                key={insight.id}
-                                insight={insight}
-                                saveable
-                                onToggleSave={() => handleInsightToggle(insight, 'actions')}
-                                onViewSource={insight.sourceUrl ? () => openSourcePreview(insight.sourceUrl, insight.title) : undefined}
+                                  await onSaveReference({
+                                    competitorId: competitor.id,
+                                    competitorName: competitor.name,
+                                    title: action.title,
+                                    content: action.why,
+                                    category: 'content_idea',
+                                    hookType: '',
+                                    ctaType: '',
+                                    format: '',
+                                    imageUrl: '',
+                                    notes: `Ação recomendada: ${action.title}`,
+                                    liked: true,
+                                    source: 'analysis',
+                                    sourceInsightId: `action_${action.priority}_${action.title}`,
+                                    sourceUrl: action.sourceUrls[0] ?? '',
+                                    metadata: {
+                                      origin: 'competitors-action-recommendation',
+                                      competitorType: competitor.type,
+                                      niche: competitor.niche,
+                                      impact: action.impact,
+                                      title: action.title,
+                                      why: action.why,
+                                      sourceUrls: action.sourceUrls
+                                    }
+                                  });
+                                  toast.success('Ação salva no Banco de Referencias.');
+                                }}
                               />
                             ))}
                           </div>
-                        ) : null}
-
-                        {analysis && (analysis.practicalSuggestions.toContent.length || analysis.practicalSuggestions.toCreatorAi.length || analysis.practicalSuggestions.toReferenceBank.length) ? (
-                          <Card className="rounded-2xl border-zinc-200">
-                            <CardContent className="grid gap-4 p-5 md:grid-cols-3">
-                              <div>
-                                <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-zinc-400">Para conteúdo</p>
-                                {analysis.practicalSuggestions.toContent.map((item) => (
-                                  <p key={item} className="mt-2 text-sm leading-relaxed text-zinc-700">
-                                    {item}
-                                  </p>
-                                ))}
-                              </div>
-                              <div>
-                                <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-zinc-400">Para Creator AI</p>
-                                {analysis.practicalSuggestions.toCreatorAi.map((item) => (
-                                  <p key={item} className="mt-2 text-sm leading-relaxed text-zinc-700">
-                                    {item}
-                                  </p>
-                                ))}
-                              </div>
-                              <div>
-                                <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-zinc-400">Para o banco</p>
-                                {analysis.practicalSuggestions.toReferenceBank.map((item) => (
-                                  <p key={item} className="mt-2 text-sm leading-relaxed text-zinc-700">
-                                    {item}
-                                  </p>
-                                ))}
-                              </div>
-                            </CardContent>
-                          </Card>
-                        ) : null}
-                      </CardContent>
+                        </div>
+                      ) : (
+                        <div className="rounded-2xl border border-dashed border-zinc-200 bg-white/70 p-4 text-sm text-zinc-500">
+                          {analysisReady
+                            ? 'Nenhuma ação recomendada retornada pela validação. Tente regenerar a análise.'
+                            : 'Processando (incompleto): as ações recomendadas só aparecem quando a transcrição atinge cobertura suficiente.'}
+                        </div>
+                      )}
+                    </CardContent>
                     </Card>
 
                     {generatedContent ? (
@@ -1850,15 +2066,15 @@ function CompetitorDetailModal({
                             <div className="flex flex-wrap items-center justify-between gap-2">
                               <div>
                                 <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-zinc-400">EVIDÊNCIAS</p>
-                                <p className="mt-1 text-sm text-zinc-900">Transcrições, legendas e frases reais que sustentam a leitura.</p>
+                                <p className="mt-1 text-sm text-zinc-900">Trechos falados, CTAs validados e temas reais que sustentam o repertório.</p>
                               </div>
                               <div className="flex flex-wrap items-center gap-2">
                                 <span className={cn('inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-medium', confidenceBadgeClass(overallConfidence))}>
                                   <span className={cn('h-1.5 w-1.5 rounded-full', confidenceDotClass(overallConfidence))} />
-                                  {confidenceBadgeLabel(overallConfidence)}
+                                  {analysisReady ? 'Alta confiança' : analysisStatusMessage}
                                 </span>
                                 <span className="rounded-full border border-zinc-200 bg-zinc-50 px-2 py-0.5 text-[10px] font-medium text-zinc-500">
-                                  Reels transcritos {totalTranscriptedReels}/{totalVideoReels || sourceSnapshot.reelsAnalyzed}
+                                  Reels transcritos {reelsTranscribed}/{reelsTotal || sourceSnapshot?.reelsAnalyzed || 0}
                                 </span>
                               </div>
                             </div>
@@ -1866,42 +2082,42 @@ function CompetitorDetailModal({
                             <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
                               <div className="rounded-2xl border border-zinc-200 bg-white p-3">
                                 <p className="text-[11px] text-zinc-400">Posts capturados</p>
-                                <p className="mt-1 text-lg font-semibold text-zinc-900">{sourceSnapshot.postsAnalyzed}</p>
+                                <p className="mt-1 text-lg font-semibold text-zinc-900">{sourceSnapshot?.postsAnalyzed ?? 0}</p>
                               </div>
                               <div className="rounded-2xl border border-zinc-200 bg-white p-3">
                                 <p className="text-[11px] text-zinc-400">Reels / vídeos</p>
-                                <p className="mt-1 text-lg font-semibold text-zinc-900">{sourceSnapshot.reelsAnalyzed}</p>
+                                <p className="mt-1 text-lg font-semibold text-zinc-900">{sourceSnapshot?.reelsAnalyzed ?? 0}</p>
                               </div>
                               <div className="rounded-2xl border border-zinc-200 bg-white p-3">
                                 <p className="text-[11px] text-zinc-400">Feed</p>
-                                <p className="mt-1 text-lg font-semibold text-zinc-900">{sourceSnapshot.feedAnalyzed}</p>
+                                <p className="mt-1 text-lg font-semibold text-zinc-900">{sourceSnapshot?.feedAnalyzed ?? 0}</p>
                               </div>
                               <div className="rounded-2xl border border-zinc-200 bg-white p-3">
                                 <p className="text-[11px] text-zinc-400">Captura</p>
-                                <p className="mt-1 text-sm font-semibold text-zinc-900">{formatDateLabel(sourceSnapshot.fetchedAt)}</p>
+                                <p className="mt-1 text-sm font-semibold text-zinc-900">{formatDateLabel(sourceSnapshot?.fetchedAt ?? '')}</p>
                               </div>
                             </div>
 
                             <div className="grid gap-3 lg:grid-cols-3">
                               <EvidenceList
-                                title="Top aberturas reais"
-                                description="Primeiras frases e aberturas reais extraídas do transcript (prioridade), depois legenda e texto na tela."
-                                items={openingEvidence}
-                                emptyLabel="Sem abertura observável suficiente. Use mais legendas ou transcrições reais."
+                                title="GANCHOS"
+                                description="Frases curtas e faláveis, validadas primeiro no transcript e depois em legendas quando faltou áudio."
+                                items={hookEvidence}
+                                emptyLabel="Sem ganchos suficientes. A transcrição ainda nao sustentou leitura confiavel."
                                 onViewSource={openSourcePreview}
                               />
                               <EvidenceList
-                                title="Top CTAs reais"
-                                description="CTAs reais extraídos do transcript e legendas, priorizando a fala transcrita."
+                                title="CTAs"
+                                description="Chamadas de ação validadas por OpenAI, priorizando o que foi falado e categorizando o tipo de CTA."
                                 items={ctaEvidence}
-                                emptyLabel="Sem CTA observável suficiente. Tente nova captura ou material manual."
+                                emptyLabel="Sem CTAs suficientes. A leitura ainda nao encontrou chamadas fortes."
                                 onViewSource={openSourcePreview}
                               />
                               <EvidenceList
-                                title="Top frases repetidas"
-                                description="Trechos que mais se repetem e ajudam a entender ritmo, repertório e padrão de linguagem."
-                                items={repeatedPhraseEvidence}
-                                emptyLabel="Sem repetição clara ainda. A amostra está pequena para isso."
+                                title="TEMAS"
+                                description="Assuntos recorrentes clusterizados por transcript, captions e hashtags."
+                                items={themeEvidence}
+                                emptyLabel="Sem temas claros ainda. A amostra esta pequena para clusterizar bem."
                                 onViewSource={openSourcePreview}
                               />
                             </div>
@@ -1917,41 +2133,32 @@ function CompetitorDetailModal({
                               </div>
                               <span className={cn('inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-medium', confidenceBadgeClass(overallConfidence))}>
                                 <span className={cn('h-1.5 w-1.5 rounded-full', confidenceDotClass(overallConfidence))} />
-                                {confidenceBadgeLabel(overallConfidence)}
+                                {analysisReady ? 'Alta confiança' : analysisStatusMessage}
                               </span>
                             </div>
-                            <div className="grid gap-4 xl:grid-cols-2">
-                              <div className="space-y-3">
-                                {engineeringInsights
-                                  .filter((insight) => !isLowSignalInsight(insight))
-                                  .map((insight) => (
-                                    <InsightCard
-                                      key={insight.id}
-                                      insight={insight}
-                                      onViewSource={insight.sourceUrl ? () => openSourcePreview(insight.sourceUrl, insight.title) : undefined}
-                                      saveable={false}
-                                    />
-                                  ))}
-                              </div>
-                              <div className="space-y-3">
-                                {engineeringInsights.filter(isLowSignalInsight).length ? (
-                                  <div className="rounded-2xl border border-zinc-200 bg-zinc-50 p-4">
-                                    <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-zinc-400">Dados insuficientes</p>
-                                    <div className="mt-3 flex flex-wrap gap-2">
-                                      {engineeringInsights
-                                        .filter(isLowSignalInsight)
-                                        .map((insight) => (
-                                          <CompactSignalPill
-                                            key={insight.id}
-                                            insight={insight}
-                                            onViewSource={insight.sourceUrl ? () => openSourcePreview(insight.sourceUrl, insight.title) : undefined}
-                                          />
-                                        ))}
-                                    </div>
-                                  </div>
-                                ) : null}
-                              </div>
+                            <div className="grid gap-3 xl:grid-cols-2">
+                              {highSignalEngineering.map((insight) => (
+                                <InsightCard
+                                  key={insight.id}
+                                  insight={insight}
+                                  onViewSource={insight.sourceUrl ? () => openSourcePreview(insight.sourceUrl, insight.title) : undefined}
+                                  saveable={false}
+                                />
+                              ))}
                             </div>
+
+                            {missingEngineeringSignals.length ? (
+                              <div className="rounded-2xl border border-zinc-200 bg-zinc-50 p-4">
+                                <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-zinc-400">Dados insuficientes</p>
+                                <div className="mt-3 flex flex-wrap gap-2">
+                                  {missingEngineeringSignals.map((item) => (
+                                    <span key={item} className="rounded-full border border-zinc-200 bg-white px-3 py-1 text-[11px] text-zinc-500">
+                                      {item}
+                                    </span>
+                                  ))}
+                                </div>
+                              </div>
+                            ) : null}
                           </CardContent>
                         </Card>
 
@@ -1998,9 +2205,9 @@ function CompetitorDetailModal({
                             <ChevronDown className="h-4 w-4 text-zinc-400 transition group-open:rotate-180" />
                           </summary>
                           <div className="mt-4 space-y-4">
-                            {sourceSnapshot.captureNotes.length ? (
+                            {sourceSnapshot?.captureNotes.length ? (
                               <div className="rounded-2xl border border-amber-200 bg-amber-50 p-3 text-xs leading-relaxed text-amber-700">
-                                {sourceSnapshot.captureNotes.join(' ')}
+                                {sourceSnapshot?.captureNotes.join(' ')}
                               </div>
                             ) : null}
                           </div>

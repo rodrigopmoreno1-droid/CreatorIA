@@ -136,7 +136,14 @@ export async function fetchApifyInstagramCapture(
     ),
     runActorDatasetItems(
       APIFY_ACTORS.reels,
-      { username: [normalizedHandle], resultsLimit: 6, skipPinnedPosts: true },
+      {
+        username: [normalizedHandle],
+        resultsLimit: 6,
+        skipPinnedPosts: true,
+        hide_media_links: false,
+        includeTranscript: true,
+        includeDownloadedVideo: true
+      },
       6
     )
   ]);

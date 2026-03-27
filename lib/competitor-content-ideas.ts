@@ -117,6 +117,11 @@ export function buildCompetitorContentIdeas(
   const engineering = findSection(analysis, 'engineering');
   const sourcePosts = Array.isArray(analysis.sourceSnapshot.topPosts) ? analysis.sourceSnapshot.topPosts : [];
   const topPost = sourcePosts[0];
+  const signalReview = analysis.signalReview ?? null;
+  const validatedHooks = signalReview?.hooks ?? [];
+  const validatedCtas = signalReview?.ctas ?? [];
+  const validatedThemes = signalReview?.themes ?? [];
+  const validatedActions = signalReview?.actions ?? [];
   const engineeringLookup = Object.fromEntries((engineering?.items ?? []).map((item) => [normalizeText(item.title), item]));
   const topThemeInsight = findInsightByTitle(analysis, 'patterns', 'Temas recorrentes') ?? findInsightByTitle(analysis, 'ideas', 'Hooks');
   const hookInsight = findInsightByTitle(analysis, 'patterns', 'Tipo de abertura mais comum') ?? findInsightByTitle(analysis, 'ideas', 'Hooks');
@@ -125,7 +130,7 @@ export function buildCompetitorContentIdeas(
   const formatInsight = findInsightByTitle(analysis, 'patterns', 'Formatos mais usados') ?? findInsightByTitle(analysis, 'engineering', 'Formatos dominantes');
 
   const transcribedPosts = sourcePosts.filter((p) => p.transcriptStatus === 'success' && normalizeText(p.transcriptText).length > 30);
-  const hasTranscripts = transcribedPosts.length > 0;
+  const hasTranscripts = transcribedPosts.length > 0 || (signalReview?.status === 'completed' && signalReview.transcriptCoverage >= 0.7);
 
   const transcriptSnippets = [...new Set(
     sourcePosts
@@ -133,13 +138,17 @@ export function buildCompetitorContentIdeas(
       .filter(Boolean)
   )].slice(0, 10);
 
-  const realOpenings = extractOpeningPhrases(transcribedPosts);
-  const realClosings = extractClosingPhrases(transcribedPosts);
+  const realOpenings = validatedHooks.length
+    ? validatedHooks.slice(0, 10).map((item) => ({ text: item.text, sourceUrl: item.sourceUrl, postId: slugify(item.sourceUrl || item.text) }))
+    : extractOpeningPhrases(transcribedPosts);
+  const realClosings = validatedCtas.length
+    ? validatedCtas.slice(0, 10).map((item) => ({ text: item.text, sourceUrl: item.sourceUrl, postId: slugify(item.sourceUrl || item.text) }))
+    : extractClosingPhrases(transcribedPosts);
 
-  const topTheme = topThemeInsight?.tags[0] ?? competitor.niche ?? 'o tema central do perfil';
-  const secondTheme = topThemeInsight?.tags[1] ?? transcriptSnippets[1] ?? 'um tema adjacente';
-  const hookPattern = hookInsight?.hookType || hookInsight?.summary || 'abertura direta';
-  const ctaPattern = ctaInsight?.ctaType || ctaInsight?.summary || 'comentarios';
+  const topTheme = validatedThemes[0]?.text ?? topThemeInsight?.tags[0] ?? competitor.niche ?? 'o tema central do perfil';
+  const secondTheme = validatedThemes[1]?.text ?? topThemeInsight?.tags[1] ?? transcriptSnippets[1] ?? 'um tema adjacente';
+  const hookPattern = validatedHooks[0]?.text || hookInsight?.hookType || hookInsight?.summary || 'abertura direta';
+  const ctaPattern = validatedCtas[0]?.category || ctaInsight?.ctaType || ctaInsight?.summary || 'comentarios';
   const dominantFormat = formatInsight?.format || 'Reels';
   const storytelling = storytellingInsight?.summary || storytellingInsight?.title || 'problema-solucao';
   const avgDuration = engineeringLookup['Duracao media dos videos']?.summary ?? 'Nao capturado publicamente';
@@ -149,8 +158,13 @@ export function buildCompetitorContentIdeas(
   const transcriptSeed = transcriptSnippets[0] ?? topTheme;
   const transcriptSeed2 = transcriptSnippets[1] ?? secondTheme;
   const transcriptSeed3 = transcriptSnippets[2] ?? 'a virada';
-  const packConfidenceLevel: CompetitorConfidenceLevel = hasTranscripts ? 'high' : sourcePosts.some((post) => normalizeText(post.caption || post.captionLead)) ? 'medium' : 'low';
-  const confidenceLabel = packConfidenceLevel === 'high' ? 'alta' : packConfidenceLevel === 'medium' ? 'media' : 'baixa';
+  const packConfidenceLevel: CompetitorConfidenceLevel =
+    signalReview?.status === 'completed' && signalReview.transcriptCoverage >= 0.7
+      ? 'high'
+      : hasTranscripts
+        ? 'low'
+        : 'low';
+  const confidenceLabel = packConfidenceLevel === 'high' ? 'alta' : 'baixa';
   const sourceUrl = topPost?.sourceUrl ?? '';
 
   type BuildSeriesOptions = {
@@ -234,7 +248,7 @@ export function buildCompetitorContentIdeas(
     tags: [topTheme, secondTheme, hookPattern, transcriptSeed],
     rationale: (_summary, index) =>
       index < realHookEntries.length
-        ? `Abertura real extraída da transcrição do perfil ${competitor.name}.`
+        ? `Abertura validada a partir da análise real do perfil ${competitor.name}.`
         : `Hook adaptado do padrão de abertura ${hookPattern.toLowerCase()} observado no perfil.`,
     sample: (summary) => summary,
     angle: (_summary, index) => (index % 2 === 0 ? 'curiosidade + identificação' : 'problema + promessa'),
@@ -273,7 +287,7 @@ export function buildCompetitorContentIdeas(
     tags: [ctaPattern, topTheme, transcriptSeed2],
     rationale: (_summary, index) =>
       index < realCtaEntries.length
-        ? `CTA real extraído da transcrição/legenda do perfil ${competitor.name}.`
+        ? `CTA validado a partir da análise real do perfil ${competitor.name}.`
         : `CTA adaptado ao comportamento de conversão observado no perfil.`,
     sample: (summary) => summary,
     angle: () => 'conversão leve e natural',
@@ -530,7 +544,7 @@ export function buildCompetitorContentIdeas(
       id: 'hooks',
       title: 'Hooks',
       description: hasTranscripts
-        ? `20 ganchos prontos — ${realHookEntries.length} extraídos das transcrições reais, o restante adaptado dos padrões detectados.`
+        ? `20 ganchos prontos — ${realHookEntries.length} validados das transcrições reais, o restante adaptado dos padrões detectados.`
         : '20 ganchos prontos, em linguagem de creator, inspirados nos padrões e legendas capturados.',
       items: hookItems
     },
@@ -538,7 +552,7 @@ export function buildCompetitorContentIdeas(
       id: 'ctas',
       title: 'CTAs',
       description: hasTranscripts
-        ? `10 CTAs — ${realCtaEntries.length} extraídos das transcrições reais, o restante adaptado.`
+        ? `10 CTAs — ${realCtaEntries.length} validados das transcrições reais, o restante adaptado.`
         : '10 chamadas para ação curtas, naturais e prontas para comentário, direct ou salvamento.',
       items: ctaItems
     },

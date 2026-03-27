@@ -24,6 +24,26 @@ export type CompetitorContentFormat =
 
 export type CompetitorConfidenceLevel = 'high' | 'medium' | 'low';
 
+export type CompetitorAnalysisProgressStage =
+  | 'capturing'
+  | 'downloading'
+  | 'transcribing'
+  | 'extracting'
+  | 'validating'
+  | 'building_repertoire'
+  | 'completed'
+  | 'incomplete'
+  | 'error';
+
+export type CompetitorAnalysisProgress = {
+  stage: CompetitorAnalysisProgressStage;
+  message: string;
+  reelsTotal: number;
+  reelsTranscribed: number;
+  transcriptCoverage: number;
+  updatedAt: string;
+};
+
 export type CompetitorReferenceCategory =
   | 'hook'
   | 'cta'
@@ -164,6 +184,54 @@ export type CompetitorInsight = {
   confidenceLevel: CompetitorConfidenceLevel;
 };
 
+export type CompetitorSignalSource = 'transcript' | 'caption' | 'hashtag' | 'screen';
+
+export type CompetitorValidatedHook = {
+  text: string;
+  sourceUrl: string;
+  source: CompetitorSignalSource;
+  score: number;
+};
+
+export type CompetitorValidatedCta = {
+  text: string;
+  category: 'comentario' | 'direct' | 'link' | 'salvar' | 'compartilhar' | 'seguir' | 'conversao' | 'outro';
+  sourceUrl: string;
+  source: CompetitorSignalSource;
+  score: number;
+};
+
+export type CompetitorValidatedTheme = {
+  text: string;
+  example: string;
+  sourceUrl: string;
+  source: CompetitorSignalSource;
+  score: number;
+};
+
+export type CompetitorActionImpact = 'Conteudo' | 'Creator AI' | 'Banco';
+
+export type CompetitorActionRecommendation = {
+  title: string;
+  why: string;
+  impact: CompetitorActionImpact;
+  executeLabel: string;
+  priority: number;
+  sourceUrls: string[];
+};
+
+export type CompetitorSignalReview = {
+  status: 'processing' | 'incomplete' | 'completed';
+  transcriptCoverage: number;
+  reelsTotal: number;
+  reelsTranscribed: number;
+  hooks: CompetitorValidatedHook[];
+  ctas: CompetitorValidatedCta[];
+  themes: CompetitorValidatedTheme[];
+  actions: CompetitorActionRecommendation[];
+  notes: string[];
+};
+
 export type CompetitorAnalysisSection = {
   id: string;
   title: string;
@@ -231,6 +299,7 @@ export type CompetitorAnalysis = {
     toCreatorAi: string[];
     toReferenceBank: string[];
   };
+  signalReview?: CompetitorSignalReview | null;
   sourceSnapshot: CompetitorSourceSnapshot;
 };
 
@@ -248,6 +317,7 @@ export type CompetitorRecord = {
   analysisError: string;
   analysis: CompetitorAnalysis | null;
   sourceSnapshot: CompetitorSourceSnapshot | null;
+  analysisProgress: CompetitorAnalysisProgress | null;
   lastAnalyzedAt: string;
   createdAt: string;
   updatedAt: string;

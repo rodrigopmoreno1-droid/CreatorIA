@@ -17,11 +17,18 @@ import type {
 } from '@/types/platform';
 import type {
   CompetitorAnalysis,
+  CompetitorAnalysisProgress,
   CompetitorAnalysisStatus,
+  CompetitorActionRecommendation,
   CompetitorRecord,
+  CompetitorSignalReview,
+  CompetitorSignalSource,
   CompetitorSourceSnapshot,
   CompetitorType,
-  ContentReferenceRecord
+  ContentReferenceRecord,
+  CompetitorValidatedCta,
+  CompetitorValidatedHook,
+  CompetitorValidatedTheme
 } from '@/types/competitor-intelligence';
 
 type ProductRow = {
@@ -85,6 +92,7 @@ type CompetitorRow = {
   analysis_error?: string | null;
   analysis?: unknown;
   source_snapshot?: unknown;
+  analysis_progress?: unknown;
   last_analyzed_at?: string | null;
 };
 
@@ -303,6 +311,160 @@ function normalizeCompetitorSourceSnapshot(value: unknown): CompetitorSourceSnap
   };
 }
 
+function normalizeCompetitorAnalysisProgressStage(value: unknown): CompetitorAnalysisProgress['stage'] {
+  return value === 'capturing' ||
+    value === 'downloading' ||
+    value === 'transcribing' ||
+    value === 'extracting' ||
+    value === 'validating' ||
+    value === 'building_repertoire' ||
+    value === 'completed' ||
+    value === 'incomplete' ||
+    value === 'error'
+    ? value
+    : 'capturing';
+}
+
+function normalizeCompetitorAnalysisProgress(value: unknown) {
+  const progress = normalizeJsonObject<Record<string, unknown>>(value);
+
+  if (!progress) {
+    return null;
+  }
+
+  return {
+    stage: normalizeCompetitorAnalysisProgressStage(progress.stage),
+    message: normalizeString(progress.message),
+    reelsTotal: typeof progress.reelsTotal === 'number' ? progress.reelsTotal : 0,
+    reelsTranscribed: typeof progress.reelsTranscribed === 'number' ? progress.reelsTranscribed : 0,
+    transcriptCoverage: typeof progress.transcriptCoverage === 'number' ? progress.transcriptCoverage : 0,
+    updatedAt: normalizeString(progress.updatedAt)
+  } satisfies CompetitorAnalysisProgress;
+}
+
+function normalizeCompetitorSignalSource(value: unknown): CompetitorSignalSource {
+  return value === 'transcript' || value === 'caption' || value === 'hashtag' || value === 'screen' ? value : 'caption';
+}
+
+function normalizeCompetitorSignalReview(value: unknown): CompetitorSignalReview | null {
+  const review = normalizeJsonObject<Record<string, unknown>>(value);
+
+  if (!review) {
+    return null;
+  }
+
+  const hooks = Array.isArray(review.hooks)
+    ? review.hooks
+        .map((item) => {
+          const hook = normalizeJsonObject<Record<string, unknown>>(item);
+          const text = normalizeString(hook?.text);
+
+          if (!text) {
+            return null;
+          }
+
+          return {
+            text,
+            sourceUrl: normalizeString(hook?.sourceUrl),
+            source: normalizeCompetitorSignalSource(hook?.source),
+            score: typeof hook?.score === 'number' ? hook.score : 0
+          } satisfies CompetitorValidatedHook;
+        })
+        .filter((item): item is CompetitorValidatedHook => Boolean(item))
+    : [];
+
+  const ctas = Array.isArray(review.ctas)
+    ? review.ctas
+        .map((item) => {
+          const cta = normalizeJsonObject<Record<string, unknown>>(item);
+          const text = normalizeString(cta?.text);
+
+          if (!text) {
+            return null;
+          }
+
+          return {
+            text,
+            category:
+              cta?.category === 'comentario' ||
+              cta?.category === 'direct' ||
+              cta?.category === 'link' ||
+              cta?.category === 'salvar' ||
+              cta?.category === 'compartilhar' ||
+              cta?.category === 'seguir' ||
+              cta?.category === 'conversao' ||
+              cta?.category === 'outro'
+                ? cta.category
+                : 'outro',
+            sourceUrl: normalizeString(cta?.sourceUrl),
+            source: normalizeCompetitorSignalSource(cta?.source),
+            score: typeof cta?.score === 'number' ? cta.score : 0
+          } satisfies CompetitorValidatedCta;
+        })
+        .filter((item): item is CompetitorValidatedCta => Boolean(item))
+    : [];
+
+  const themes = Array.isArray(review.themes)
+    ? review.themes
+        .map((item) => {
+          const theme = normalizeJsonObject<Record<string, unknown>>(item);
+          const text = normalizeString(theme?.text);
+
+          if (!text) {
+            return null;
+          }
+
+          return {
+            text,
+            example: normalizeString(theme?.example),
+            sourceUrl: normalizeString(theme?.sourceUrl),
+            source: normalizeCompetitorSignalSource(theme?.source),
+            score: typeof theme?.score === 'number' ? theme.score : 0
+          } satisfies CompetitorValidatedTheme;
+        })
+        .filter((item): item is CompetitorValidatedTheme => Boolean(item))
+    : [];
+
+  const actions = Array.isArray(review.actions)
+    ? review.actions
+        .map((item) => {
+          const action = normalizeJsonObject<Record<string, unknown>>(item);
+          const title = normalizeString(action?.title);
+          const why = normalizeString(action?.why);
+
+          if (!title || !why) {
+            return null;
+          }
+
+          return {
+            title,
+            why,
+            impact: action?.impact === 'Creator AI' || action?.impact === 'Banco' ? action.impact : 'Conteudo',
+            executeLabel: normalizeString(action?.executeLabel) || 'Executar',
+            priority: typeof action?.priority === 'number' ? action.priority : 99,
+            sourceUrls: Array.isArray(action?.sourceUrls) ? action.sourceUrls.map((item) => normalizeString(item)).filter(Boolean) : []
+          } satisfies CompetitorActionRecommendation;
+        })
+        .filter((item): item is CompetitorActionRecommendation => Boolean(item))
+    : [];
+
+  const transcriptCoverage = typeof review.transcriptCoverage === 'number' ? Math.max(0, Math.min(1, review.transcriptCoverage)) : 0;
+  const status = review.status === 'completed' || review.status === 'processing' || review.status === 'incomplete' ? review.status : 'processing';
+  const notes = Array.isArray(review.notes) ? review.notes.map((item) => normalizeString(item)).filter(Boolean) : [];
+
+  return {
+    status,
+    transcriptCoverage,
+    reelsTotal: typeof review.reelsTotal === 'number' ? review.reelsTotal : 0,
+    reelsTranscribed: typeof review.reelsTranscribed === 'number' ? review.reelsTranscribed : 0,
+    hooks,
+    ctas,
+    themes,
+    actions,
+    notes
+  };
+}
+
 function normalizeCompetitorAnalysis(value: unknown): CompetitorAnalysis | null {
   const analysis = normalizeJsonObject<Record<string, unknown>>(value);
 
@@ -396,6 +558,7 @@ function normalizeCompetitorAnalysis(value: unknown): CompetitorAnalysis | null 
       toCreatorAi: normalizeStringArray(practicalSuggestions.toCreatorAi),
       toReferenceBank: normalizeStringArray(practicalSuggestions.toReferenceBank)
     },
+    signalReview: normalizeCompetitorSignalReview(analysis.signalReview),
     sourceSnapshot
   };
 }
@@ -718,6 +881,7 @@ export function toCompetitorRecord(row: CompetitorRow): CompetitorRecord {
     analysisError: row.analysis_error ?? '',
     analysis: normalizeCompetitorAnalysis(row.analysis),
     sourceSnapshot: normalizeCompetitorSourceSnapshot(row.source_snapshot),
+    analysisProgress: normalizeCompetitorAnalysisProgress(row.analysis_progress),
     lastAnalyzedAt: row.last_analyzed_at ?? '',
     createdAt: row.created_at,
     updatedAt: row.updated_at
@@ -841,7 +1005,7 @@ export async function getWorkspaceCompetitors(workspaceSlug: string) {
   const { admin, context } = access;
   const { data, error } = await admin
     .from('competitors')
-    .select('id,company_id,name,handle,niche,website,notes,created_at,updated_at,profile_type,logo_url,tags,analysis_status,analysis_error,analysis,source_snapshot,last_analyzed_at')
+    .select('id,company_id,name,handle,niche,website,notes,created_at,updated_at,profile_type,logo_url,tags,analysis_status,analysis_error,analysis,source_snapshot,analysis_progress,last_analyzed_at')
     .eq('company_id', context.companyId)
     .order('updated_at', { ascending: false });
 

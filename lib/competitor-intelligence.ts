@@ -1,5 +1,6 @@
 import type {
   CompetitorAnalysis,
+  CompetitorSignalReview,
   CompetitorCapturedPost,
   CompetitorCaptureSource,
   CompetitorConfidenceLevel,
@@ -28,6 +29,8 @@ export type CompetitorAnalysisFacts = {
   transcriptCount: number;
   captionCount: number;
   screenTextCount: number;
+  videoCount: number;
+  transcriptCoverage: number;
   confidenceLevel: 'high' | 'medium' | 'low';
   topAngles: string[];
   topCaptions: string[];
@@ -37,6 +40,7 @@ export type CompetitorAnalysisInput = {
   competitor: Pick<CompetitorRecord, 'id' | 'name' | 'handle' | 'website' | 'type' | 'niche' | 'notes' | 'logoUrl' | 'tags'>;
   snapshot: CompetitorSourceSnapshot;
   facts: CompetitorAnalysisFacts;
+  signalReview?: CompetitorSignalReview | null;
 };
 
 type InstagramSnapshotData = {
@@ -67,6 +71,15 @@ export type CompetitorDataQualityAssessment = {
     feed: number;
     characters: number;
   };
+};
+
+export type CompetitorCaptureProgress = {
+  stage: 'capturing' | 'downloading' | 'transcribing' | 'finalizing';
+  label: string;
+  reelsTotal: number;
+  reelsTranscribed: number;
+  current: number;
+  total: number;
 };
 
 const INSTAGRAM_APP_ID = '936619743392459';
@@ -244,7 +257,7 @@ function buildPostUrl(shortcode: string, format: CompetitorContentFormat) {
   }
 
   if (format === 'video') {
-    return `https://www.instagram.com/tv/${shortcode}/`;
+    return `https://www.instagram.com/reel/${shortcode}/`;
   }
 
   return `https://www.instagram.com/p/${shortcode}/`;
@@ -413,7 +426,7 @@ function mapInstagramNode(node: RawInstagramNode) {
     captionLead: firstCaptionLine(caption),
     thumbnailUrl: normalizeText(node.thumbnail_src) || normalizeText(node.display_url),
     mediaUrl: normalizeText(node.video_url) || normalizeText(node.display_url),
-    downloadedVideoUrl: '',
+    downloadedVideoUrl: normalizeText(node.video_url) || normalizeText(node.display_url),
     postedAt: (() => {
       const timestamp = toNumber(node.taken_at_timestamp);
       return timestamp ? new Date(timestamp * 1000).toISOString() : new Date().toISOString();
@@ -629,7 +642,7 @@ function buildApifyPostUrl(shortcode: string, format: CompetitorContentFormat) {
   }
 
   if (format === 'video') {
-    return `https://www.instagram.com/tv/${shortcode}/`;
+    return `https://www.instagram.com/reel/${shortcode}/`;
   }
 
   return `https://www.instagram.com/p/${shortcode}/`;
@@ -667,7 +680,8 @@ function mapApifyPost(node: RawInstagramNode, overrideFormat?: CompetitorContent
     pickApifyField(node, ['thumbnailUrl', 'thumbnail_url', 'thumbnail', 'displayUrl', 'display_url', 'imageUrl', 'image_url'])
   );
   const downloadedVideoUrl = normalizeText(
-    pickApifyField(node, ['downloadedVideo', 'downloadedVideoUrl', 'downloaded_video', 'downloaded_video_url'])
+    pickApifyField(node, ['downloadedVideo', 'downloadedVideoUrl', 'downloaded_video', 'downloaded_video_url', 'mediaDownloadUrl', 'media_download_url']) ||
+      normalizeText(pickApifyField(node, ['videoUrl', 'video_url']))
   );
   const mediaUrl = normalizeText(
     pickApifyField(node, ['videoUrl', 'video_url', 'url', 'mediaUrl', 'media_url'])
@@ -1127,21 +1141,55 @@ function isApifyTranscriptGood(text: string) {
   return true;
 }
 
-async function enrichPostsWithTranscripts(posts: CompetitorCapturedPost[], limit = 10) {
+async function enrichPostsWithTranscripts(
+  posts: CompetitorCapturedPost[],
+  limit = 10,
+  onProgress?: (progress: CompetitorCaptureProgress) => Promise<void> | void
+) {
   const enriched = [...posts];
   const transcriptCandidates = enriched
     .filter((post) => post.format === 'reels' || post.format === 'video')
     .sort((left, right) => right.metrics.engagementScore - left.metrics.engagementScore || right.postedAt.localeCompare(left.postedAt))
     .slice(0, limit);
+  let transcriptedCount = 0;
 
-  for (const candidate of transcriptCandidates) {
+  await onProgress?.({
+    stage: 'transcribing',
+    label: transcriptCandidates.length
+      ? `Transcrevendo ${transcriptedCount}/${transcriptCandidates.length} reels...`
+      : 'Transcrevendo reels...',
+    reelsTotal: transcriptCandidates.length,
+    reelsTranscribed: transcriptedCount,
+    current: 0,
+    total: transcriptCandidates.length
+  });
+
+  for (const [index, candidate] of transcriptCandidates.entries()) {
     if (candidate.transcriptText && candidate.transcriptStatus === 'success' && isApifyTranscriptGood(candidate.transcriptText)) {
+      transcriptedCount += 1;
+      await onProgress?.({
+        stage: 'transcribing',
+        label: `Transcrevendo ${Math.min(index + 1, transcriptCandidates.length)}/${transcriptCandidates.length} reels...`,
+        reelsTotal: transcriptCandidates.length,
+        reelsTranscribed: transcriptedCount,
+        current: index + 1,
+        total: transcriptCandidates.length
+      });
       continue;
     }
 
     const transcriptionUrl = normalizeText(candidate.downloadedVideoUrl) || normalizeText(candidate.mediaUrl) || normalizeText(candidate.sourceUrl);
     if (!transcriptionUrl) {
       if (candidate.transcriptText && candidate.transcriptStatus === 'success') {
+        transcriptedCount += 1;
+        await onProgress?.({
+          stage: 'transcribing',
+          label: `Transcrevendo ${Math.min(index + 1, transcriptCandidates.length)}/${transcriptCandidates.length} reels...`,
+          reelsTotal: transcriptCandidates.length,
+          reelsTranscribed: transcriptedCount,
+          current: index + 1,
+          total: transcriptCandidates.length
+        });
         continue;
       }
       candidate.transcriptStatus = 'missing';
@@ -1149,8 +1197,25 @@ async function enrichPostsWithTranscripts(posts: CompetitorCapturedPost[], limit
       candidate.transcriptConfidence = null;
       candidate.transcriptError = 'Sem URL de video para transcricao.';
       candidate.screenTextLead = candidate.screenTextLead || candidate.accessibilityCaption || '';
+      await onProgress?.({
+        stage: 'transcribing',
+        label: `Transcrevendo ${Math.min(index + 1, transcriptCandidates.length)}/${transcriptCandidates.length} reels...`,
+        reelsTotal: transcriptCandidates.length,
+        reelsTranscribed: transcriptedCount,
+        current: index + 1,
+        total: transcriptCandidates.length
+      });
       continue;
     }
+
+    await onProgress?.({
+      stage: 'downloading',
+      label: `Baixando video ${Math.min(index + 1, transcriptCandidates.length)}/${transcriptCandidates.length} para transcricao...`,
+      reelsTotal: transcriptCandidates.length,
+      reelsTranscribed: transcriptedCount,
+      current: index + 1,
+      total: transcriptCandidates.length
+    });
 
     const transcript = await transcribeMediaFromUrl({ sourceUrl: transcriptionUrl });
     if (transcript.status === 'success' && transcript.text) {
@@ -1163,10 +1228,12 @@ async function enrichPostsWithTranscripts(posts: CompetitorCapturedPost[], limit
       candidate.hookPattern = detectHookPattern(buildPostEvidenceText(candidate));
       candidate.ctaPatterns = detectCtaPatterns(buildPostEvidenceText(candidate));
       candidate.storytellingPatterns = detectStorytellingPatterns(buildPostEvidenceText(candidate));
+      transcriptedCount += 1;
     } else if (candidate.transcriptText && normalizeText(candidate.transcriptText).length > 30) {
       candidate.transcriptStatus = 'success';
       candidate.transcriptConfidence = candidate.transcriptConfidence ?? 0.6;
       candidate.transcriptError = '';
+      transcriptedCount += 1;
     } else {
       candidate.transcriptStatus = 'missing';
       candidate.transcriptSource = 'none';
@@ -1174,7 +1241,27 @@ async function enrichPostsWithTranscripts(posts: CompetitorCapturedPost[], limit
       candidate.transcriptError = transcript.error || candidate.transcriptError || 'Sem transcript disponivel para este reel.';
       candidate.screenTextLead = transcript.screenTextLead || candidate.screenTextLead || candidate.accessibilityCaption || '';
     }
+
+    await onProgress?.({
+      stage: 'transcribing',
+      label: `Transcrevendo ${Math.min(index + 1, transcriptCandidates.length)}/${transcriptCandidates.length} reels...`,
+      reelsTotal: transcriptCandidates.length,
+      reelsTranscribed: transcriptedCount,
+      current: index + 1,
+      total: transcriptCandidates.length
+    });
   }
+
+  await onProgress?.({
+    stage: 'finalizing',
+    label: transcriptCandidates.length
+      ? `Transcritos ${transcriptedCount}/${transcriptCandidates.length} reels (${Math.round((transcriptedCount / transcriptCandidates.length) * 100)}%).`
+      : 'Sem reels para transcrever.',
+    reelsTotal: transcriptCandidates.length,
+    reelsTranscribed: transcriptedCount,
+    current: transcriptCandidates.length,
+    total: transcriptCandidates.length
+  });
 
   return enriched;
 }
@@ -1186,7 +1273,9 @@ export function buildCompetitorFacts(snapshot: CompetitorSourceSnapshot, competi
   const transcriptCount = posts.filter((post) => post.transcriptStatus === 'success' && normalizeText(post.transcriptText)).length;
   const captionCount = countFilledCaptions(posts);
   const screenTextCount = posts.filter((post) => normalizeText(post.screenTextLead)).length;
-  const confidenceLevel: CompetitorAnalysisFacts['confidenceLevel'] = transcriptCount > 0 ? 'high' : captionCount > 0 ? 'medium' : 'low';
+  const videoCount = posts.filter((post) => post.format === 'reels' || post.format === 'video').length;
+  const transcriptCoverage = videoCount ? transcriptCount / videoCount : 0;
+  const confidenceLevel: CompetitorAnalysisFacts['confidenceLevel'] = transcriptCoverage >= 0.7 && transcriptCount > 0 ? 'high' : 'low';
   const mix = formatMix(posts);
   const competitorTags = Array.isArray(competitor.tags) ? competitor.tags : [];
 
@@ -1209,6 +1298,8 @@ export function buildCompetitorFacts(snapshot: CompetitorSourceSnapshot, competi
     transcriptCount,
     captionCount,
     screenTextCount,
+    videoCount,
+    transcriptCoverage,
     confidenceLevel,
     topAngles: topAnglesFromPosts(posts),
     topCaptions: posts
@@ -1236,6 +1327,8 @@ export function assessCompetitorDataQuality(snapshot: CompetitorSourceSnapshot):
   const captions = countFilledCaptions(posts);
   const transcripts = posts.filter((post) => post.transcriptStatus === 'success' && normalizeText(post.transcriptText)).length;
   const screenTexts = posts.filter((post) => normalizeText(post.screenTextLead)).length;
+  const videoCount = posts.filter((post) => post.format === 'reels' || post.format === 'video').length;
+  const transcriptCoverage = videoCount ? transcripts / videoCount : 0;
   const characters = captureTextLength(posts);
   const stats = {
     posts: snapshot.postsAnalyzed,
@@ -1244,6 +1337,8 @@ export function assessCompetitorDataQuality(snapshot: CompetitorSourceSnapshot):
     screenTexts,
     reels: snapshot.reelsAnalyzed,
     feed: snapshot.feedAnalyzed,
+    videoCount,
+    transcriptCoverage,
     characters
   };
 
@@ -1259,12 +1354,15 @@ export function assessCompetitorDataQuality(snapshot: CompetitorSourceSnapshot):
   if (
     stats.posts < MIN_COMPETITOR_POSTS_FOR_AI ||
     captions < MIN_COMPETITOR_CAPTIONS_FOR_AI ||
-    characters < MIN_COMPETITOR_TEXT_LENGTH_FOR_AI
+    characters < MIN_COMPETITOR_TEXT_LENGTH_FOR_AI ||
+    transcriptCoverage < 0.7
   ) {
     return {
       quality: 'partial',
       enoughForAi: false,
-      reason: `Dados insuficientes para analise completa. Foram capturados ${stats.posts} post(s), ${captions} legenda(s) utilizaveis, ${transcripts} transcript(s) e ${characters} caracteres de texto.`,
+      reason: transcriptCoverage < 0.7
+        ? `Dados insuficientes para analise completa. Foram capturados ${stats.posts} post(s), ${captions} legenda(s) utilizaveis, ${transcripts} transcript(s) e cobertura de transcricao de ${(transcriptCoverage * 100).toFixed(0)}%.`
+        : `Dados insuficientes para analise completa. Foram capturados ${stats.posts} post(s), ${captions} legenda(s) utilizaveis, ${transcripts} transcript(s) e ${characters} caracteres de texto.`,
       stats
     };
   }
@@ -1358,11 +1456,19 @@ function topPostsForSnapshot(posts: CompetitorCapturedPost[]) {
 
 export async function captureCompetitorSources(
   competitor: CompetitorAnalysisInput['competitor'],
-  options?: { deep?: boolean }
+  options?: { deep?: boolean; onProgress?: (progress: CompetitorCaptureProgress) => Promise<void> | void }
 ) {
   const normalizedHandle = normalizeInstagramHandle(competitor.handle);
   const deepCapture = options?.deep ?? false;
   const apifyConfigured = Boolean(process.env.APIFY_API_TOKEN?.trim());
+  await options?.onProgress?.({
+    stage: 'capturing',
+    label: 'Baixando perfis e publicacoes...',
+    reelsTotal: 0,
+    reelsTranscribed: 0,
+    current: 0,
+    total: 0
+  });
   const [apifyInstagram, website] = await Promise.all([
     normalizedHandle ? fetchInstagramSnapshotFromApify(normalizedHandle, deepCapture) : Promise.resolve(null),
     competitor.website ? fetchWebsiteSnapshot(competitor.website) : Promise.resolve(null)
@@ -1419,7 +1525,9 @@ export async function captureCompetitorSources(
     );
   }
 
-  const postsWithTranscripts = deepCapture ? await enrichPostsWithTranscripts(instagramPosts, 10) : instagramPosts;
+  const postsWithTranscripts = deepCapture
+    ? await enrichPostsWithTranscripts(instagramPosts, 10, options?.onProgress)
+    : instagramPosts;
   const transcriptCount = postsWithTranscripts.filter((post) => post.transcriptStatus === 'success' && normalizeText(post.transcriptText)).length;
   if (deepCapture && transcriptCount) {
     captureNotes.push(`Transcricoes executadas em ${Math.min(transcriptCount, 10)} reels da amostra.`);
@@ -1667,15 +1775,9 @@ function describeProofSocial(facts: CompetitorAnalysisFacts) {
 }
 
 function describeTextOnScreen(facts: CompetitorAnalysisFacts, dominantFormat: CompetitorContentFormat | undefined) {
-  if (dominantFormat === 'reels' || dominantFormat === 'video' || dominantFormat === 'carrossel') {
-    return 'Sim, aparece com frequencia.';
-  }
-
-  if (facts.visualHints.some((hint) => hint.includes('visual'))) {
-    return 'Parcialmente, sobretudo em chamadas de capa.';
-  }
-
-  return 'Nao ficou evidente na captura publica.';
+  void facts;
+  void dominantFormat;
+  return 'Nao observavel sem OCR.';
 }
 
 function describeSpokenCaption(facts: CompetitorAnalysisFacts, dominantFormat: CompetitorContentFormat | undefined) {
@@ -1975,6 +2077,7 @@ export function buildCompetitorAnalysisFallback(input: CompetitorAnalysisInput):
         .map((item) => item.summary)
         .concat(actionItems.slice(2, 3).map((item) => item.summary))
     },
+    signalReview: input.signalReview ?? null,
     sourceSnapshot: snapshot
   }, facts);
 }
@@ -2028,6 +2131,36 @@ export function summarizeCompetitorAnalysisInput(input: CompetitorAnalysisInput)
       comments: post.metrics.comments,
       views: post.metrics.views,
       sourceUrl: post.sourceUrl
-    }))
+    })),
+    signalReview: input.signalReview
+      ? {
+          status: input.signalReview.status,
+          transcriptCoverage: input.signalReview.transcriptCoverage,
+          reelsTotal: input.signalReview.reelsTotal,
+          reelsTranscribed: input.signalReview.reelsTranscribed,
+          hooks: input.signalReview.hooks.map((item) => ({
+            text: item.text,
+            source: item.source,
+            score: item.score
+          })),
+          ctas: input.signalReview.ctas.map((item) => ({
+            text: item.text,
+            category: item.category,
+            source: item.source,
+            score: item.score
+          })),
+          themes: input.signalReview.themes.map((item) => ({
+            text: item.text,
+            source: item.source,
+            score: item.score
+          })),
+          actions: input.signalReview.actions.map((item) => ({
+            title: item.title,
+            impact: item.impact,
+            priority: item.priority
+          })),
+          notes: input.signalReview.notes
+        }
+      : null
   };
 }

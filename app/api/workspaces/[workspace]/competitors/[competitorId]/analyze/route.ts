@@ -4,6 +4,35 @@ import { COMPETITOR_SELECT, runCompetitorAnalysisPipeline } from '@/lib/competit
 import { captureCompetitorSources } from '@/lib/competitor-intelligence';
 import { resolveWorkspaceDataAccess } from '@/lib/platform-data';
 
+function buildProgressPayload(input: {
+  stage: 'capturing' | 'downloading' | 'transcribing' | 'extracting' | 'validating' | 'building_repertoire' | 'completed' | 'incomplete' | 'error';
+  message: string;
+  reelsTotal: number;
+  reelsTranscribed: number;
+  transcriptCoverage: number;
+}) {
+  return {
+    stage: input.stage,
+    message: input.message,
+    reelsTotal: input.reelsTotal,
+    reelsTranscribed: input.reelsTranscribed,
+    transcriptCoverage: input.transcriptCoverage,
+    updatedAt: new Date().toISOString()
+  };
+}
+
+function analysisStatusForStage(stage: string) {
+  if (stage === 'capturing' || stage === 'downloading') {
+    return 'capturing';
+  }
+
+  if (stage === 'completed') {
+    return 'completed';
+  }
+
+  return 'processing';
+}
+
 export async function POST(
   _request: Request,
   { params }: { params: Promise<{ workspace: string; competitorId: string }> }
@@ -35,7 +64,14 @@ export async function POST(
     .from('competitors')
     .update({
       analysis_status: 'capturing',
-      analysis_error: null
+      analysis_error: null,
+      analysis_progress: buildProgressPayload({
+        stage: 'capturing',
+        message: 'Baixando perfis e publicacoes...',
+        reelsTotal: 0,
+        reelsTranscribed: 0,
+        transcriptCoverage: 0
+      })
     })
     .eq('company_id', context.companyId)
     .eq('id', competitorId);
@@ -53,7 +89,38 @@ export async function POST(
       tags: Array.isArray(existing.tags) ? existing.tags.filter((tag): tag is string => typeof tag === 'string') : []
     };
 
-    const { snapshot, suggestedLogoUrl, source } = await captureCompetitorSources(competitorInput, { deep: true });
+    const updateProgress = async (progress: {
+      stage: 'capturing' | 'downloading' | 'transcribing' | 'finalizing';
+      label: string;
+      reelsTotal: number;
+      reelsTranscribed: number;
+      current: number;
+      total: number;
+    }) => {
+      const { error: progressError } = await admin
+        .from('competitors')
+        .update({
+          analysis_status: analysisStatusForStage(progress.stage),
+          analysis_progress: buildProgressPayload({
+            stage: progress.stage === 'finalizing' ? 'extracting' : progress.stage,
+            message: progress.label,
+            reelsTotal: progress.reelsTotal,
+            reelsTranscribed: progress.reelsTranscribed,
+            transcriptCoverage: progress.reelsTotal ? progress.reelsTranscribed / progress.reelsTotal : 0
+          })
+        })
+        .eq('company_id', context.companyId)
+        .eq('id', competitorId);
+
+      if (progressError) {
+        throw new Error(progressError.message);
+      }
+    };
+
+    const { snapshot, suggestedLogoUrl, source } = await captureCompetitorSources(competitorInput, {
+      deep: true,
+      onProgress: updateProgress
+    });
     const result = await runCompetitorAnalysisPipeline({
       admin,
       companyId: context.companyId,

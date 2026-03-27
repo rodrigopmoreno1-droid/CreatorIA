@@ -76,7 +76,7 @@ export async function GET(_request: Request, { params }: { params: Promise<{ wor
   const { admin, context } = access;
   const { data, error } = await admin
     .from('competitors')
-    .select('id,company_id,name,handle,niche,website,notes,created_at,updated_at,profile_type,logo_url,tags,analysis_status,analysis_error,analysis,source_snapshot,last_analyzed_at')
+    .select('id,company_id,name,handle,niche,website,notes,created_at,updated_at,profile_type,logo_url,tags,analysis_status,analysis_error,analysis,source_snapshot,analysis_progress,last_analyzed_at')
     .eq('company_id', context.companyId)
     .order('updated_at', { ascending: false });
 
@@ -133,7 +133,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ wor
       company_id: context.companyId,
       ...prepared.data
     })
-    .select('id,company_id,name,handle,niche,website,notes,created_at,updated_at,profile_type,logo_url,tags,analysis_status,analysis_error,analysis,source_snapshot,last_analyzed_at')
+    .select('id,company_id,name,handle,niche,website,notes,created_at,updated_at,profile_type,logo_url,tags,analysis_status,analysis_error,analysis,source_snapshot,analysis_progress,last_analyzed_at')
     .single();
 
   if (error || !data) {

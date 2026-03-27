@@ -91,7 +91,10 @@ function extractHtmlMediaUrl(html: string, baseUrl: string) {
   return '';
 }
 
-async function fetchRemoteMedia(sourceUrl: string, depth = 0): Promise<{ mimeType: string; sizeBytes: number; base64: string }> {
+async function fetchRemoteMedia(
+  sourceUrl: string,
+  depth = 0
+): Promise<{ mimeType: string; sizeBytes: number; base64: string; arrayBuffer: ArrayBuffer }> {
   const response = await fetch(sourceUrl, {
     headers: { 'user-agent': USER_AGENT, accept: '*/*' },
     cache: 'no-store'
@@ -120,7 +123,8 @@ async function fetchRemoteMedia(sourceUrl: string, depth = 0): Promise<{ mimeTyp
   return {
     mimeType,
     sizeBytes: arrayBuffer.byteLength,
-    base64: Buffer.from(arrayBuffer).toString('base64')
+    base64: Buffer.from(arrayBuffer).toString('base64'),
+    arrayBuffer
   };
 }
 
@@ -194,26 +198,16 @@ async function transcribeWithGemini(sourceUrl: string, mimeType: string, base64:
   };
 }
 
-async function transcribeWithOpenAI(sourceUrl: string, mimeType: string, base64: string) {
+async function transcribeWithOpenAI(sourceUrl: string, mimeType: string, arrayBuffer: ArrayBuffer) {
   const apiKey = process.env.OPENAI_API_KEY?.trim() || process.env.API_OPENAI?.trim() || '';
 
   if (!apiKey) {
     return null;
   }
 
-  const model = process.env.OPENAI_TRANSCRIBE_MODEL ?? 'whisper-1';
-  const response = await fetch(sourceUrl, {
-    headers: { 'user-agent': USER_AGENT, accept: '*/*' },
-    cache: 'no-store'
-  });
-
-  if (!response.ok) {
-    throw new Error(`Nao foi possivel baixar a midia (${response.status}).`);
-  }
-
-  const arrayBuffer = await response.arrayBuffer();
+  const model = process.env.OPENAI_TRANSCRIBE_MODEL ?? 'gpt-4o-mini-transcribe';
   const blob = new Blob([arrayBuffer], { type: mimeType });
-  const fileName = sourceUrl.split('/').pop() || 'reel.mp4';
+  const fileName = sourceUrl.split('/').pop()?.split('?')[0]?.split('#')[0] || 'reel.mp4';
   const formData = new FormData();
   formData.append('model', model);
   formData.append('file', blob, fileName);
@@ -271,7 +265,7 @@ export async function transcribeMediaFromUrl(input: {
 
     if (process.env.OPENAI_API_KEY?.trim() || process.env.API_OPENAI?.trim()) {
       try {
-        const openAiResult = await transcribeWithOpenAI(sourceUrl, mimeType, media.base64);
+        const openAiResult = await transcribeWithOpenAI(sourceUrl, mimeType, media.arrayBuffer);
         if (openAiResult?.text) {
           return {
             ...openAiResult,

@@ -7,14 +7,54 @@ import {
   buildCompetitorPatternPayload,
   type CompetitorAnalysisInput
 } from '@/lib/competitor-intelligence';
+import { reviewCompetitorSignals } from '@/lib/competitor-signal-review';
 import { toCompetitorRecord } from '@/lib/platform-data';
 import { organizeCompetitorAnalysis } from '@/services/ai';
 import type { CompetitorCaptureSource, CompetitorRecord, CompetitorType } from '@/types/competitor-intelligence';
 
 const COMPETITOR_SELECT =
-  'id,company_id,name,handle,niche,website,notes,created_at,updated_at,profile_type,logo_url,tags,analysis_status,analysis_error,analysis,source_snapshot,last_analyzed_at';
+  'id,company_id,name,handle,niche,website,notes,created_at,updated_at,profile_type,logo_url,tags,analysis_status,analysis_error,analysis,source_snapshot,analysis_progress,last_analyzed_at';
 
 type SupabaseAdminClient = NonNullable<ReturnType<typeof createSupabaseAdminClient>>;
+
+type AnalysisProgressStage =
+  | 'capturing'
+  | 'downloading'
+  | 'transcribing'
+  | 'extracting'
+  | 'validating'
+  | 'building_repertoire'
+  | 'completed'
+  | 'incomplete';
+
+function buildProgressPayload(input: {
+  stage: AnalysisProgressStage;
+  message: string;
+  reelsTotal: number;
+  reelsTranscribed: number;
+  transcriptCoverage: number;
+}) {
+  return {
+    stage: input.stage,
+    message: input.message,
+    reelsTotal: input.reelsTotal,
+    reelsTranscribed: input.reelsTranscribed,
+    transcriptCoverage: input.transcriptCoverage,
+    updatedAt: new Date().toISOString()
+  };
+}
+
+function analysisStatusForStage(stage: AnalysisProgressStage) {
+  if (stage === 'capturing' || stage === 'downloading') {
+    return 'capturing';
+  }
+
+  if (stage === 'completed') {
+    return 'completed';
+  }
+
+  return 'processing';
+}
 
 type PersistedCompetitorRow = {
   id: string;
@@ -33,6 +73,7 @@ type PersistedCompetitorRow = {
   analysis_error?: string | null;
   analysis?: unknown;
   source_snapshot?: unknown;
+  analysis_progress?: unknown;
   last_analyzed_at?: string | null;
 };
 
@@ -173,6 +214,30 @@ export async function runCompetitorAnalysisPipeline(input: {
   const facts = buildCompetitorFacts(snapshot, competitor);
   const assessment = assessCompetitorDataQuality(snapshot);
   const now = new Date().toISOString();
+  const reelsTotal = snapshot.reelsAnalyzed || snapshot.topPosts.filter((post) => post.format === 'reels' || post.format === 'video').length;
+
+  async function updateAnalysisProgress(stage: AnalysisProgressStage, message: string, reelsTranscribed = facts.transcriptCount) {
+    const progress = buildProgressPayload({
+      stage,
+      message,
+      reelsTotal,
+      reelsTranscribed,
+      transcriptCoverage: facts.transcriptCoverage
+    });
+
+    const { error } = await admin
+      .from('competitors')
+      .update({
+        analysis_status: analysisStatusForStage(stage),
+        analysis_progress: progress
+      })
+      .eq('company_id', companyId)
+      .eq('id', competitor.id);
+
+    if (error) {
+      throw new Error(error.message);
+    }
+  }
 
   const { data: captureRow, error: captureError } = await admin
     .from('competitor_captures')
@@ -199,8 +264,15 @@ export async function runCompetitorAnalysisPipeline(input: {
     .update({
       logo_url: suggestedLogoUrl || competitorRow.logo_url || null,
       source_snapshot: snapshot,
-      analysis_status: assessment.enoughForAi ? 'processing' : 'insufficient_data',
-      analysis_error: assessment.enoughForAi ? null : assessment.reason,
+      analysis_status: assessment.quality === 'insufficient' ? 'insufficient_data' : 'processing',
+      analysis_error: assessment.quality === 'insufficient' ? assessment.reason : null,
+      analysis_progress: buildProgressPayload({
+        stage: 'capturing',
+        message: 'Baixando fontes e consolidando capturas...',
+        reelsTotal,
+        reelsTranscribed: 0,
+        transcriptCoverage: facts.transcriptCoverage
+      }),
       analysis: null,
       last_analyzed_at: now
     })
@@ -226,7 +298,7 @@ export async function runCompetitorAnalysisPipeline(input: {
     throw new Error(patternError.message);
   }
 
-  if (!assessment.enoughForAi) {
+  if (assessment.quality === 'insufficient') {
     const persisted = await loadPersistedCompetitor(admin, companyId, competitor.id);
     return {
       competitor: toCompetitorRecord(persisted),
@@ -235,25 +307,58 @@ export async function runCompetitorAnalysisPipeline(input: {
     };
   }
 
-  const fallback = buildCompetitorAnalysisFallback({
-    competitor,
+  await updateAnalysisProgress('extracting', 'Extraindo hooks, CTAs e temas validados...');
+
+  const signalReview = await reviewCompetitorSignals({
     snapshot,
     facts
   });
 
-  const analysis = await organizeCompetitorAnalysis({
+  const analysisInput = {
     competitor,
     snapshot,
-    facts
-  }).catch(() => fallback);
+    facts,
+    signalReview
+  };
+
+  const enoughForFinalAnalysis = assessment.enoughForAi && signalReview.transcriptCoverage >= 0.7;
+  const fallback = buildCompetitorAnalysisFallback(analysisInput);
+
+  let analysis = fallback;
+
+  if (enoughForFinalAnalysis) {
+    await updateAnalysisProgress('validating', 'Validando ganchos, CTAs e temas com OpenAI...');
+    analysis = await organizeCompetitorAnalysis(analysisInput).catch(() => fallback);
+  }
+
+  analysis = {
+    ...analysis,
+    signalReview
+  };
+
+  await updateAnalysisProgress(
+    enoughForFinalAnalysis ? 'building_repertoire' : 'incomplete',
+    enoughForFinalAnalysis
+      ? 'Montando repertorio acionavel com base nas evidencias validadas...'
+      : `Processando (incompleto): cobertura de transcricao em ${(signalReview.transcriptCoverage * 100).toFixed(0)}%`
+  );
 
   const { error: completionError } = await admin
     .from('competitors')
     .update({
       logo_url: suggestedLogoUrl || competitorRow.logo_url || null,
-      analysis_status: 'completed',
+      analysis_status: enoughForFinalAnalysis ? 'completed' : 'processing',
       analysis_error: null,
       analysis,
+      analysis_progress: buildProgressPayload({
+        stage: enoughForFinalAnalysis ? 'completed' : 'incomplete',
+        message: enoughForFinalAnalysis
+          ? 'Analise pronta com repertorio validado e transcricoes suficientes.'
+          : `Processando (incompleto): ${Math.round(signalReview.transcriptCoverage * 100)}% das transcricoes necessarias.`,
+        reelsTotal,
+        reelsTranscribed: signalReview.reelsTranscribed,
+        transcriptCoverage: signalReview.transcriptCoverage
+      }),
       source_snapshot: snapshot,
       last_analyzed_at: now
     })
@@ -269,7 +374,7 @@ export async function runCompetitorAnalysisPipeline(input: {
   return {
     competitor: toCompetitorRecord(persisted),
     facts,
-    sufficient: true as const
+    sufficient: enoughForFinalAnalysis
   };
 }
 

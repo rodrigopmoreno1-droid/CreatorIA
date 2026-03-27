@@ -3,6 +3,9 @@ import { NextResponse } from 'next/server';
 import { captureCompetitorSources, normalizeInstagramHandle, normalizeWebsiteUrl } from '@/lib/competitor-intelligence';
 import { resolveWorkspaceDataAccess, toCompetitorRecord } from '@/lib/platform-data';
 
+const COMPETITOR_DETAIL_SELECT =
+  'id,company_id,name,handle,niche,website,notes,created_at,updated_at,profile_type,logo_url,tags,analysis_status,analysis_error,analysis,source_snapshot,analysis_progress,last_analyzed_at';
+
 type CompetitorPatchPayload = {
   name?: string;
   handle?: string;
@@ -26,6 +29,55 @@ function sanitizeTags(tags: unknown) {
   return tags
     .map((tag) => (typeof tag === 'string' ? tag.trim() : ''))
     .filter(Boolean);
+}
+
+export async function GET(
+  _request: Request,
+  { params }: { params: Promise<{ workspace: string; competitorId: string }> }
+) {
+  const { workspace, competitorId } = await params;
+  const access = await resolveWorkspaceDataAccess(workspace);
+
+  if (!access) {
+    return NextResponse.json({ error: 'Workspace nao encontrado.' }, { status: 404 });
+  }
+
+  const { admin, context } = access;
+  const { data, error } = await admin
+    .from('competitors')
+    .select(COMPETITOR_DETAIL_SELECT)
+    .eq('company_id', context.companyId)
+    .eq('id', competitorId)
+    .single();
+
+  if (error || !data) {
+    return NextResponse.json({ error: error?.message ?? 'Perfil nao encontrado.' }, { status: 404 });
+  }
+
+  return NextResponse.json({
+    competitor: toCompetitorRecord(
+      data as {
+        id: string;
+        company_id: string;
+        name: string;
+        handle: string | null;
+        niche: string | null;
+        website: string | null;
+        notes: string | null;
+        created_at: string;
+        updated_at: string;
+        profile_type?: string | null;
+        logo_url?: string | null;
+        tags?: unknown;
+        analysis_status?: string | null;
+        analysis_error?: string | null;
+        analysis?: unknown;
+        source_snapshot?: unknown;
+        analysis_progress?: unknown;
+        last_analyzed_at?: string | null;
+      }
+    )
+  });
 }
 
 export async function PATCH(
@@ -116,7 +168,7 @@ export async function PATCH(
     .update(updatePayload)
     .eq('company_id', context.companyId)
     .eq('id', competitorId)
-    .select('id,company_id,name,handle,niche,website,notes,created_at,updated_at,profile_type,logo_url,tags,analysis_status,analysis_error,analysis,source_snapshot,last_analyzed_at')
+    .select(COMPETITOR_DETAIL_SELECT)
     .single();
 
   if (error || !data) {
@@ -142,6 +194,7 @@ export async function PATCH(
         analysis_error?: string | null;
         analysis?: unknown;
         source_snapshot?: unknown;
+        analysis_progress?: unknown;
         last_analyzed_at?: string | null;
       }
     )
