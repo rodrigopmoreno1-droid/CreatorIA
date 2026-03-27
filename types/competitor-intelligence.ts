@@ -22,6 +22,8 @@ export type CompetitorContentFormat =
   | 'mixed'
   | 'unknown';
 
+export type CompetitorConfidenceLevel = 'high' | 'medium' | 'low';
+
 export type CompetitorReferenceCategory =
   | 'hook'
   | 'cta'
@@ -65,6 +67,12 @@ export type CompetitorCapturedPost = {
     durationSeconds: number | null;
   };
   accessibilityCaption: string;
+  transcriptText: string;
+  transcriptStatus: 'success' | 'failed' | 'missing';
+  transcriptSource: 'apify' | 'gemini' | 'openai' | 'manual' | 'none';
+  transcriptConfidence: number | null;
+  transcriptError: string;
+  screenTextLead: string;
   hookPattern: string;
   ctaPatterns: string[];
   storytellingPatterns: string[];
@@ -152,6 +160,7 @@ export type CompetitorInsight = {
   format: string;
   sample: string;
   sourceUrl: string;
+  confidenceLevel: CompetitorConfidenceLevel;
 };
 
 export type CompetitorAnalysisSection = {
@@ -188,6 +197,7 @@ export type CompetitorGeneratedContentItem = {
   saveCategory: CompetitorReferenceCategory;
   structure: string;
   angle: string;
+  confidenceLevel: CompetitorConfidenceLevel;
 };
 
 export type CompetitorGeneratedContentSection = {

@@ -3638,14 +3638,18 @@ export async function organizeCompetitorAnalysis(input: CompetitorAnalysisInput)
     ...getCreatorAiBaseRules(),
     'Voce organiza inteligencia competitiva para social media e creator economy.',
     'Nao invente fatos. Use apenas os sinais capturados e inferencias prudentes.',
+    'Priorize transcript, screen text e legenda na ordem de confianca. Se a confidenceLevel vier baixa, use linguagem de hipotese e evite conclusoes fortes.',
     'Quero analise utilizavel para producao de conteudo, nao um texto generico.',
     'Responda somente JSON valido.',
     'Formato esperado:',
-    '{"generatedAt":"","model":"","overview":{"toneOfVoice":"","positioning":"","apparentAudience":"","visualStyle":""},"sections":[{"id":"","title":"","description":"","items":[{"id":"","kind":"","title":"","summary":"","rationale":"","tags":[""],"hookType":"","ctaType":"","format":"","sample":"","sourceUrl":""}]}],"practicalSuggestions":{"toContent":[""],"toCreatorAi":[""],"toReferenceBank":[""]},"sourceSnapshot":{"fetchedAt":"","instagram":null,"website":null,"postsAnalyzed":0,"reelsAnalyzed":0,"feedAnalyzed":0,"captureNotes":[""],"topPosts":[]}}',
-    'Crie secoes exatamente com estes ids: overview, engineering, patterns, ideas, adaptation, actions.',
+    '{"generatedAt":"","model":"","overview":{"toneOfVoice":"","positioning":"","apparentAudience":"","visualStyle":""},"sections":[{"id":"","title":"","description":"","items":[{"id":"","kind":"","title":"","summary":"","rationale":"","tags":[""],"hookType":"","ctaType":"","format":"","sample":"","sourceUrl":"","confidenceLevel":"medium"}]}],"practicalSuggestions":{"toContent":[""],"toCreatorAi":[""],"toReferenceBank":[""]},"sourceSnapshot":{"fetchedAt":"","instagram":null,"website":null,"postsAnalyzed":0,"reelsAnalyzed":0,"feedAnalyzed":0,"captureNotes":[""],"topPosts":[]}}',
+    'Crie secoes exatamente com estes ids: actions, ideas, engineering, overview, patterns, adaptation.',
+    'A ordem final de prioridade deve ser: actions, ideas, engineering, overview, patterns, adaptation.',
     'Cada secao deve ter de 2 a 5 itens realmente acionaveis.',
+    'A secao actions deve priorizar chamadas praticas como gerar conteudos, salvar no banco, enviar para Creator AI e adicionar ao repertorio.',
     'A secao engineering deve ser um resumo operacional rapido com duracao media, cadencia, abertura, CTA, gravacao, prova social, cenarios, formatos e sinais de trend.',
-    'A secao ideas deve separar claramente Hooks, Estruturas de roteiro, Ideias de Reels, Ideias de Stories, Ideias de Carrossel, CTAs, Angulos de copy, Storytelling, Ofertas e Provas sociais.',
+    'A secao ideas deve ser concreta e separada por tipo, com linguagem de creator, sem texto de relatorio e sem conclusoes infladas.',
+    'Cada item deve trazer confidenceLevel como high, medium ou low para deixar claro o peso da evidência.',
     'Os itens de ideas, hook, cta, engineering e action devem soar como algo que um social media usaria na pratica.',
     'Se houver sourceUrl no sample, preserve.',
     `Dados capturados:\n${JSON.stringify(summary)}`
@@ -3665,7 +3669,20 @@ export async function organizeCompetitorAnalysis(input: CompetitorAnalysisInput)
   return {
     ...parsed,
     generatedAt: parsed.generatedAt || fallback.generatedAt,
-    model: parsed.model || 'hybrid-ai'
+    model: parsed.model || 'hybrid-ai',
+    sections: parsed.sections.map((section) => ({
+      ...section,
+      items: section.items.map((item) => ({
+        ...item,
+        confidenceLevel:
+          item.confidenceLevel ||
+          (input.facts.confidenceLevel === 'high'
+            ? 'high'
+            : input.facts.confidenceLevel === 'medium'
+              ? 'medium'
+              : 'low')
+      }))
+    }))
   };
 }
 

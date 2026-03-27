@@ -2,6 +2,7 @@ import type {
   CompetitorAnalysis,
   CompetitorCapturedPost,
   CompetitorCaptureSource,
+  CompetitorConfidenceLevel,
   CompetitorContentFormat,
   CompetitorDataQuality,
   CompetitorInsight,
@@ -10,6 +11,7 @@ import type {
   ContentReferenceRecord
 } from '@/types/competitor-intelligence';
 import { fetchApifyInstagramCapture } from '@/services/integrations/apify';
+import { transcribeMediaFromUrl } from '@/services/integrations/media-transcription';
 
 type RawInstagramNode = Record<string, unknown>;
 
@@ -23,6 +25,10 @@ export type CompetitorAnalysisFacts = {
   visualHints: string[];
   cadenceLabel: string;
   averageVideoDuration: number | null;
+  transcriptCount: number;
+  captionCount: number;
+  screenTextCount: number;
+  confidenceLevel: 'high' | 'medium' | 'low';
   topAngles: string[];
   topCaptions: string[];
 };
@@ -55,6 +61,8 @@ export type CompetitorDataQualityAssessment = {
   stats: {
     posts: number;
     captions: number;
+    transcripts: number;
+    screenTexts: number;
     reels: number;
     feed: number;
     characters: number;
@@ -93,6 +101,33 @@ function slugify(value: string) {
 
 function buildInsightId(prefix: string, seed: string) {
   return `${prefix}_${slugify(seed) || Math.random().toString(36).slice(2, 8)}`;
+}
+
+function normalizeConfidenceLevel(value: unknown): CompetitorConfidenceLevel {
+  return value === 'high' || value === 'medium' || value === 'low' ? value : 'medium';
+}
+
+function deriveInsightConfidenceLevel(
+  facts: CompetitorAnalysisFacts,
+  sourceUrl: string,
+  summary: string,
+  kind: CompetitorInsight['kind']
+): CompetitorConfidenceLevel {
+  const normalizedSummary = normalizeText(summary).toLowerCase();
+
+  if (/nao observavel|nao ficou evidente|sem volume suficiente|a captura ja foi persistida/i.test(normalizedSummary)) {
+    return 'low';
+  }
+
+  if (facts.confidenceLevel === 'high') {
+    return sourceUrl ? 'high' : kind === 'overview' || kind === 'engineering' ? 'medium' : 'high';
+  }
+
+  if (facts.confidenceLevel === 'medium') {
+    return sourceUrl ? 'medium' : 'low';
+  }
+
+  return sourceUrl ? 'medium' : 'low';
 }
 
 export function normalizeInstagramHandle(handle: string) {
@@ -174,6 +209,29 @@ function firstCaptionLine(caption: string) {
       .map((line) => line.trim())
       .find(Boolean) ?? ''
   ).slice(0, 160);
+}
+
+function firstTranscriptLine(text: string) {
+  return normalizeWhitespace(
+    text
+      .split('\n')
+      .map((line) => line.trim())
+      .find(Boolean) ?? ''
+  ).slice(0, 240);
+}
+
+function buildPostEvidenceText(post: CompetitorCapturedPost) {
+  return normalizeWhitespace(
+    [
+      post.transcriptText,
+      post.screenTextLead,
+      post.caption,
+      post.accessibilityCaption,
+      post.captionLead
+    ]
+      .filter(Boolean)
+      .join('\n')
+  );
 }
 
 function buildPostUrl(shortcode: string, format: CompetitorContentFormat) {
@@ -337,6 +395,14 @@ function mapInstagramNode(node: RawInstagramNode) {
     engagementScore: computeEngagementScore({ likes, comments, views }),
     durationSeconds
   };
+  const accessibilityCaption = normalizeText(node.accessibility_caption);
+  const screenTextLead = firstTranscriptLine(accessibilityCaption);
+  const transcriptText = '';
+  const transcriptStatus: CompetitorCapturedPost['transcriptStatus'] = 'missing';
+  const transcriptSource: CompetitorCapturedPost['transcriptSource'] = 'none';
+  const transcriptConfidence = null;
+  const transcriptError = 'Sem transcript disponivel na captura direta.';
+  const evidenceText = normalizeWhitespace([transcriptText, screenTextLead, caption, accessibilityCaption].filter(Boolean).join('\n'));
 
   const mapped: CompetitorCapturedPost = {
     id: normalizeText(node.id),
@@ -352,10 +418,16 @@ function mapInstagramNode(node: RawInstagramNode) {
       return timestamp ? new Date(timestamp * 1000).toISOString() : new Date().toISOString();
     })(),
     metrics,
-    accessibilityCaption: normalizeText(node.accessibility_caption),
-    hookPattern: detectHookPattern(caption),
-    ctaPatterns: detectCtaPatterns(caption),
-    storytellingPatterns: detectStorytellingPatterns(caption)
+    accessibilityCaption,
+    transcriptText,
+    transcriptStatus,
+    transcriptSource,
+    transcriptConfidence,
+    transcriptError,
+    screenTextLead,
+    hookPattern: detectHookPattern(evidenceText),
+    ctaPatterns: detectCtaPatterns(evidenceText),
+    storytellingPatterns: detectStorytellingPatterns(evidenceText)
   };
 
   return mapped;
@@ -596,6 +668,20 @@ function mapApifyPost(node: RawInstagramNode, overrideFormat?: CompetitorContent
   const mediaUrl = normalizeText(
     pickApifyField(node, ['videoUrl', 'video_url', 'url', 'mediaUrl', 'media_url'])
   );
+  const transcriptText = normalizeWhitespace(
+    firstNonEmptyText(
+      pickApifyField(node, ['transcript', 'transcriptText', 'subtitle', 'speechText', 'spokenText']),
+      getNestedString(node, ['transcript'])
+    )
+  );
+  const screenTextLead = firstTranscriptLine(
+    normalizeWhitespace(
+      firstNonEmptyText(
+        pickApifyField(node, ['onScreenText', 'screenText', 'visualText', 'textOnScreen', 'overlayText']),
+        getNestedString(node, ['accessibility_caption'])
+      )
+    )
+  );
   const sourceUrl = normalizeText(
     pickApifyField(node, ['url', 'postUrl', 'permalink', 'sourceUrl'])
   ) || buildApifyPostUrl(shortcode, format);
@@ -605,6 +691,11 @@ function mapApifyPost(node: RawInstagramNode, overrideFormat?: CompetitorContent
       getNestedString(node, ['accessibility_caption'])
     )
   );
+  const transcriptStatus: CompetitorCapturedPost['transcriptStatus'] = transcriptText ? 'success' : 'missing';
+  const transcriptSource: CompetitorCapturedPost['transcriptSource'] = transcriptText ? 'apify' : 'none';
+  const transcriptConfidence = transcriptText ? 0.9 : null;
+  const transcriptError = transcriptText ? '' : 'Sem transcript disponivel neste item.';
+  const evidenceText = normalizeWhitespace([transcriptText, screenTextLead, caption, accessibilityCaption].filter(Boolean).join('\n'));
 
   return {
     id: normalizeText(pickApifyField(node, ['id', 'mediaId', 'pk'])) || shortcode || sourceUrl || buildInsightId('apify', `post-${caption}`),
@@ -624,9 +715,15 @@ function mapApifyPost(node: RawInstagramNode, overrideFormat?: CompetitorContent
       durationSeconds
     },
     accessibilityCaption,
-    hookPattern: detectHookPattern(collectApifyText(node) || caption),
-    ctaPatterns: detectCtaPatterns(collectApifyText(node) || caption),
-    storytellingPatterns: detectStorytellingPatterns(collectApifyText(node) || caption)
+    transcriptText,
+    transcriptStatus,
+    transcriptSource,
+    transcriptConfidence,
+    transcriptError,
+    screenTextLead,
+    hookPattern: detectHookPattern(evidenceText),
+    ctaPatterns: detectCtaPatterns(evidenceText),
+    storytellingPatterns: detectStorytellingPatterns(evidenceText)
   };
 }
 
@@ -1011,15 +1108,65 @@ function topAnglesFromPosts(posts: CompetitorCapturedPost[]) {
   return [...angles].slice(0, 6);
 }
 
+async function enrichPostsWithTranscripts(posts: CompetitorCapturedPost[], limit = 10) {
+  const enriched = [...posts];
+  const transcriptCandidates = enriched
+    .filter((post) => post.format === 'reels' || post.format === 'video')
+    .sort((left, right) => right.metrics.engagementScore - left.metrics.engagementScore || right.postedAt.localeCompare(left.postedAt))
+    .slice(0, limit);
+
+  for (const candidate of transcriptCandidates) {
+    if (candidate.transcriptText && candidate.transcriptStatus === 'success') {
+      continue;
+    }
+
+    const mediaUrl = normalizeText(candidate.mediaUrl || candidate.sourceUrl);
+    if (!mediaUrl) {
+      candidate.transcriptStatus = 'missing';
+      candidate.transcriptSource = 'none';
+      candidate.transcriptConfidence = null;
+      candidate.transcriptError = 'Sem URL de video para transcricao.';
+      candidate.screenTextLead = candidate.screenTextLead || candidate.accessibilityCaption || '';
+      continue;
+    }
+
+    const transcript = await transcribeMediaFromUrl({ sourceUrl: mediaUrl });
+    if (transcript.status === 'success' && transcript.text) {
+      candidate.transcriptText = transcript.text;
+      candidate.transcriptStatus = 'success';
+      candidate.transcriptSource = transcript.provider;
+      candidate.transcriptConfidence = transcript.confidence;
+      candidate.transcriptError = '';
+      candidate.screenTextLead = transcript.screenTextLead || candidate.screenTextLead || '';
+      candidate.hookPattern = detectHookPattern(buildPostEvidenceText(candidate));
+      candidate.ctaPatterns = detectCtaPatterns(buildPostEvidenceText(candidate));
+      candidate.storytellingPatterns = detectStorytellingPatterns(buildPostEvidenceText(candidate));
+    } else {
+      candidate.transcriptStatus = candidate.transcriptText ? 'success' : 'missing';
+      candidate.transcriptSource = candidate.transcriptText ? candidate.transcriptSource : 'none';
+      candidate.transcriptConfidence = candidate.transcriptText ? candidate.transcriptConfidence ?? 0.75 : null;
+      candidate.transcriptError = transcript.error || candidate.transcriptError || 'Sem transcript disponivel para este reel.';
+      candidate.screenTextLead = transcript.screenTextLead || candidate.screenTextLead || candidate.accessibilityCaption || '';
+    }
+  }
+
+  return enriched;
+}
+
 export function buildCompetitorFacts(snapshot: CompetitorSourceSnapshot, competitor: CompetitorAnalysisInput['competitor']): CompetitorAnalysisFacts {
   const posts = Array.isArray(snapshot.topPosts) ? snapshot.topPosts : [];
+  const evidenceTexts = posts.map((post) => buildPostEvidenceText(post)).filter(Boolean);
   const captions = posts.map((post) => post.caption).filter(Boolean);
+  const transcriptCount = posts.filter((post) => post.transcriptStatus === 'success' && normalizeText(post.transcriptText)).length;
+  const captionCount = countFilledCaptions(posts);
+  const screenTextCount = posts.filter((post) => normalizeText(post.screenTextLead)).length;
+  const confidenceLevel: CompetitorAnalysisFacts['confidenceLevel'] = transcriptCount > 0 ? 'high' : captionCount > 0 ? 'medium' : 'low';
   const mix = formatMix(posts);
   const competitorTags = Array.isArray(competitor.tags) ? competitor.tags : [];
 
   return {
     recurringThemes: topRepeatedTerms([
-      ...captions,
+      ...evidenceTexts,
       snapshot.instagram?.bio ?? '',
       competitor.notes,
       competitor.niche,
@@ -1029,14 +1176,18 @@ export function buildCompetitorFacts(snapshot: CompetitorSourceSnapshot, competi
     hookPatterns: topCounts(posts.map((post) => post.hookPattern), 5),
     ctaPatterns: topCounts(posts.flatMap((post) => post.ctaPatterns), 5),
     storytellingPatterns: topCounts(posts.flatMap((post) => post.storytellingPatterns), 5),
-    toneHints: toneHintsFromTexts([snapshot.instagram?.bio ?? '', ...captions, competitor.notes]),
+    toneHints: toneHintsFromTexts([snapshot.instagram?.bio ?? '', ...evidenceTexts, competitor.notes]),
     visualHints: visualHintsFromFormats(mix),
     cadenceLabel: cadenceLabel(posts),
     averageVideoDuration: averageVideoDurationSeconds(posts),
+    transcriptCount,
+    captionCount,
+    screenTextCount,
+    confidenceLevel,
     topAngles: topAnglesFromPosts(posts),
     topCaptions: posts
       .slice(0, 6)
-      .map((post) => post.captionLead || post.caption)
+      .map((post) => post.captionLead || post.transcriptText || post.caption)
       .filter(Boolean)
       .slice(0, 6)
   };
@@ -1047,20 +1198,24 @@ export function extractHashtagsFromText(text: string) {
 }
 
 function countFilledCaptions(posts: CompetitorCapturedPost[]) {
-  return posts.filter((post) => normalizeText(post.caption || post.captionLead)).length;
+  return posts.filter((post) => normalizeText(buildPostEvidenceText(post))).length;
 }
 
 function captureTextLength(posts: CompetitorCapturedPost[]) {
-  return posts.reduce((total, post) => total + normalizeText(post.caption || post.captionLead).length, 0);
+  return posts.reduce((total, post) => total + normalizeText(buildPostEvidenceText(post)).length, 0);
 }
 
 export function assessCompetitorDataQuality(snapshot: CompetitorSourceSnapshot): CompetitorDataQualityAssessment {
   const posts = Array.isArray(snapshot.topPosts) ? snapshot.topPosts : [];
   const captions = countFilledCaptions(posts);
+  const transcripts = posts.filter((post) => post.transcriptStatus === 'success' && normalizeText(post.transcriptText)).length;
+  const screenTexts = posts.filter((post) => normalizeText(post.screenTextLead)).length;
   const characters = captureTextLength(posts);
   const stats = {
     posts: snapshot.postsAnalyzed,
     captions,
+    transcripts,
+    screenTexts,
     reels: snapshot.reelsAnalyzed,
     feed: snapshot.feedAnalyzed,
     characters
@@ -1070,7 +1225,7 @@ export function assessCompetitorDataQuality(snapshot: CompetitorSourceSnapshot):
     return {
       quality: 'insufficient',
       enoughForAi: false,
-      reason: 'Dados insuficientes para analise completa. O sistema nao conseguiu capturar posts e legendas publicas suficientes desse perfil.',
+      reason: 'Dados insuficientes para analise completa. O sistema nao conseguiu capturar posts, legendas ou transcripts publicos suficientes desse perfil.',
       stats
     };
   }
@@ -1083,7 +1238,7 @@ export function assessCompetitorDataQuality(snapshot: CompetitorSourceSnapshot):
     return {
       quality: 'partial',
       enoughForAi: false,
-      reason: `Dados insuficientes para analise completa. Foram capturados ${stats.posts} post(s), ${captions} legenda(s) utilizaveis e ${characters} caracteres de texto.`,
+      reason: `Dados insuficientes para analise completa. Foram capturados ${stats.posts} post(s), ${captions} legenda(s) utilizaveis, ${transcripts} transcript(s) e ${characters} caracteres de texto.`,
       stats
     };
   }
@@ -1117,7 +1272,7 @@ export function buildCompetitorCapturePayload(input: {
     hooks_detected: posts.map((post) => post.hookPattern).filter(Boolean),
     ctas_detected: posts.flatMap((post) => post.ctaPatterns).filter(Boolean),
     transcript_text: posts
-      .map((post) => normalizeText(post.accessibilityCaption))
+      .map((post) => normalizeText(post.transcriptText))
       .filter(Boolean),
     capture_notes: input.snapshot.captureNotes,
     posts_captured: input.snapshot.postsAnalyzed,
@@ -1156,8 +1311,12 @@ export function buildCompetitorPatternPayload(input: {
     pattern_summary: {
       cadenceLabel: input.facts.cadenceLabel,
       averageVideoDuration: input.facts.averageVideoDuration,
+      confidenceLevel: input.facts.confidenceLevel,
       visualHints: input.facts.visualHints,
       toneHints: input.facts.toneHints,
+      transcriptCount: input.facts.transcriptCount,
+      captionCount: input.facts.captionCount,
+      screenTextCount: input.facts.screenTextCount,
       topCaptions: input.facts.topCaptions,
       stats: input.assessment.stats,
       sourceNotes: input.snapshot.captureNotes
@@ -1234,6 +1393,14 @@ export async function captureCompetitorSources(
     );
   }
 
+  const postsWithTranscripts = deepCapture ? await enrichPostsWithTranscripts(instagramPosts, 10) : instagramPosts;
+  const transcriptCount = postsWithTranscripts.filter((post) => post.transcriptStatus === 'success' && normalizeText(post.transcriptText)).length;
+  if (deepCapture && transcriptCount) {
+    captureNotes.push(`Transcricoes executadas em ${Math.min(transcriptCount, 10)} reels da amostra.`);
+  } else if (deepCapture) {
+    captureNotes.push('Sem transcripts automaticos suficientes; a analise usou legenda e sinais visuais disponiveis.');
+  }
+
   const snapshot: CompetitorSourceSnapshot = {
     fetchedAt: new Date().toISOString(),
     instagram: instagram
@@ -1251,11 +1418,11 @@ export async function captureCompetitorSources(
         }
       : null,
     website,
-    postsAnalyzed: instagramPosts.length,
+    postsAnalyzed: postsWithTranscripts.length,
     reelsAnalyzed,
     feedAnalyzed,
     captureNotes,
-    topPosts: topPostsForSnapshot(instagramPosts)
+    topPosts: topPostsForSnapshot(postsWithTranscripts)
   };
 
   return {
@@ -1284,6 +1451,12 @@ export function buildManualCompetitorSnapshot(input: {
   const posts = topPostsForSnapshot(
     samples.map((sample, index) => {
       const normalized = normalizeWhitespace(sample);
+      const transcriptText = input.mode === 'script' ? normalized : '';
+      const transcriptStatus: CompetitorCapturedPost['transcriptStatus'] = input.mode === 'script' ? 'success' : 'missing';
+      const transcriptSource: CompetitorCapturedPost['transcriptSource'] = input.mode === 'script' ? 'manual' : 'none';
+      const transcriptConfidence = input.mode === 'script' ? 0.9 : null;
+      const transcriptError = input.mode === 'script' ? '' : 'Sem transcript para material colado como legenda.';
+      const screenTextLead = input.mode === 'script' ? firstTranscriptLine(normalized) : '';
 
       return {
         id: `manual-${index + 1}`,
@@ -1303,6 +1476,12 @@ export function buildManualCompetitorSnapshot(input: {
           durationSeconds: input.mode === 'script' ? 45 : null
         },
         accessibilityCaption: '',
+        transcriptText,
+        transcriptStatus,
+        transcriptSource,
+        transcriptConfidence,
+        transcriptError,
+        screenTextLead,
         hookPattern: detectHookPattern(normalized),
         ctaPatterns: detectCtaPatterns(normalized),
         storytellingPatterns: detectStorytellingPatterns(normalized)
@@ -1347,7 +1526,8 @@ function buildInsight(
   title: string,
   summary: string,
   rationale: string,
-  extra?: Partial<CompetitorInsight>
+  extra?: Partial<CompetitorInsight>,
+  facts?: CompetitorAnalysisFacts
 ): CompetitorInsight {
   return {
     id: buildInsightId(kind, `${title}-${summary}`),
@@ -1360,7 +1540,25 @@ function buildInsight(
     ctaType: extra?.ctaType ?? '',
     format: extra?.format ?? '',
     sample: extra?.sample ?? '',
-    sourceUrl: extra?.sourceUrl ?? ''
+    sourceUrl: extra?.sourceUrl ?? '',
+    confidenceLevel: normalizeConfidenceLevel(
+      extra?.confidenceLevel ?? (facts ? deriveInsightConfidenceLevel(facts, extra?.sourceUrl ?? '', summary, kind) : 'medium')
+    )
+  };
+}
+
+function hydrateCompetitorAnalysisConfidence(analysis: CompetitorAnalysis, facts: CompetitorAnalysisFacts): CompetitorAnalysis {
+  return {
+    ...analysis,
+    sections: analysis.sections.map((section) => ({
+      ...section,
+      items: section.items.map((item) => ({
+        ...item,
+        confidenceLevel: normalizeConfidenceLevel(
+          item.confidenceLevel ?? deriveInsightConfidenceLevel(facts, item.sourceUrl, item.summary, item.kind)
+        )
+      }))
+    }))
   };
 }
 
@@ -1497,113 +1695,22 @@ export function buildCompetitorAnalysisFallback(input: CompetitorAnalysisInput):
 
   const sections = [
     {
-      id: 'overview',
-      title: 'Visao geral da comunicacao',
-      description: 'Leitura objetiva do jeito que o perfil se posiciona e conversa.',
+      id: 'actions',
+      title: 'Sugestões práticas',
+      description: 'O que ja pode virar acao dentro da plataforma.',
       items: [
-        buildInsight('overview', 'Tom de voz', tone || 'direto e pratico', 'Sintetiza a forma como o perfil conversa repetidamente nas legendas e bio.', {
-          tags: facts.toneHints,
-          sample: snapshot.instagram?.bio ?? '',
-          sourceUrl: snapshot.instagram ? `https://www.instagram.com/${snapshot.instagram.handle}/` : ''
+        buildInsight('action', 'Enviar para Conteudo', `Gerar uma pauta sobre ${topTheme}, outra sobre ${secondTheme} e uma sequencia de stories com a mesma logica de ${hookPattern.toLowerCase()}.`, 'Transforma a leitura em pauta acionavel.', {
+          format: dominantFormat ? dominantFormatLabel : 'Reels',
+          confidenceLevel: facts.confidenceLevel === 'low' ? 'low' : 'medium'
         }),
-        buildInsight('overview', 'Posicionamento', positioning, 'Resume a proposta que fica mais evidente entre bio, site e temas recorrentes.', {
-          tags: competitor.tags,
-          sample: snapshot.website?.description || snapshot.instagram?.bio || competitor.notes,
-          sourceUrl: competitor.website || (snapshot.instagram ? `https://www.instagram.com/${snapshot.instagram.handle}/` : '')
-        }),
-        buildInsight('visual', 'Estilo visual aparente', visualStyle || 'sem volume suficiente para ler o estilo visual', 'Inferido pela mistura de formatos e pelo tipo de publicacao que domina o perfil.', {
-          format: dominantFormat ? dominantFormatLabel : '',
-          sourceUrl: topPost?.sourceUrl ?? ''
-        }),
-        buildInsight('overview', 'Publico aparente', audience, 'Estimativa baseada no nicho informado e nos temas mais recorrentes do perfil.', {
-          tags: facts.recurringThemes.slice(0, 4)
-        })
-      ]
-    },
-    {
-      id: 'engineering',
-      title: 'ENGENHARIA DE CONTEÚDO',
-      description: 'Leitura rapida do que sustenta a estrutura de publicacao do perfil.',
-      items: [
-        buildInsight('engineering', 'Duracao media dos videos', averageVideoDuration, facts.averageVideoDuration ? 'Média calculada a partir dos videos/reels capturados.' : 'Amostra sem duracao publica suficiente para calcular a media.', {
-          format: dominantFormat ? dominantFormatLabel : '',
-          sourceUrl: topPost?.sourceUrl ?? ''
-        }),
-        buildInsight('engineering', 'Frequencia de posts por semana', facts.cadenceLabel, 'Leitura do intervalo medio entre publicacoes capturadas.', {
-          sourceUrl: topPost?.sourceUrl ?? ''
-        }),
-        buildInsight('engineering', 'Frequencia de stories por dia', 'Nao observavel na captura publica.', 'Stories nao aparecem no feed aberto; use material manual ou referencia extra para fechar essa leitura.', {
-          sourceUrl: snapshot.instagram ? `https://www.instagram.com/${snapshot.instagram.handle}/` : ''
-        }),
-        buildInsight('engineering', 'Tipo de abertura mais comum', hookPattern, 'Padrao detectado nos inicios das legendas e chamadas que mais aparecem no feed.', {
-          hookType: hookPattern,
-          sample: facts.topCaptions[0] ?? '',
-          sourceUrl: topPost?.sourceUrl ?? ''
-        }),
-        buildInsight('engineering', 'Estrutura mais comum', storytelling, 'Resumo do arco narrativo que mais se repete nas publicacoes observadas.', {
-          tags: facts.storytellingPatterns,
-          sourceUrl: topPost?.sourceUrl ?? ''
-        }),
-        buildInsight('engineering', 'Tipo de CTA', ctaPattern, 'Mostra como o perfil normalmente tenta mover a audiencia para a proxima acao.', {
+        buildInsight('action', 'Enviar para Creator AI', `Pedir ao Creator AI ${dominantFormatLabel} com tom ${facts.toneHints[0] ?? 'direto'} e CTA de ${ctaPattern}.`, 'Ja sai pronto para virar prompt interno.', {
           ctaType: ctaPattern,
-          sample: facts.topCaptions[1] ?? '',
-          sourceUrl: topPost?.sourceUrl ?? ''
-        }),
-        buildInsight('engineering', 'Estilo de gravacao', describeRecordingStyle(facts, dominantFormat?.format), 'Inferido pela combinacao de formato dominante, tom e ritmo de publicacao.', {
-          format: dominantFormat ? dominantFormatLabel : '',
-          sourceUrl: topPost?.sourceUrl ?? ''
-        }),
-        buildInsight('engineering', 'Tipo de prova social', describeProofSocial(facts), 'Sinal de validacao mais aparente na amostra publica.', {
-          tags: facts.storytellingPatterns,
-          sourceUrl: topPost?.sourceUrl ?? ''
-        }),
-        buildInsight('engineering', 'Cenarios mais usados', 'Nao observavel na captura publica.', 'Cenarios dependem de imagem aberta, enquadramento ou referencia manual mais rica.', {
-          sourceUrl: snapshot.instagram ? `https://www.instagram.com/${snapshot.instagram.handle}/` : ''
-        }),
-        buildInsight('engineering', 'Formatos dominantes', dominantFormat ? `${dominantFormatLabel} lidera o mix com ${Math.round(dominantFormat.share * 100)}% das amostras analisadas.` : 'Nao houve volume suficiente para ler o mix de formatos.', 'Mostra onde o perfil concentra energia de publicacao.', {
-          format: dominantFormat ? dominantFormatLabel : '',
-          sourceUrl: topPost?.sourceUrl ?? ''
-        }),
-        buildInsight('engineering', 'Uso de texto na tela', describeTextOnScreen(facts, dominantFormat?.format), 'Sinal de estrutura visual e de retenção nas pecas capturadas.', {
-          format: dominantFormat ? dominantFormatLabel : '',
-          sourceUrl: topPost?.sourceUrl ?? ''
-        }),
-        buildInsight('engineering', 'Uso de legenda falada', describeSpokenCaption(facts, dominantFormat?.format), 'Sinal de fala guiada, narração ou leitura do roteiro.', {
-          format: dominantFormat ? dominantFormatLabel : '',
-          sourceUrl: topPost?.sourceUrl ?? ''
-        }),
-        buildInsight('engineering', 'Uso de trend', describeTrendUse(facts), 'Sinal de linguagem, formato e repertorio social que lembra trend.', {
-          tags: facts.hookPatterns,
-          sourceUrl: topPost?.sourceUrl ?? ''
-        })
-      ]
-    },
-    {
-      id: 'patterns',
-      title: 'Padrões de conteúdo',
-      description: 'O que aparece com mais frequencia no conteudo publicado.',
-      items: [
-        buildInsight('theme', 'Temas recorrentes', `Temas que mais se repetem: ${facts.recurringThemes.slice(0, 5).join(', ') || 'sem repeticao clara ainda'}.`, 'Ajuda a entender quais assuntos estruturam o repertorio do perfil.', {
-          tags: facts.recurringThemes.slice(0, 5),
-          sourceUrl: topPost?.sourceUrl ?? ''
-        }),
-        buildInsight('format', 'Formatos mais usados', dominantFormat ? `${dominantFormatLabel} lidera o mix com ${Math.round(dominantFormat.share * 100)}% das amostras analisadas.` : 'Nao houve volume suficiente para ler o mix de formatos.', 'Mostra onde o perfil concentra energia de publicacao.', {
-          format: dominantFormat ? dominantFormatLabel : '',
-          sourceUrl: topPost?.sourceUrl ?? ''
-        }),
-        buildInsight('hook', 'Tipo de abertura mais comum', hookPattern, 'Padrao detectado nos inicios das legendas e chamadas que mais aparecem no feed.', {
           hookType: hookPattern,
-          sample: facts.topCaptions[0] ?? '',
-          sourceUrl: topPost?.sourceUrl ?? ''
+          confidenceLevel: facts.confidenceLevel === 'low' ? 'low' : 'medium'
         }),
-        buildInsight('cta', 'CTA mais recorrente', ctaPattern, 'Mostra como o perfil normalmente tenta mover a audiencia para a proxima acao.', {
-          ctaType: ctaPattern,
-          sample: facts.topCaptions[1] ?? '',
-          sourceUrl: topPost?.sourceUrl ?? ''
-        }),
-        buildInsight('storytelling', 'Estrutura narrativa frequente', storytelling, 'Resume o padrao narrativo que mais se repete nas publicacoes observadas.', {
-          tags: facts.storytellingPatterns,
-          sourceUrl: topPost?.sourceUrl ?? ''
+        buildInsight('action', 'Salvar no banco', `Salvar ${hookPattern.toLowerCase()}, ${ctaPattern} e os temas ${topTheme} / ${secondTheme} como repertorio reutilizavel.`, 'Permite alimentar futuras geracoes com aprendizado reutilizavel.', {
+          tags: [topTheme, secondTheme, hookPattern, ctaPattern],
+          confidenceLevel: facts.confidenceLevel === 'low' ? 'low' : 'medium'
         })
       ]
     },
@@ -1616,41 +1723,184 @@ export function buildCompetitorAnalysisFallback(input: CompetitorAnalysisInput):
           hookType: hookPattern,
           format: dominantFormat ? dominantFormatLabel : 'Reels',
           sample: topPost?.captionLead ?? '',
-          sourceUrl: topPost?.sourceUrl ?? ''
+          sourceUrl: topPost?.sourceUrl ?? '',
+          confidenceLevel: facts.confidenceLevel === 'high' ? 'high' : 'medium'
         }),
         buildInsight('idea', 'Estruturas de roteiro', `Problema -> prova -> solucao -> CTA usando ${storytelling.toLowerCase()} como espinha dorsal.`, 'Entrega um esqueleto de roteiro pronto para gravacao.', {
           format: dominantFormat ? dominantFormatLabel : 'Reels',
-          sourceUrl: topPost?.sourceUrl ?? ''
+          sourceUrl: topPost?.sourceUrl ?? '',
+          confidenceLevel: facts.confidenceLevel === 'high' ? 'high' : 'medium'
         }),
         buildInsight('idea', 'Ideias de Reels', `Video vertical sobre ${topTheme} com gancho ${hookPattern.toLowerCase()} e CTA de ${ctaPattern}.`, 'Versao pratica do que pode virar video curto com mais aderencia ao padrao observado.', {
           hookType: hookPattern,
           ctaType: ctaPattern,
           format: 'Reels',
-          sourceUrl: topPost?.sourceUrl ?? ''
+          sourceUrl: topPost?.sourceUrl ?? '',
+          confidenceLevel: facts.confidenceLevel === 'high' ? 'high' : 'medium'
         }),
         buildInsight('idea', 'Ideias de Stories', `Sequencia de 3 stories: contexto, prova e CTA sobre ${secondTheme}.`, 'Ajuda a transformar o repertorio em sequencia gravavel e simples.', {
-          format: 'Stories'
+          format: 'Stories',
+          confidenceLevel: facts.confidenceLevel === 'medium' ? 'medium' : 'low'
         }),
         buildInsight('idea', 'Ideias de Carrossel', `Carrossel com capa de promessa forte e paginas internas mostrando ${topTheme}.`, 'Boa forma de aprofundar contexto sem perder retenção.', {
-          format: 'Carrossel'
+          format: 'Carrossel',
+          confidenceLevel: facts.confidenceLevel === 'medium' ? 'medium' : 'low'
         }),
         buildInsight('cta', 'CTAs', `Fechar com CTA de ${ctaPattern} depois de entregar prova ou valor.`, 'Mantem a logica de conversao observada, mas aplicada ao seu contexto.', {
           ctaType: ctaPattern,
-          format: dominantFormat ? dominantFormatLabel : ''
+          format: dominantFormat ? dominantFormatLabel : '',
+          confidenceLevel: facts.confidenceLevel === 'high' ? 'high' : 'medium'
         }),
         buildInsight('idea', 'Angulos de copy', `Dor + desejo + prova: transformar ${topTheme} em uma mensagem de conversao clara.`, 'Organiza a mensagem em um angulo de copia que o time consegue repetir.', {
-          tags: [topTheme, secondTheme]
+          tags: [topTheme, secondTheme],
+          confidenceLevel: facts.confidenceLevel === 'medium' ? 'medium' : 'low'
         }),
         buildInsight('storytelling', 'Storytelling', `Mini historia pessoal ou antes/depois conectando ${storytelling} e ${secondTheme}.`, 'Aproveita a narrativa dominante do perfil em um formato mais gravavel.', {
           tags: facts.storytellingPatterns,
           format: dominantFormat ? dominantFormatLabel : '',
-          sourceUrl: topPost?.sourceUrl ?? ''
+          sourceUrl: topPost?.sourceUrl ?? '',
+          confidenceLevel: facts.confidenceLevel === 'high' ? 'high' : 'medium'
         }),
         buildInsight('idea', 'Ofertas', `Oferta curta com beneficio claro, prova social e urgencia leve para ${topTheme}.`, 'Traduz o repertorio em um angulo comercial util.', {
-          tags: [topTheme, ctaPattern]
+          tags: [topTheme, ctaPattern],
+          confidenceLevel: facts.confidenceLevel === 'medium' ? 'medium' : 'low'
         }),
         buildInsight('adaptation', 'Provas sociais', describeProofSocial(facts), 'Mostra como a validacao pode entrar sem copiar a peca original.', {
-          tags: facts.storytellingPatterns
+          tags: facts.storytellingPatterns,
+          confidenceLevel: facts.confidenceLevel === 'medium' ? 'medium' : 'low'
+        })
+      ]
+    },
+    {
+      id: 'engineering',
+      title: 'ENGENHARIA DE CONTEÚDO',
+      description: 'Leitura rapida do que sustenta a estrutura de publicacao do perfil.',
+      items: [
+        buildInsight('engineering', 'Duracao media dos videos', averageVideoDuration, facts.averageVideoDuration ? 'Média calculada a partir dos videos/reels capturados.' : 'Amostra sem duracao publica suficiente para calcular a media.', {
+          format: dominantFormat ? dominantFormatLabel : '',
+          sourceUrl: topPost?.sourceUrl ?? '',
+          confidenceLevel: facts.averageVideoDuration ? 'medium' : 'low'
+        }),
+        buildInsight('engineering', 'Frequencia de posts por semana', facts.cadenceLabel, 'Leitura do intervalo medio entre publicacoes capturadas.', {
+          sourceUrl: topPost?.sourceUrl ?? '',
+          confidenceLevel: snapshot.postsAnalyzed ? 'medium' : 'low'
+        }),
+        buildInsight('engineering', 'Frequencia de stories por dia', 'Nao observavel na captura publica.', 'Stories nao aparecem no feed aberto; use material manual ou referencia extra para fechar essa leitura.', {
+          sourceUrl: snapshot.instagram ? `https://www.instagram.com/${snapshot.instagram.handle}/` : '',
+          confidenceLevel: 'low'
+        }),
+        buildInsight('engineering', 'Tipo de abertura mais comum', hookPattern, 'Padrao detectado nos inicios das legendas e chamadas que mais aparecem no feed.', {
+          hookType: hookPattern,
+          sample: facts.topCaptions[0] ?? '',
+          sourceUrl: topPost?.sourceUrl ?? '',
+          confidenceLevel: facts.confidenceLevel === 'high' ? 'high' : 'medium'
+        }),
+        buildInsight('engineering', 'Estrutura mais comum', storytelling, 'Resumo do arco narrativo que mais se repete nas publicacoes observadas.', {
+          tags: facts.storytellingPatterns,
+          sourceUrl: topPost?.sourceUrl ?? '',
+          confidenceLevel: facts.confidenceLevel === 'high' ? 'high' : 'medium'
+        }),
+        buildInsight('engineering', 'Tipo de CTA', ctaPattern, 'Mostra como o perfil normalmente tenta mover a audiencia para a proxima acao.', {
+          ctaType: ctaPattern,
+          sample: facts.topCaptions[1] ?? '',
+          sourceUrl: topPost?.sourceUrl ?? '',
+          confidenceLevel: facts.confidenceLevel === 'high' ? 'high' : 'medium'
+        }),
+        buildInsight('engineering', 'Estilo de gravacao', describeRecordingStyle(facts, dominantFormat?.format), 'Inferido pela combinacao de formato dominante, tom e ritmo de publicacao.', {
+          format: dominantFormat ? dominantFormatLabel : '',
+          sourceUrl: topPost?.sourceUrl ?? '',
+          confidenceLevel: dominantFormat ? 'medium' : 'low'
+        }),
+        buildInsight('engineering', 'Tipo de prova social', describeProofSocial(facts), 'Sinal de validacao mais aparente na amostra publica.', {
+          tags: facts.storytellingPatterns,
+          sourceUrl: topPost?.sourceUrl ?? '',
+          confidenceLevel: facts.storytellingPatterns.length ? 'medium' : 'low'
+        }),
+        buildInsight('engineering', 'Cenarios mais usados', 'Nao observavel na captura publica.', 'Cenarios dependem de imagem aberta, enquadramento ou referencia manual mais rica.', {
+          sourceUrl: snapshot.instagram ? `https://www.instagram.com/${snapshot.instagram.handle}/` : '',
+          confidenceLevel: 'low'
+        }),
+        buildInsight('engineering', 'Formatos dominantes', dominantFormat ? `${dominantFormatLabel} lidera o mix com ${Math.round(dominantFormat.share * 100)}% das amostras analisadas.` : 'Nao houve volume suficiente para ler o mix de formatos.', 'Mostra onde o perfil concentra energia de publicacao.', {
+          format: dominantFormat ? dominantFormatLabel : '',
+          sourceUrl: topPost?.sourceUrl ?? '',
+          confidenceLevel: dominantFormat ? 'medium' : 'low'
+        }),
+        buildInsight('engineering', 'Uso de texto na tela', describeTextOnScreen(facts, dominantFormat?.format), 'Sinal de estrutura visual e de retenção nas pecas capturadas.', {
+          format: dominantFormat ? dominantFormatLabel : '',
+          sourceUrl: topPost?.sourceUrl ?? '',
+          confidenceLevel: facts.screenTextCount ? 'medium' : 'low'
+        }),
+        buildInsight('engineering', 'Uso de legenda falada', describeSpokenCaption(facts, dominantFormat?.format), 'Sinal de fala guiada, narração ou leitura do roteiro.', {
+          format: dominantFormat ? dominantFormatLabel : '',
+          sourceUrl: topPost?.sourceUrl ?? '',
+          confidenceLevel: facts.transcriptCount ? 'high' : 'low'
+        }),
+        buildInsight('engineering', 'Uso de trend', describeTrendUse(facts), 'Sinal de linguagem, formato e repertorio social que lembra trend.', {
+          tags: facts.hookPatterns,
+          sourceUrl: topPost?.sourceUrl ?? '',
+          confidenceLevel: facts.toneHints.includes('humor/trend') ? 'medium' : 'low'
+        })
+      ]
+    },
+    {
+      id: 'overview',
+      title: 'Visao geral da comunicacao',
+      description: 'Leitura objetiva do jeito que o perfil se posiciona e conversa.',
+      items: [
+        buildInsight('overview', 'Tom de voz', tone || 'direto e pratico', 'Sintetiza a forma como o perfil conversa repetidamente nas legendas e bio.', {
+          tags: facts.toneHints,
+          sample: snapshot.instagram?.bio ?? '',
+          sourceUrl: snapshot.instagram ? `https://www.instagram.com/${snapshot.instagram.handle}/` : '',
+          confidenceLevel: facts.confidenceLevel === 'high' ? 'high' : 'medium'
+        }),
+        buildInsight('overview', 'Posicionamento', positioning, 'Resume a proposta que fica mais evidente entre bio, site e temas recorrentes.', {
+          tags: competitor.tags,
+          sample: snapshot.website?.description || snapshot.instagram?.bio || competitor.notes,
+          sourceUrl: competitor.website || (snapshot.instagram ? `https://www.instagram.com/${snapshot.instagram.handle}/` : ''),
+          confidenceLevel: facts.recurringThemes.length ? 'medium' : 'low'
+        }),
+        buildInsight('visual', 'Estilo visual aparente', visualStyle || 'sem volume suficiente para ler o estilo visual', 'Inferido pela mistura de formatos e pelo tipo de publicacao que domina o perfil.', {
+          format: dominantFormat ? dominantFormatLabel : '',
+          sourceUrl: topPost?.sourceUrl ?? '',
+          confidenceLevel: dominantFormat ? 'medium' : 'low'
+        }),
+        buildInsight('overview', 'Publico aparente', audience, 'Estimativa baseada no nicho informado e nos temas mais recorrentes do perfil.', {
+          tags: facts.recurringThemes.slice(0, 4),
+          confidenceLevel: facts.recurringThemes.length ? 'medium' : 'low'
+        })
+      ]
+    },
+    {
+      id: 'patterns',
+      title: 'Padrões de conteúdo',
+      description: 'O que aparece com mais frequencia no conteudo publicado.',
+      items: [
+        buildInsight('theme', 'Temas recorrentes', `Temas que mais se repetem: ${facts.recurringThemes.slice(0, 5).join(', ') || 'sem repeticao clara ainda'}.`, 'Ajuda a entender quais assuntos estruturam o repertorio do perfil.', {
+          tags: facts.recurringThemes.slice(0, 5),
+          sourceUrl: topPost?.sourceUrl ?? '',
+          confidenceLevel: facts.recurringThemes.length ? 'medium' : 'low'
+        }),
+        buildInsight('format', 'Formatos mais usados', dominantFormat ? `${dominantFormatLabel} lidera o mix com ${Math.round(dominantFormat.share * 100)}% das amostras analisadas.` : 'Nao houve volume suficiente para ler o mix de formatos.', 'Mostra onde o perfil concentra energia de publicacao.', {
+          format: dominantFormat ? dominantFormatLabel : '',
+          sourceUrl: topPost?.sourceUrl ?? '',
+          confidenceLevel: dominantFormat ? 'medium' : 'low'
+        }),
+        buildInsight('hook', 'Tipo de abertura mais comum', hookPattern, 'Padrao detectado nos inicios das legendas e chamadas que mais aparecem no feed.', {
+          hookType: hookPattern,
+          sample: facts.topCaptions[0] ?? '',
+          sourceUrl: topPost?.sourceUrl ?? '',
+          confidenceLevel: facts.confidenceLevel === 'high' ? 'high' : 'medium'
+        }),
+        buildInsight('cta', 'CTA mais recorrente', ctaPattern, 'Mostra como o perfil normalmente tenta mover a audiencia para a proxima acao.', {
+          ctaType: ctaPattern,
+          sample: facts.topCaptions[1] ?? '',
+          sourceUrl: topPost?.sourceUrl ?? '',
+          confidenceLevel: facts.confidenceLevel === 'high' ? 'high' : 'medium'
+        }),
+        buildInsight('storytelling', 'Estrutura narrativa frequente', storytelling, 'Resume o padrao narrativo que mais se repete nas publicacoes observadas.', {
+          tags: facts.storytellingPatterns,
+          sourceUrl: topPost?.sourceUrl ?? '',
+          confidenceLevel: facts.storytellingPatterns.length ? 'medium' : 'low'
         })
       ]
     },
@@ -1661,27 +1911,12 @@ export function buildCompetitorAnalysisFallback(input: CompetitorAnalysisInput):
       items: [
         buildInsight('adaptation', 'Vale adaptar', `A combinacao de ${topTheme} com ${hookPattern.toLowerCase()} e ${dominantFormatLabel.toLowerCase()} tende a ser a melhor referencia para adaptar.`, 'Mostra o nucleo que parece mais forte no perfil.', {
           tags: [topTheme, hookPattern],
-          sourceUrl: topPost?.sourceUrl ?? ''
+          sourceUrl: topPost?.sourceUrl ?? '',
+          confidenceLevel: dominantFormat ? 'medium' : 'low'
         }),
         buildInsight('adaptation', 'Nao vale copiar', 'Evite reproduzir legenda, framing ou visual exatamente iguais. O valor esta no angulo e na estrutura, nao na copia literal.', 'Mantem a referencia util sem descaracterizar a marca.', {
-          tags: ['adaptacao', 'originalidade']
-        })
-      ]
-    },
-    {
-      id: 'actions',
-      title: 'Sugestões práticas',
-      description: 'O que ja pode virar acao dentro da plataforma.',
-      items: [
-        buildInsight('action', 'Enviar para Conteudo', `Gerar uma pauta sobre ${topTheme}, outra sobre ${secondTheme} e uma sequencia de stories com a mesma logica de ${hookPattern.toLowerCase()}.`, 'Transforma a leitura em pauta acionavel.', {
-          format: dominantFormat ? dominantFormatLabel : 'Reels'
-        }),
-        buildInsight('action', 'Enviar para Creator AI', `Pedir ao Creator AI ${dominantFormatLabel} com tom ${facts.toneHints[0] ?? 'direto'} e CTA de ${ctaPattern}.`, 'Ja sai pronto para virar prompt interno.', {
-          ctaType: ctaPattern,
-          hookType: hookPattern
-        }),
-        buildInsight('action', 'Salvar no banco', `Salvar ${hookPattern.toLowerCase()}, ${ctaPattern} e os temas ${topTheme} / ${secondTheme} como repertorio reutilizavel.`, 'Permite alimentar futuras geracoes com aprendizado reutilizavel.', {
-          tags: [topTheme, secondTheme, hookPattern, ctaPattern]
+          tags: ['adaptacao', 'originalidade'],
+          confidenceLevel: 'low'
         })
       ]
     }
@@ -1691,7 +1926,7 @@ export function buildCompetitorAnalysisFallback(input: CompetitorAnalysisInput):
   const ideasItems = sectionById('ideas');
   const actionItems = sectionById('actions');
 
-  return {
+  return hydrateCompetitorAnalysisConfidence({
     generatedAt: new Date().toISOString(),
     model: 'fallback-logic',
     overview: {
@@ -1714,7 +1949,7 @@ export function buildCompetitorAnalysisFallback(input: CompetitorAnalysisInput):
         .concat(actionItems.slice(2, 3).map((item) => item.summary))
     },
     sourceSnapshot: snapshot
-  };
+  }, facts);
 }
 
 export function summarizeCompetitorAnalysisInput(input: CompetitorAnalysisInput) {
@@ -1745,11 +1980,20 @@ export function summarizeCompetitorAnalysisInput(input: CompetitorAnalysisInput)
       toneHints: facts.toneHints,
       visualHints: facts.visualHints,
       cadenceLabel: facts.cadenceLabel,
+      transcriptCount: facts.transcriptCount,
+      captionCount: facts.captionCount,
+      screenTextCount: facts.screenTextCount,
+      confidenceLevel: facts.confidenceLevel,
       topAngles: facts.topAngles
     },
     topSamples: snapshot.topPosts.slice(0, 6).map((post) => ({
       format: formatShareLabel(post.format),
       captionLead: post.captionLead,
+      transcriptText: post.transcriptText,
+      transcriptStatus: post.transcriptStatus,
+      transcriptSource: post.transcriptSource,
+      transcriptConfidence: post.transcriptConfidence,
+      screenTextLead: post.screenTextLead,
       hookPattern: post.hookPattern,
       ctaPatterns: post.ctaPatterns,
       storytellingPatterns: post.storytellingPatterns,

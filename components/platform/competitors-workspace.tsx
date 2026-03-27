@@ -5,10 +5,13 @@ import {
   AlertCircle,
   BookOpen,
   Brain,
+  Copy,
+  ChevronDown,
   ExternalLink,
   Globe,
   Heart,
   Instagram,
+  Eye,
   Loader2,
   Pencil,
   Plus,
@@ -35,8 +38,11 @@ import type {
   CompetitorGeneratedContentItem,
   CompetitorGeneratedContentPack,
   CompetitorInsight,
+  CompetitorCapturedPost,
+  CompetitorConfidenceLevel,
   CompetitorReferenceCategory,
   CompetitorRecord,
+  CompetitorSourceSnapshot,
   CompetitorType,
   ContentReferenceRecord
 } from '@/types/competitor-intelligence';
@@ -63,6 +69,19 @@ type ReferenceFormState = {
   notes: string;
   liked: boolean;
 };
+
+type SourcePreviewState = {
+  title: string;
+  sourceUrl: string;
+  thumbnailUrl: string;
+  caption: string;
+  transcriptText: string;
+  transcriptStatus: CompetitorCapturedPost['transcriptStatus'];
+  screenTextLead: string;
+  confidenceLevel: CompetitorConfidenceLevel;
+  format: string;
+  postedAt: string;
+} | null;
 
 const TYPE_LABELS: Record<CompetitorType, string> = {
   competitor: 'Concorrente',
@@ -186,6 +205,81 @@ function formatDateLabel(value: string) {
     hour: '2-digit',
     minute: '2-digit'
   }).format(parsed);
+}
+
+function confidenceBadgeLabel(level: CompetitorConfidenceLevel) {
+  return {
+    high: 'Alta confiança',
+    medium: 'Confiança média',
+    low: 'Baixa confiança'
+  }[level];
+}
+
+function confidenceBadgeClass(level: CompetitorConfidenceLevel) {
+  return {
+    high: 'border-emerald-200 bg-emerald-50 text-emerald-700',
+    medium: 'border-amber-200 bg-amber-50 text-amber-700',
+    low: 'border-zinc-200 bg-zinc-50 text-zinc-600'
+  }[level];
+}
+
+function confidenceDotClass(level: CompetitorConfidenceLevel) {
+  return {
+    high: 'bg-emerald-500',
+    medium: 'bg-amber-500',
+    low: 'bg-zinc-400'
+  }[level];
+}
+
+function deriveConfidenceFromPost(post?: CompetitorCapturedPost | null): CompetitorConfidenceLevel {
+  if (!post) {
+    return 'low';
+  }
+
+  if (post.transcriptStatus === 'success' && post.transcriptText.trim()) {
+    return 'high';
+  }
+
+  if (post.caption.trim() || post.captionLead.trim() || post.screenTextLead.trim()) {
+    return 'medium';
+  }
+
+  return 'low';
+}
+
+function findSourcePost(snapshot: CompetitorSourceSnapshot | null | undefined, sourceUrl: string) {
+  if (!snapshot || !sourceUrl) {
+    return null;
+  }
+
+  return snapshot.topPosts.find((post) => post.sourceUrl === sourceUrl) ?? null;
+}
+
+function buildSourcePreview(
+  snapshot: CompetitorSourceSnapshot | null | undefined,
+  sourceUrl: string,
+  fallbackTitle: string
+) {
+  const post = findSourcePost(snapshot, sourceUrl);
+
+  if (!post) {
+    return null;
+  }
+
+  const transcriptText = post.transcriptStatus === 'success' && post.transcriptText.trim() ? post.transcriptText : '';
+
+  return {
+    title: fallbackTitle,
+    sourceUrl,
+    thumbnailUrl: post.thumbnailUrl || post.mediaUrl || '',
+    caption: post.caption || post.captionLead || 'Sem legenda publicada.',
+    transcriptText: transcriptText || 'Sem transcript.',
+    transcriptStatus: post.transcriptStatus,
+    screenTextLead: post.screenTextLead || 'Sem texto na tela detectado.',
+    confidenceLevel: deriveConfidenceFromPost(post),
+    format: post.format,
+    postedAt: post.postedAt
+  };
 }
 
 function formatReferenceCategoryLabel(value: string) {
@@ -776,12 +870,14 @@ function ManualCaptureModal({
 
 function InsightCard({
   insight,
-  saved,
-  onToggleSave
+  onToggleSave,
+  onViewSource,
+  saveable = false
 }: {
   insight: CompetitorInsight;
-  saved: boolean;
-  onToggleSave: () => void;
+  onToggleSave?: () => void;
+  onViewSource?: () => void;
+  saveable?: boolean;
 }) {
   return (
     <div className="rounded-2xl border border-zinc-200 bg-white p-4">
@@ -789,6 +885,10 @@ function InsightCard({
         <div className="flex-1 space-y-2">
           <div className="flex flex-wrap items-center gap-2">
             <p className="text-sm font-semibold text-zinc-900">{insight.title}</p>
+            <span className={cn('inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-medium', confidenceBadgeClass(insight.confidenceLevel))}>
+              <span className={cn('h-1.5 w-1.5 rounded-full', confidenceDotClass(insight.confidenceLevel))} />
+              {confidenceBadgeLabel(insight.confidenceLevel)}
+            </span>
             {insight.format ? (
               <span className="rounded-full border border-zinc-200 bg-zinc-50 px-2 py-0.5 text-[10px] font-medium text-zinc-500">
                 {insight.format}
@@ -818,27 +918,24 @@ function InsightCard({
                 {tag}
               </span>
             ))}
-            {insight.sourceUrl ? (
-              <a href={insight.sourceUrl} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-zinc-500 hover:text-zinc-800">
-                Ver origem <ExternalLink className="h-3 w-3" />
-              </a>
+            {onViewSource && insight.sourceUrl ? (
+              <button type="button" onClick={onViewSource} className="inline-flex items-center gap-1 text-zinc-500 hover:text-zinc-800">
+                Ver origem <Eye className="h-3 w-3" />
+              </button>
             ) : null}
           </div>
         </div>
 
-        <button
-          type="button"
-          onClick={onToggleSave}
-          className={cn(
-            'rounded-full border p-2 transition',
-            saved
-              ? 'border-pink-200 bg-pink-50 text-pink-600'
-              : 'border-zinc-200 bg-white text-zinc-400 hover:text-pink-500'
-          )}
-          title={saved ? 'Remover do banco de referencias' : 'Salvar no banco de referencias'}
-        >
-          <Heart className={cn('h-4 w-4', saved && 'fill-current')} />
-        </button>
+        {saveable && onToggleSave ? (
+          <button
+            type="button"
+            onClick={onToggleSave}
+            className="rounded-full border border-pink-200 bg-pink-50 p-2 text-pink-600 transition hover:bg-pink-100"
+            title="Salvar no banco de referencias"
+          >
+            <Heart className="h-4 w-4 fill-current" />
+          </button>
+        ) : null}
       </div>
     </div>
   );
@@ -847,11 +944,15 @@ function InsightCard({
 function GeneratedContentCard({
   item,
   saved,
-  onToggleSave
+  onToggleSave,
+  onCopy,
+  onViewSource
 }: {
   item: CompetitorGeneratedContentItem;
   saved: boolean;
   onToggleSave: () => void;
+  onCopy: () => void;
+  onViewSource: () => void;
 }) {
   return (
     <div className="rounded-2xl border border-zinc-200 bg-white p-4">
@@ -859,6 +960,10 @@ function GeneratedContentCard({
         <div className="flex-1 space-y-2">
           <div className="flex flex-wrap items-center gap-2">
             <p className="text-sm font-semibold text-zinc-900">{item.title}</p>
+            <span className={cn('inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-medium', confidenceBadgeClass(item.confidenceLevel))}>
+              <span className={cn('h-1.5 w-1.5 rounded-full', confidenceDotClass(item.confidenceLevel))} />
+              {confidenceBadgeLabel(item.confidenceLevel)}
+            </span>
             <span className="rounded-full border border-zinc-200 bg-zinc-50 px-2 py-0.5 text-[10px] font-medium text-zinc-500">
               {formatReferenceCategoryLabel(item.saveCategory)}
             </span>
@@ -888,6 +993,11 @@ function GeneratedContentCard({
             {item.hookType ? <span>Gancho: {item.hookType}</span> : null}
             {item.ctaType ? <span>CTA: {item.ctaType}</span> : null}
             {item.sample ? <span className="text-zinc-500">Exemplo: {item.sample}</span> : null}
+            {item.sourceUrl ? (
+              <button type="button" onClick={onViewSource} className="inline-flex items-center gap-1 text-zinc-500 hover:text-zinc-800">
+                Ver origem <Eye className="h-3 w-3" />
+              </button>
+            ) : null}
           </div>
 
           <div className="flex flex-wrap gap-1.5">
@@ -899,19 +1009,120 @@ function GeneratedContentCard({
           </div>
         </div>
 
-        <button
-          type="button"
-          onClick={onToggleSave}
-          className={cn(
-            'rounded-full border p-2 transition',
-            saved
-              ? 'border-pink-200 bg-pink-50 text-pink-600'
-              : 'border-zinc-200 bg-white text-zinc-400 hover:text-pink-500'
-          )}
-          title={saved ? 'Remover do banco de referencias' : 'Salvar no banco de referencias'}
-        >
-          <Heart className={cn('h-4 w-4', saved && 'fill-current')} />
-        </button>
+        <div className="flex flex-col gap-2">
+          {['hook', 'cta', 'structure'].includes(item.kind) ? (
+            <button
+              type="button"
+              onClick={onCopy}
+              className="rounded-full border border-zinc-200 bg-white p-2 text-zinc-400 transition hover:text-zinc-800"
+              title="Copiar"
+            >
+              <Copy className="h-4 w-4" />
+            </button>
+          ) : null}
+          <button
+            type="button"
+            onClick={onToggleSave}
+            className={cn(
+              'rounded-full border p-2 transition',
+              saved
+                ? 'border-pink-200 bg-pink-50 text-pink-600'
+                : 'border-zinc-200 bg-white text-zinc-400 hover:text-pink-500'
+            )}
+            title={saved ? 'Remover do banco de referencias' : 'Salvar no banco de referencias'}
+          >
+            <Heart className={cn('h-4 w-4', saved && 'fill-current')} />
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function SourcePreviewModal({
+  preview,
+  onClose
+}: {
+  preview: SourcePreviewState;
+  onClose: () => void;
+}) {
+  if (!preview) {
+    return null;
+  }
+
+  return (
+    <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/55 p-4 backdrop-blur-sm">
+      <div className="max-h-[90vh] w-full max-w-3xl overflow-y-auto rounded-3xl bg-white shadow-2xl">
+        <div className="flex items-start justify-between border-b border-zinc-100 px-6 py-5">
+          <div className="space-y-1">
+            <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-zinc-400">Ver origem</p>
+            <h3 className="text-base font-semibold text-zinc-900">{preview.title}</h3>
+            <div className="flex flex-wrap items-center gap-2 text-[11px] text-zinc-400">
+              <span className={cn('inline-flex items-center gap-1 rounded-full border px-2 py-0.5 font-medium', confidenceBadgeClass(preview.confidenceLevel))}>
+                <span className={cn('h-1.5 w-1.5 rounded-full', confidenceDotClass(preview.confidenceLevel))} />
+                {confidenceBadgeLabel(preview.confidenceLevel)}
+              </span>
+              <span>{preview.format}</span>
+              <span>{formatDateLabel(preview.postedAt)}</span>
+              <span>{preview.transcriptStatus === 'success' ? 'Com transcript' : 'Sem transcript'}</span>
+            </div>
+          </div>
+          <button onClick={onClose} className="text-zinc-400 transition hover:text-zinc-600">
+            <X className="h-5 w-5" />
+          </button>
+        </div>
+
+        <div className="grid gap-4 p-6 lg:grid-cols-[0.92fr_1.08fr]">
+          <div className="space-y-3">
+            <div className="overflow-hidden rounded-2xl border border-zinc-200 bg-zinc-50">
+              {preview.thumbnailUrl ? (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img src={preview.thumbnailUrl} alt={preview.title} className="h-full w-full object-cover" />
+              ) : (
+                <div className="flex min-h-56 items-center justify-center p-10 text-center text-sm text-zinc-400">
+                  Sem thumbnail disponível
+                </div>
+              )}
+            </div>
+            <div className="rounded-2xl border border-zinc-200 bg-zinc-50 p-4 text-xs leading-relaxed text-zinc-500">
+              <p className="font-semibold text-zinc-700">Legenda</p>
+              <p className="mt-2 whitespace-pre-wrap text-zinc-600">{preview.caption}</p>
+            </div>
+          </div>
+
+          <div className="space-y-3">
+            <div className="rounded-2xl border border-zinc-200 bg-white p-4">
+              <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-zinc-400">Trecho de transcript</p>
+              <p className="mt-2 whitespace-pre-wrap text-sm leading-relaxed text-zinc-700">{preview.transcriptText}</p>
+            </div>
+            <div className="rounded-2xl border border-zinc-200 bg-white p-4">
+              <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-zinc-400">Primeiro texto detectado</p>
+              <p className="mt-2 whitespace-pre-wrap text-sm leading-relaxed text-zinc-700">{preview.screenTextLead}</p>
+            </div>
+            <div className="rounded-2xl border border-zinc-200 bg-zinc-50 p-4 text-xs leading-relaxed text-zinc-500">
+              <p className="font-semibold text-zinc-700">Observação</p>
+              <p className="mt-2">
+                Se a transcrição estiver marcada como sem transcript, o sistema não inventou falas. Ele está te mostrando apenas o que foi capturado de
+                verdade.
+              </p>
+            </div>
+            <div className="flex justify-end gap-2 pt-1">
+              <Button type="button" variant="outline" onClick={onClose}>
+                Fechar
+              </Button>
+              {preview.sourceUrl ? (
+                <a
+                  href={preview.sourceUrl}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="inline-flex h-9 items-center justify-center gap-2 rounded-xl border border-zinc-200 bg-white px-4 text-[13px] font-medium text-zinc-900 transition hover:bg-zinc-50"
+                >
+                  Abrir origem <ExternalLink className="h-4 w-4" />
+                </a>
+              ) : null}
+            </div>
+          </div>
+        </div>
       </div>
     </div>
   );
@@ -946,6 +1157,7 @@ function CompetitorDetailModal({
   const [generatingContent, setGeneratingContent] = useState(false);
   const [generatedContent, setGeneratedContent] = useState<CompetitorGeneratedContentPack | null>(null);
   const [referenceFilter, setReferenceFilter] = useState<'all' | 'liked'>('all');
+  const [sourcePreview, setSourcePreview] = useState<SourcePreviewState>(null);
 
   const competitorReferences = useMemo(
     () => references.filter((reference) => reference.competitorId === competitor.id),
@@ -954,10 +1166,6 @@ function CompetitorDetailModal({
   const filteredReferences = useMemo(
     () => (referenceFilter === 'liked' ? competitorReferences.filter((reference) => reference.liked) : competitorReferences),
     [competitorReferences, referenceFilter]
-  );
-  const savedInsightIds = useMemo(
-    () => new Set(references.filter((reference) => reference.liked).map((reference) => reference.sourceInsightId).filter(Boolean)),
-    [references]
   );
   const savedGeneratedContentIds = useMemo(
     () =>
@@ -972,6 +1180,7 @@ function CompetitorDetailModal({
   async function handleGenerateAnalysis() {
     setGeneratingAnalysis(true);
     setGeneratedContent(null);
+    setSourcePreview(null);
     try {
       const response = await fetch(`/api/workspaces/${workspace}/competitors/${competitor.id}/analyze`, {
         method: 'POST'
@@ -1003,6 +1212,7 @@ function CompetitorDetailModal({
     }
 
     setGeneratingContent(true);
+    setSourcePreview(null);
     try {
       const pack = buildCompetitorContentIdeas(analysis, competitor);
       setGeneratedContent(pack);
@@ -1086,6 +1296,39 @@ function CompetitorDetailModal({
     competitor.analysisStatus === 'running' ||
     competitor.analysisStatus === 'capturing' ||
     competitor.analysisStatus === 'processing';
+
+  const actionInsights = analysis?.sections.find((section) => section.id === 'actions')?.items ?? [];
+  const engineeringInsights = analysis?.sections.find((section) => section.id === 'engineering')?.items ?? [];
+  const patternInsights = analysis?.sections.find((section) => section.id === 'patterns')?.items ?? [];
+  const overviewInsights = analysis?.sections.find((section) => section.id === 'overview')?.items ?? [];
+  const adaptationInsights = analysis?.sections.find((section) => section.id === 'adaptation')?.items ?? [];
+  const overallConfidence = sourceSnapshot
+    ? sourceSnapshot.topPosts.some((post) => post.transcriptStatus === 'success' && post.transcriptText.trim())
+      ? 'high'
+      : sourceSnapshot.topPosts.some((post) => post.caption.trim() || post.captionLead.trim() || post.screenTextLead.trim())
+        ? 'medium'
+        : 'low'
+    : 'low';
+
+  function openSourcePreview(sourceUrl: string, fallbackTitle: string) {
+    if (!sourceSnapshot || !sourceUrl) {
+      return;
+    }
+
+    const preview = buildSourcePreview(sourceSnapshot, sourceUrl, fallbackTitle);
+    if (preview) {
+      setSourcePreview(preview);
+    }
+  }
+
+  async function copyText(value: string) {
+    try {
+      await navigator.clipboard.writeText(value);
+      toast.success('Texto copiado.');
+    } catch {
+      toast.error('Nao foi possivel copiar o texto.');
+    }
+  }
 
   return (
     <>
@@ -1320,117 +1563,126 @@ function CompetitorDetailModal({
 
                 {sourceSnapshot && !isAnalyzing ? (
                   <>
-                    <div className="grid gap-4 xl:grid-cols-[1.1fr_0.9fr]">
-                      {analysis ? (
-                        <Card className="rounded-2xl border-zinc-200">
-                          <CardContent className="space-y-4 p-5">
-                            <div className="flex flex-wrap items-center justify-between gap-2">
-                              <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-zinc-400">Visao geral</p>
-                              <span className="text-[11px] text-zinc-400">Atualizada em {formatDateLabel(analysis.generatedAt)}</span>
-                            </div>
-                            <div className="grid gap-4 sm:grid-cols-2">
-                              <div>
-                                <p className="text-[11px] text-zinc-400">Tom de voz</p>
-                                <p className="mt-1 text-sm text-zinc-900">{analysis.overview.toneOfVoice}</p>
-                              </div>
-                              <div>
-                                <p className="text-[11px] text-zinc-400">Publico aparente</p>
-                                <p className="mt-1 text-sm text-zinc-900">{analysis.overview.apparentAudience}</p>
-                              </div>
-                              <div className="sm:col-span-2">
-                                <p className="text-[11px] text-zinc-400">Posicionamento</p>
-                                <p className="mt-1 text-sm text-zinc-900">{analysis.overview.positioning}</p>
-                              </div>
-                              <div className="sm:col-span-2">
-                                <p className="text-[11px] text-zinc-400">Estilo visual</p>
-                                <p className="mt-1 text-sm text-zinc-900">{analysis.overview.visualStyle}</p>
-                              </div>
-                            </div>
-                          </CardContent>
-                        </Card>
-                      ) : (
-                        <Card className="rounded-2xl border-zinc-200">
-                          <CardContent className="space-y-4 p-5">
-                            <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-zinc-400">Leitura parcial</p>
-                            <p className="text-sm leading-relaxed text-zinc-700">
-                              A captura ja foi persistida e os sinais basicos foram processados, mas a analise final por IA ficou bloqueada porque o volume de posts/legendas ainda nao sustenta uma leitura confiavel.
-                            </p>
-                            <div className="rounded-2xl border border-zinc-200 bg-zinc-50 p-4 text-xs leading-relaxed text-zinc-500">
-                              Use os botoes acima para tentar nova captura ou complementar com legendas e roteiros reais desse perfil. Assim o sistema passa a trabalhar com base concreta em vez de inventar conclusoes.
-                            </div>
-                          </CardContent>
-                        </Card>
-                      )}
+                    <Card className="rounded-3xl border-zinc-200">
+                      <CardContent className="space-y-5 p-5">
+                        <div className="flex flex-wrap items-start justify-between gap-3">
+                          <div>
+                            <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-zinc-400">Ações</p>
+                            <p className="mt-1 text-sm text-zinc-900">Transforme a captura em repertório pronto e próximos passos concretos.</p>
+                          </div>
+                          <div className="flex flex-wrap items-center gap-2">
+                            <span className={cn('inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-medium', confidenceBadgeClass(overallConfidence))}>
+                              <span className={cn('h-1.5 w-1.5 rounded-full', confidenceDotClass(overallConfidence))} />
+                              {confidenceBadgeLabel(overallConfidence)}
+                            </span>
+                            <span className="text-[11px] text-zinc-400">Atualizada em {formatDateLabel(analysis?.generatedAt ?? sourceSnapshot.fetchedAt)}</span>
+                          </div>
+                        </div>
 
-                      <Card className="rounded-2xl border-zinc-200">
-                        <CardContent className="space-y-4 p-5">
-                          <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-zinc-400">Fontes capturadas</p>
-                          <div className="grid gap-3 sm:grid-cols-3">
-                            <div className="rounded-2xl border border-zinc-200 bg-zinc-50 p-3">
-                              <p className="text-[11px] text-zinc-400">Posts analisados</p>
-                              <p className="mt-1 text-lg font-semibold text-zinc-900">{sourceSnapshot.postsAnalyzed}</p>
-                            </div>
-                            <div className="rounded-2xl border border-zinc-200 bg-zinc-50 p-3">
-                              <p className="text-[11px] text-zinc-400">Reels / videos</p>
-                              <p className="mt-1 text-lg font-semibold text-zinc-900">{sourceSnapshot.reelsAnalyzed}</p>
-                            </div>
-                            <div className="rounded-2xl border border-zinc-200 bg-zinc-50 p-3">
-                              <p className="text-[11px] text-zinc-400">Feed</p>
-                              <p className="mt-1 text-lg font-semibold text-zinc-900">{sourceSnapshot.feedAnalyzed}</p>
-                            </div>
-                          </div>
-                          {sourceSnapshot.captureNotes.length ? (
-                            <div className="rounded-2xl border border-amber-200 bg-amber-50 p-3 text-xs leading-relaxed text-amber-700">
-                              {sourceSnapshot.captureNotes.join(' ')}
-                            </div>
-                          ) : null}
-                        </CardContent>
-                      </Card>
-                    </div>
+                        <div className="flex flex-wrap gap-2">
+                          <Button onClick={handleGenerateAnalysis} disabled={generatingAnalysis} className="min-w-[180px]">
+                            {generatingAnalysis ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Brain className="mr-2 h-4 w-4" />}
+                            {analysis ? 'Regenerar análise' : 'Gerar análise'}
+                          </Button>
+                          <Button
+                            type="button"
+                            variant="outline"
+                            onClick={handleGenerateContentIdeas}
+                            disabled={!analysis || generatingAnalysis || generatingContent}
+                            className="min-w-[240px] border-violet-200 bg-violet-50 text-violet-700 hover:bg-violet-100"
+                          >
+                            {generatingContent ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Sparkles className="mr-2 h-4 w-4" />}
+                            Gerar conteúdos baseados nessa análise
+                          </Button>
+                        </div>
 
-                    {analysis && (analysis.practicalSuggestions.toContent.length || analysis.practicalSuggestions.toCreatorAi.length || analysis.practicalSuggestions.toReferenceBank.length) ? (
-                      <Card className="rounded-2xl border-zinc-200">
-                        <CardContent className="grid gap-4 p-5 md:grid-cols-3">
-                          <div>
-                            <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-zinc-400">Para Conteudo</p>
-                            {analysis.practicalSuggestions.toContent.map((item) => (
-                              <p key={item} className="mt-2 text-sm leading-relaxed text-zinc-700">
-                                {item}
-                              </p>
+                        {analysis && actionInsights.length ? (
+                          <div className="grid gap-3 md:grid-cols-3">
+                            {actionInsights.map((insight) => (
+                              <InsightCard
+                                key={insight.id}
+                                insight={insight}
+                                saveable
+                                onToggleSave={() => handleInsightToggle(insight, 'actions')}
+                                onViewSource={insight.sourceUrl ? () => openSourcePreview(insight.sourceUrl, insight.title) : undefined}
+                              />
                             ))}
                           </div>
-                          <div>
-                            <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-zinc-400">Para Creator AI</p>
-                            {analysis.practicalSuggestions.toCreatorAi.map((item) => (
-                              <p key={item} className="mt-2 text-sm leading-relaxed text-zinc-700">
-                                {item}
-                              </p>
-                            ))}
+                        ) : null}
+
+                        {analysis && (analysis.practicalSuggestions.toContent.length || analysis.practicalSuggestions.toCreatorAi.length || analysis.practicalSuggestions.toReferenceBank.length) ? (
+                          <Card className="rounded-2xl border-zinc-200">
+                            <CardContent className="grid gap-4 p-5 md:grid-cols-3">
+                              <div>
+                                <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-zinc-400">Para conteúdo</p>
+                                {analysis.practicalSuggestions.toContent.map((item) => (
+                                  <p key={item} className="mt-2 text-sm leading-relaxed text-zinc-700">
+                                    {item}
+                                  </p>
+                                ))}
+                              </div>
+                              <div>
+                                <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-zinc-400">Para Creator AI</p>
+                                {analysis.practicalSuggestions.toCreatorAi.map((item) => (
+                                  <p key={item} className="mt-2 text-sm leading-relaxed text-zinc-700">
+                                    {item}
+                                  </p>
+                                ))}
+                              </div>
+                              <div>
+                                <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-zinc-400">Para o banco</p>
+                                {analysis.practicalSuggestions.toReferenceBank.map((item) => (
+                                  <p key={item} className="mt-2 text-sm leading-relaxed text-zinc-700">
+                                    {item}
+                                  </p>
+                                ))}
+                              </div>
+                            </CardContent>
+                          </Card>
+                        ) : null}
+
+                        <details className="group rounded-2xl border border-zinc-200 bg-zinc-50 p-4">
+                          <summary className="flex cursor-pointer list-none items-center justify-between gap-3 text-sm font-medium text-zinc-900">
+                            <span>Detalhes técnicos (expandir)</span>
+                            <ChevronDown className="h-4 w-4 text-zinc-400 transition group-open:rotate-180" />
+                          </summary>
+                          <div className="mt-4 space-y-4">
+                            <div className="grid gap-3 sm:grid-cols-3">
+                              <div className="rounded-2xl border border-zinc-200 bg-white p-3">
+                                <p className="text-[11px] text-zinc-400">Posts analisados</p>
+                                <p className="mt-1 text-lg font-semibold text-zinc-900">{sourceSnapshot.postsAnalyzed}</p>
+                              </div>
+                              <div className="rounded-2xl border border-zinc-200 bg-white p-3">
+                                <p className="text-[11px] text-zinc-400">Reels / vídeos</p>
+                                <p className="mt-1 text-lg font-semibold text-zinc-900">{sourceSnapshot.reelsAnalyzed}</p>
+                              </div>
+                              <div className="rounded-2xl border border-zinc-200 bg-white p-3">
+                                <p className="text-[11px] text-zinc-400">Feed</p>
+                                <p className="mt-1 text-lg font-semibold text-zinc-900">{sourceSnapshot.feedAnalyzed}</p>
+                              </div>
+                            </div>
+                            {sourceSnapshot.captureNotes.length ? (
+                              <div className="rounded-2xl border border-amber-200 bg-amber-50 p-3 text-xs leading-relaxed text-amber-700">
+                                {sourceSnapshot.captureNotes.join(' ')}
+                              </div>
+                            ) : null}
                           </div>
-                          <div>
-                            <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-zinc-400">Para o Banco</p>
-                            {analysis.practicalSuggestions.toReferenceBank.map((item) => (
-                              <p key={item} className="mt-2 text-sm leading-relaxed text-zinc-700">
-                                {item}
-                              </p>
-                            ))}
-                          </div>
-                        </CardContent>
-                      </Card>
-                    ) : null}
+                        </details>
+                      </CardContent>
+                    </Card>
 
                     {generatedContent ? (
-                      <Card className="rounded-2xl border-zinc-200">
+                      <Card className="rounded-3xl border-zinc-200">
                         <CardContent className="space-y-4 p-5">
                           <div className="flex flex-wrap items-start justify-between gap-3">
                             <div>
-                        <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-zinc-400">Conteúdos baseados nessa análise</p>
+                              <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-zinc-400">Repertório pronto</p>
                               <p className="mt-1 max-w-2xl text-xs leading-relaxed text-zinc-500">{generatedContent.summary}</p>
                             </div>
                             <span className="text-[11px] text-zinc-400">Gerado em {formatDateLabel(generatedContent.generatedAt)}</span>
                           </div>
 
-                          <div className="space-y-3">
+                          <div className="space-y-4">
                             {generatedContent.sections.map((section) => (
                               <div key={section.id} className="space-y-2">
                                 <div>
@@ -1444,6 +1696,8 @@ function CompetitorDetailModal({
                                       item={item}
                                       saved={savedGeneratedContentIds.has(item.id)}
                                       onToggleSave={() => handleGeneratedContentToggle(item)}
+                                      onCopy={() => copyText(item.summary)}
+                                      onViewSource={() => openSourcePreview(item.sourceUrl, item.title)}
                                     />
                                   ))}
                                 </div>
@@ -1456,26 +1710,79 @@ function CompetitorDetailModal({
 
                     {analysis ? (
                       <div className="space-y-4">
-                        {analysis.sections.map((section) => (
-                          <Card key={section.id} className="rounded-2xl border-zinc-200">
-                            <CardContent className="space-y-4 p-5">
+                        <Card className="rounded-3xl border-zinc-200">
+                          <CardContent className="space-y-4 p-5">
+                            <div className="flex flex-wrap items-center justify-between gap-2">
                               <div>
-                                <p className="text-sm font-semibold text-zinc-900">{section.title}</p>
-                                <p className="mt-1 text-xs leading-relaxed text-zinc-500">{section.description}</p>
+                                <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-zinc-400">ENGENHARIA DE CONTEÚDO</p>
+                                <p className="mt-1 text-sm text-zinc-900">Métricas, padrões e sinais práticos do perfil.</p>
                               </div>
-                              <div className={cn('grid gap-3', section.id === 'engineering' ? 'sm:grid-cols-2 xl:grid-cols-3' : 'xl:grid-cols-2')}>
-                                {section.items.map((insight) => (
+                              <span className={cn('inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-medium', confidenceBadgeClass(overallConfidence))}>
+                                <span className={cn('h-1.5 w-1.5 rounded-full', confidenceDotClass(overallConfidence))} />
+                                {confidenceBadgeLabel(overallConfidence)}
+                              </span>
+                            </div>
+                            <div className="grid gap-4 xl:grid-cols-2">
+                              <div className="space-y-3">
+                                {engineeringInsights.map((insight) => (
                                   <InsightCard
                                     key={insight.id}
                                     insight={insight}
-                                    saved={savedInsightIds.has(insight.id)}
-                                    onToggleSave={() => handleInsightToggle(insight, section.id)}
+                                    onViewSource={insight.sourceUrl ? () => openSourcePreview(insight.sourceUrl, insight.title) : undefined}
+                                    saveable={false}
                                   />
                                 ))}
                               </div>
-                            </CardContent>
-                          </Card>
-                        ))}
+                              <div className="space-y-3">
+                                {patternInsights.map((insight) => (
+                                  <InsightCard
+                                    key={insight.id}
+                                    insight={insight}
+                                    onViewSource={insight.sourceUrl ? () => openSourcePreview(insight.sourceUrl, insight.title) : undefined}
+                                    saveable={false}
+                                  />
+                                ))}
+                              </div>
+                            </div>
+                          </CardContent>
+                        </Card>
+
+                        <Card className="rounded-3xl border-zinc-200">
+                          <CardContent className="space-y-4 p-5">
+                            <div className="flex flex-wrap items-center justify-between gap-2">
+                              <div>
+                                <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-zinc-400">VISÃO GERAL</p>
+                                <p className="mt-1 text-sm text-zinc-900">Tom, posicionamento e o que fazer com a leitura.</p>
+                              </div>
+                              <span className={cn('inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-medium', confidenceBadgeClass(overallConfidence))}>
+                                <span className={cn('h-1.5 w-1.5 rounded-full', confidenceDotClass(overallConfidence))} />
+                                {confidenceBadgeLabel(overallConfidence)}
+                              </span>
+                            </div>
+                            <div className="grid gap-4 xl:grid-cols-2">
+                              <div className="space-y-3">
+                                {overviewInsights.map((insight) => (
+                                  <InsightCard
+                                    key={insight.id}
+                                    insight={insight}
+                                    onViewSource={insight.sourceUrl ? () => openSourcePreview(insight.sourceUrl, insight.title) : undefined}
+                                    saveable={false}
+                                  />
+                                ))}
+                              </div>
+                              <div className="space-y-3">
+                                {adaptationInsights.map((insight) => (
+                                  <InsightCard
+                                    key={insight.id}
+                                    insight={insight}
+                                    onViewSource={insight.sourceUrl ? () => openSourcePreview(insight.sourceUrl, insight.title) : undefined}
+                                    saveable={false}
+                                  />
+                                ))}
+                              </div>
+                            </div>
+                          </CardContent>
+                        </Card>
                       </div>
                     ) : null}
                   </>
@@ -1604,6 +1911,8 @@ function CompetitorDetailModal({
           onClose={() => setManualCaptureMode(null)}
         />
       ) : null}
+
+      {sourcePreview ? <SourcePreviewModal preview={sourcePreview} onClose={() => setSourcePreview(null)} /> : null}
     </>
   );
 }
