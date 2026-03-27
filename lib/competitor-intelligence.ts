@@ -709,8 +709,8 @@ async function fetchInstagramSnapshot(handle: string): Promise<InstagramSnapshot
   }
 }
 
-async function fetchInstagramSnapshotFromApify(handle: string): Promise<InstagramSnapshotData | null> {
-  const capture = await fetchApifyInstagramCapture(handle);
+async function fetchInstagramSnapshotFromApify(handle: string, deep = false): Promise<InstagramSnapshotData | null> {
+  const capture = await fetchApifyInstagramCapture(handle, { deep });
 
   if (!capture) {
     return null;
@@ -718,12 +718,12 @@ async function fetchInstagramSnapshotFromApify(handle: string): Promise<Instagra
 
   const profile = capture.profile ? mapApifyProfileItem(capture.profile) : null;
   const profilePosts = profile?.posts ?? [];
-  const actorPosts = capture.posts
-    .map((item) => mapApifyPost(item))
-    .filter((post): post is CompetitorCapturedPost => Boolean(post));
-  const reelPosts = capture.reels
-    .map((item) => mapApifyPost(item, 'reels'))
-    .filter((post): post is CompetitorCapturedPost => Boolean(post));
+  const actorPosts = deep
+    ? capture.posts.map((item) => mapApifyPost(item)).filter((post): post is CompetitorCapturedPost => Boolean(post))
+    : [];
+  const reelPosts = deep
+    ? capture.reels.map((item) => mapApifyPost(item, 'reels')).filter((post): post is CompetitorCapturedPost => Boolean(post))
+    : [];
   const mergedPosts = uniquePosts([...profilePosts, ...actorPosts, ...reelPosts])
     .sort((left, right) => right.postedAt.localeCompare(left.postedAt));
 
@@ -759,7 +759,9 @@ async function fetchInstagramSnapshotFromApify(handle: string): Promise<Instagra
     posts: mergedPosts,
     captureNotes: [
       'Captura realizada com Apify.',
-      'Instagram Profile Scraper, Instagram Scraper e Instagram Reel Scraper usados na coleta.',
+      deep
+        ? 'Instagram Profile Scraper, Instagram Post Scraper e Instagram Reel Scraper usados na coleta.'
+        : 'Instagram Profile Scraper usado na captura leve.',
       ...capture.notes
     ]
   };
@@ -1110,11 +1112,15 @@ function topPostsForSnapshot(posts: CompetitorCapturedPost[]) {
     .slice(0, 8);
 }
 
-export async function captureCompetitorSources(competitor: CompetitorAnalysisInput['competitor']) {
+export async function captureCompetitorSources(
+  competitor: CompetitorAnalysisInput['competitor'],
+  options?: { deep?: boolean }
+) {
   const normalizedHandle = normalizeInstagramHandle(competitor.handle);
+  const deepCapture = options?.deep ?? false;
   const apifyConfigured = Boolean(process.env.APIFY_API_TOKEN?.trim());
   const [apifyInstagram, website] = await Promise.all([
-    normalizedHandle ? fetchInstagramSnapshotFromApify(normalizedHandle) : Promise.resolve(null),
+    normalizedHandle ? fetchInstagramSnapshotFromApify(normalizedHandle, deepCapture) : Promise.resolve(null),
     competitor.website ? fetchWebsiteSnapshot(competitor.website) : Promise.resolve(null)
   ]);
 
@@ -1127,11 +1133,12 @@ export async function captureCompetitorSources(competitor: CompetitorAnalysisInp
   }
 
   if (normalizedHandle) {
-    const shouldFallbackToInternal =
-      !instagram ||
-      instagram.posts.length < MIN_COMPETITOR_POSTS_FOR_AI ||
-      !instagram.bio ||
-      !instagram.fullName;
+    const shouldFallbackToInternal = deepCapture
+      ? !instagram ||
+        instagram.posts.length < MIN_COMPETITOR_POSTS_FOR_AI ||
+        !instagram.bio ||
+        !instagram.fullName
+      : !instagram || !instagram.profilePicUrl;
 
     if (shouldFallbackToInternal) {
       const fallbackInstagram = await fetchInstagramSnapshot(normalizedHandle);
@@ -1161,7 +1168,11 @@ export async function captureCompetitorSources(competitor: CompetitorAnalysisInp
     captureNotes.push('Nenhum post publico foi retornado pelo perfil no momento da captura.');
   }
   if (apifyInstagram) {
-    captureNotes.unshift('Apify: Instagram Profile Scraper, Instagram Scraper e Instagram Reel Scraper foram usados na coleta.');
+    captureNotes.unshift(
+      deepCapture
+        ? 'Apify: Instagram Profile Scraper, Instagram Post Scraper e Instagram Reel Scraper foram usados na coleta.'
+        : 'Apify: Instagram Profile Scraper foi usado na coleta.'
+    );
   }
 
   const snapshot: CompetitorSourceSnapshot = {

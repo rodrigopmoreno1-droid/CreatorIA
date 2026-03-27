@@ -53,7 +53,7 @@ export async function POST(
       tags: Array.isArray(existing.tags) ? existing.tags.filter((tag): tag is string => typeof tag === 'string') : []
     };
 
-    const { snapshot, suggestedLogoUrl, source } = await captureCompetitorSources(competitorInput);
+    const { snapshot, suggestedLogoUrl, source } = await captureCompetitorSources(competitorInput, { deep: true });
     const result = await runCompetitorAnalysisPipeline({
       admin,
       companyId: context.companyId,

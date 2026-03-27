@@ -10,7 +10,8 @@ export type ApifyInstagramCapture = {
 
 const APIFY_ACTORS = {
   profile: 'apify~instagram-profile-scraper',
-  posts: 'apify~instagram-scraper',
+  posts: 'apify~instagram-post-scraper',
+  postsFallback: 'apify~instagram-scraper',
   reels: 'apify~instagram-reel-scraper'
 } as const;
 
@@ -71,7 +72,46 @@ async function runActorDatasetItems(actorId: string, input: Record<string, unkno
   return [];
 }
 
-export async function fetchApifyInstagramCapture(handle: string): Promise<ApifyInstagramCapture | null> {
+async function fetchApifyInstagramProfileCapture(handle: string, notes: string[]): Promise<ApifyInstagramCapture | null> {
+  const normalizedHandle = handle.replace(/^@/, '').trim().toLowerCase();
+  const token = getApifyToken();
+
+  if (!normalizedHandle || !token) {
+    return null;
+  }
+
+  const [profileResult] = await Promise.allSettled([
+    runActorDatasetItems(APIFY_ACTORS.profile, { usernames: [normalizedHandle], maxPosts: 8 }, 1),
+  ]);
+
+  const profileItems = profileResult.status === 'fulfilled' ? profileResult.value : [];
+  if (profileResult.status === 'rejected') {
+    notes.push(`Instagram Profile Scraper: ${profileResult.reason instanceof Error ? profileResult.reason.message : 'falha na captura.'}`);
+  }
+
+  const profile = profileItems[0] ?? null;
+
+  if (!profile) {
+    return null;
+  }
+
+  return {
+    profile,
+    posts: Array.isArray(profile.posts) ? profile.posts : [],
+    reels: [],
+    notes: [
+      getApifyUserId() ? `Apify user configurado: ${getApifyUserId()}.` : 'Apify user nao configurado.',
+      'Instagram Profile Scraper usado para captura leve.',
+      ...(notes.length ? notes : ['Captura realizada com Apify.'])
+    ],
+    used: true
+  };
+}
+
+export async function fetchApifyInstagramCapture(
+  handle: string,
+  options?: { deep?: boolean }
+): Promise<ApifyInstagramCapture | null> {
   const normalizedHandle = handle.replace(/^@/, '').trim().toLowerCase();
   const token = getApifyToken();
 
@@ -80,40 +120,55 @@ export async function fetchApifyInstagramCapture(handle: string): Promise<ApifyI
   }
 
   const profileUrl = `https://www.instagram.com/${normalizedHandle}/`;
-
-  const [profileResult, postsResult] = await Promise.allSettled([
-    runActorDatasetItems(APIFY_ACTORS.profile, { usernames: [normalizedHandle], maxPosts: 8 }, 1),
-    runActorDatasetItems(APIFY_ACTORS.posts, { directUrls: [profileUrl], resultsType: 'posts', resultsLimit: 15 }, 15),
-  ]);
-
   const notes: string[] = [];
 
-  const profileItems = profileResult.status === 'fulfilled' ? profileResult.value : [];
-  if (profileResult.status === 'rejected') {
-    notes.push(`Instagram Profile Scraper: ${profileResult.reason instanceof Error ? profileResult.reason.message : 'falha na captura.'}`);
+  const profileCapture = await fetchApifyInstagramProfileCapture(normalizedHandle, notes);
+
+  if (!options?.deep) {
+    return profileCapture;
   }
 
-  const postItems = postsResult.status === 'fulfilled' ? postsResult.value : [];
-  if (postsResult.status === 'rejected') {
-    notes.push(`Instagram Scraper: ${postsResult.reason instanceof Error ? postsResult.reason.message : 'falha na captura.'}`);
-  }
-
-  const profile = profileItems[0] ?? null;
-  const shouldFetchReels = Boolean(profile) && postItems.length < 8;
-  let reelItems: ApifyDatasetItem[] = [];
-
-  if (shouldFetchReels) {
-    const reelsResult = await runActorDatasetItems(
+  const [postResult, reelResult] = await Promise.allSettled([
+    runActorDatasetItems(
+      APIFY_ACTORS.posts,
+      { username: [normalizedHandle, profileUrl], resultsLimit: 15, dataDetailLevel: 'basicData' },
+      15
+    ),
+    runActorDatasetItems(
       APIFY_ACTORS.reels,
-      { username: normalizedHandle, num: 6 },
+      { username: [normalizedHandle], resultsLimit: 6, skipPinnedPosts: true },
       6
+    )
+  ]);
+
+  let postItems = postResult.status === 'fulfilled' ? postResult.value : [];
+  if (postResult.status === 'rejected') {
+    notes.push(`Instagram Post Scraper: ${postResult.reason instanceof Error ? postResult.reason.message : 'falha na captura.'}`);
+  }
+
+  let reelItems = reelResult.status === 'fulfilled' ? reelResult.value : [];
+  if (reelResult.status === 'rejected') {
+    notes.push(`Instagram Reel Scraper: ${reelResult.reason instanceof Error ? reelResult.reason.message : 'falha na captura.'}`);
+  }
+
+  const needFallbackPosts = postItems.length < 3 && profileCapture?.profile;
+  if (needFallbackPosts) {
+    const fallbackPosts = await runActorDatasetItems(
+      APIFY_ACTORS.postsFallback,
+      { directUrls: [profileUrl], resultsType: 'posts', resultsLimit: 12 },
+      12
     ).catch((error: unknown) => {
-      notes.push(`Instagram Reel Scraper: ${error instanceof Error ? error.message : 'falha na captura.'}`);
+      notes.push(`Instagram Scraper: ${error instanceof Error ? error.message : 'falha na captura.'}`);
       return [];
     });
 
-    reelItems = reelsResult;
+    if (fallbackPosts.length > postItems.length) {
+      postItems = fallbackPosts;
+    }
   }
+
+  const profile = profileCapture?.profile ?? null;
+  const mergedPosts = [...(profileCapture?.posts ?? []), ...postItems, ...reelItems].filter(Boolean);
 
   if (!profile && !postItems.length && !reelItems.length) {
     return null;
@@ -121,12 +176,13 @@ export async function fetchApifyInstagramCapture(handle: string): Promise<ApifyI
 
   return {
     profile,
-    posts: postItems,
+    posts: postItems.length ? postItems : profileCapture?.posts ?? [],
     reels: reelItems,
     notes: [
       getApifyUserId() ? `Apify user configurado: ${getApifyUserId()}.` : 'Apify user nao configurado.',
-      shouldFetchReels ? 'Instagram Reel Scraper executado para complementar a captura.' : 'Instagram Reel Scraper nao foi necessario nesta captura.',
-      ...(notes.length ? notes : ['Captura realizada com Apify.'])
+      'Instagram Profile Scraper, Instagram Post Scraper e Instagram Reel Scraper foram usados na captura completa.',
+      ...(notes.length ? notes : ['Captura realizada com Apify.']),
+      mergedPosts.length ? `Total bruto de registros combinados: ${mergedPosts.length}.` : 'Captura completa sem registros combinados.'
     ],
     used: true
   };
