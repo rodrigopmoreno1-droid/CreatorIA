@@ -195,7 +195,7 @@ async function transcribeWithGemini(sourceUrl: string, mimeType: string, base64:
 }
 
 async function transcribeWithOpenAI(sourceUrl: string, mimeType: string, base64: string) {
-  const apiKey = process.env.OPENAI_API_KEY?.trim();
+  const apiKey = process.env.OPENAI_API_KEY?.trim() || process.env.API_OPENAI?.trim() || '';
 
   if (!apiKey) {
     return null;
@@ -269,7 +269,7 @@ export async function transcribeMediaFromUrl(input: {
     const media = await fetchRemoteMedia(sourceUrl);
     const mimeType = input.mimeType?.trim() || media.mimeType || 'video/mp4';
 
-    if (process.env.OPENAI_API_KEY?.trim()) {
+    if (process.env.OPENAI_API_KEY?.trim() || process.env.API_OPENAI?.trim()) {
       try {
         const openAiResult = await transcribeWithOpenAI(sourceUrl, mimeType, media.base64);
         if (openAiResult?.text) {

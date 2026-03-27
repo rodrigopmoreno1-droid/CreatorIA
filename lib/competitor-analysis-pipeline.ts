@@ -81,7 +81,6 @@ async function replaceCompetitorPosts(
       transcript_source: post.transcriptSource,
       transcript_confidence: post.transcriptConfidence,
       transcript_error: post.transcriptError || null,
-      screen_text_lead: post.screenTextLead || null,
       metadata: {
         captionLead: post.captionLead,
         accessibilityCaption: post.accessibilityCaption,
