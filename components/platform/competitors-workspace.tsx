@@ -282,6 +282,182 @@ function buildSourcePreview(
   };
 }
 
+function normalizeEvidenceText(value: string) {
+  return value
+    .replace(/\s+/g, ' ')
+    .replace(/^[\s\W_]+|[\s\W_]+$/g, '')
+    .trim();
+}
+
+function firstEvidenceLine(value: string) {
+  return normalizeEvidenceText(
+    value
+      .split('\n')
+      .map((line) => line.trim())
+      .find(Boolean) ?? ''
+  ).slice(0, 180);
+}
+
+function extractCtaSentence(value: string) {
+  const sentences = normalizeEvidenceText(value)
+    .split(/(?<=[.!?])\s+/)
+    .map((sentence) => sentence.trim())
+    .filter(Boolean);
+
+  const ctaSentence = sentences.find((sentence) => /(comenta|salva|compartilha|compartilhe|direct|dm|manda|me chama|link na bio|clica|segue|inscreva|guarda|envia)/i.test(sentence));
+
+  return (ctaSentence ?? sentences[sentences.length - 1] ?? '').slice(0, 220);
+}
+
+function buildEvidenceFrequency<T extends { title: string; value: string; sourceUrl: string }>(items: T[], limit = 5) {
+  const frequency = new Map<string, { title: string; value: string; sourceUrl: string; count: number }>();
+
+  for (const item of items) {
+    const key = normalizeEvidenceText(item.value).toLowerCase();
+    if (!key) {
+      continue;
+    }
+
+    const existing = frequency.get(key);
+    if (existing) {
+      existing.count += 1;
+    } else {
+      frequency.set(key, { ...item, count: 1 });
+    }
+  }
+
+  return [...frequency.values()]
+    .sort((left, right) => right.count - left.count || left.value.localeCompare(right.value, 'pt-BR'))
+    .slice(0, limit);
+}
+
+function buildOpeningEvidence(posts: CompetitorCapturedPost[]) {
+  return buildEvidenceFrequency(
+    posts.map((post) => ({
+      title: post.transcriptStatus === 'success' ? 'Transcript' : 'Legenda',
+      value: post.transcriptStatus === 'success' ? firstEvidenceLine(post.transcriptText) : firstEvidenceLine(post.captionLead || post.caption || post.screenTextLead),
+      sourceUrl: post.sourceUrl
+    })),
+    5
+  );
+}
+
+function buildCtaEvidence(posts: CompetitorCapturedPost[]) {
+  return buildEvidenceFrequency(
+    posts
+      .map((post) => ({
+        title: 'CTA',
+        value: extractCtaSentence([post.transcriptText, post.caption, post.accessibilityCaption].filter(Boolean).join(' ')),
+        sourceUrl: post.sourceUrl
+      }))
+      .filter((item) => Boolean(item.value)),
+    5
+  );
+}
+
+function buildRepeatedPhraseEvidence(posts: CompetitorCapturedPost[]) {
+  return buildEvidenceFrequency(
+    posts.map((post) => ({
+      title: 'Frase',
+      value: firstEvidenceLine(post.transcriptStatus === 'success' ? post.transcriptText : post.captionLead || post.caption || post.screenTextLead),
+      sourceUrl: post.sourceUrl
+    })),
+    5
+  );
+}
+
+function isLowSignalInsight(insight: CompetitorInsight) {
+  const text = `${insight.title} ${insight.summary} ${insight.rationale}`.toLowerCase();
+  return insight.confidenceLevel === 'low' && /(nao observavel|sem volume suficiente|amostra sem|nao foi possivel|sem dado|sem dados|nao capturado publicamente|sem duracao publica|nao houve volume suficiente)/i.test(text);
+}
+
+function CompactSignalPill({
+  insight,
+  onViewSource
+}: {
+  insight: CompetitorInsight;
+  onViewSource?: () => void;
+}) {
+  return (
+    <div className="flex flex-wrap items-center gap-2 rounded-full border border-orange-200 bg-orange-50 px-3 py-2 text-xs text-orange-700">
+      <span className="font-medium text-orange-900">{insight.title}</span>
+      <span className="rounded-full border border-orange-200 bg-white px-2 py-0.5 text-[10px] font-medium text-orange-700">Dados insuficientes</span>
+      {onViewSource && insight.sourceUrl ? (
+        <button type="button" onClick={onViewSource} className="inline-flex items-center gap-1 text-orange-700 hover:text-orange-900">
+          Ver origem <Eye className="h-3 w-3" />
+        </button>
+      ) : null}
+    </div>
+  );
+}
+
+function EvidenceList({
+  title,
+  description,
+  items,
+  emptyLabel,
+  onViewSource
+}: {
+  title: string;
+  description: string;
+  items: Array<{ title: string; value: string; sourceUrl: string; count?: number }>;
+  emptyLabel: string;
+  onViewSource: (sourceUrl: string, fallbackTitle: string) => void;
+}) {
+  return (
+    <div className="rounded-2xl border border-zinc-200 bg-white p-4">
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <p className="text-sm font-semibold text-zinc-900">{title}</p>
+          <p className="mt-1 text-xs leading-relaxed text-zinc-500">{description}</p>
+        </div>
+        {items.length ? (
+          <span className="rounded-full border border-zinc-200 bg-zinc-50 px-2 py-0.5 text-[10px] font-medium text-zinc-500">
+            {items.length} sinais
+          </span>
+        ) : (
+          <span className="rounded-full border border-orange-200 bg-orange-50 px-2 py-0.5 text-[10px] font-medium text-orange-700">
+            Dados insuficientes
+          </span>
+        )}
+      </div>
+
+      {items.length ? (
+        <div className="mt-3 space-y-2">
+          {items.map((item, index) => (
+            <div key={`${item.sourceUrl}-${item.value}-${index}`} className="rounded-xl border border-zinc-200 bg-zinc-50 px-3 py-2">
+              <div className="flex flex-wrap items-start justify-between gap-2">
+                <div className="min-w-0 flex-1">
+                  <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-zinc-400">{item.title}</p>
+                  <p className="mt-1 text-sm leading-relaxed text-zinc-700">{item.value}</p>
+                </div>
+                {typeof item.count === 'number' ? (
+                  <span className="rounded-full border border-zinc-200 bg-white px-2 py-0.5 text-[10px] font-medium text-zinc-500">
+                    {item.count}x
+                  </span>
+                ) : null}
+              </div>
+              {item.sourceUrl ? (
+                <button
+                  type="button"
+                  onClick={() => onViewSource(item.sourceUrl, item.value || item.title)}
+                  className="mt-2 inline-flex items-center gap-1 text-[11px] font-medium text-zinc-500 hover:text-zinc-800"
+                >
+                  Ver origem <Eye className="h-3 w-3" />
+                </button>
+              ) : null}
+            </div>
+          ))}
+        </div>
+      ) : (
+        <div className="mt-3 rounded-xl border border-dashed border-orange-200 bg-orange-50 px-3 py-2 text-xs text-orange-700">
+          {emptyLabel}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function formatReferenceCategoryLabel(value: string) {
   if (!value) {
     return 'Sem categoria';
@@ -1299,7 +1475,6 @@ function CompetitorDetailModal({
 
   const actionInsights = analysis?.sections.find((section) => section.id === 'actions')?.items ?? [];
   const engineeringInsights = analysis?.sections.find((section) => section.id === 'engineering')?.items ?? [];
-  const patternInsights = analysis?.sections.find((section) => section.id === 'patterns')?.items ?? [];
   const overviewInsights = analysis?.sections.find((section) => section.id === 'overview')?.items ?? [];
   const adaptationInsights = analysis?.sections.find((section) => section.id === 'adaptation')?.items ?? [];
   const overallConfidence = sourceSnapshot
@@ -1307,8 +1482,14 @@ function CompetitorDetailModal({
       ? 'high'
       : sourceSnapshot.topPosts.some((post) => post.caption.trim() || post.captionLead.trim() || post.screenTextLead.trim())
         ? 'medium'
-        : 'low'
+      : 'low'
     : 'low';
+  const totalTranscriptedReels =
+    sourceSnapshot?.topPosts.filter((post) => (post.format === 'reels' || post.format === 'video') && post.transcriptStatus === 'success' && post.transcriptText.trim()).length ?? 0;
+  const totalVideoReels = sourceSnapshot?.topPosts.filter((post) => post.format === 'reels' || post.format === 'video').length ?? 0;
+  const openingEvidence = sourceSnapshot ? buildOpeningEvidence(sourceSnapshot.topPosts) : [];
+  const ctaEvidence = sourceSnapshot ? buildCtaEvidence(sourceSnapshot.topPosts) : [];
+  const repeatedPhraseEvidence = sourceSnapshot ? buildRepeatedPhraseEvidence(sourceSnapshot.topPosts) : [];
 
   function openSourcePreview(sourceUrl: string, fallbackTitle: string) {
     if (!sourceSnapshot || !sourceUrl) {
@@ -1465,29 +1646,11 @@ function CompetitorDetailModal({
 
             {activeTab === 'analysis' ? (
               <div className="space-y-5">
-                <div className="flex flex-wrap items-center justify-between gap-3">
-                  <div>
-                    <p className="text-sm font-semibold text-zinc-900">Análise de mercado e referências</p>
-                    <p className="mt-1 text-xs text-zinc-500">
-                      Coleta perfil, bio, feed, legendas, formatos e traduz os sinais em engenharia de conteúdo, ideias e ação.
-                    </p>
-                  </div>
-                  <div className="flex flex-wrap gap-2">
-                    <Button onClick={handleGenerateAnalysis} disabled={generatingAnalysis} className="min-w-[180px]">
-                      {generatingAnalysis ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Brain className="mr-2 h-4 w-4" />}
-                      {analysis ? 'Regenerar analise' : 'Gerar analise'}
-                    </Button>
-                    <Button
-                      type="button"
-                      variant="outline"
-                      onClick={handleGenerateContentIdeas}
-                      disabled={!analysis || generatingAnalysis || generatingContent}
-                      className="min-w-[240px] border-violet-200 bg-violet-50 text-violet-700 hover:bg-violet-100"
-                    >
-                      {generatingContent ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Sparkles className="mr-2 h-4 w-4" />}
-                      Gerar conteúdos baseados nessa análise
-                    </Button>
-                  </div>
+                <div>
+                  <p className="text-sm font-semibold text-zinc-900">Análise de mercado e referências</p>
+                  <p className="mt-1 text-xs text-zinc-500">
+                    Coleta perfil, bio, feed, legendas, transcrições e formatos, depois traduz os sinais em repertório pronto para uso.
+                  </p>
                 </div>
 
                 {competitor.analysisStatus === 'error' ? (
@@ -1640,34 +1803,6 @@ function CompetitorDetailModal({
                             </CardContent>
                           </Card>
                         ) : null}
-
-                        <details className="group rounded-2xl border border-zinc-200 bg-zinc-50 p-4">
-                          <summary className="flex cursor-pointer list-none items-center justify-between gap-3 text-sm font-medium text-zinc-900">
-                            <span>Detalhes técnicos (expandir)</span>
-                            <ChevronDown className="h-4 w-4 text-zinc-400 transition group-open:rotate-180" />
-                          </summary>
-                          <div className="mt-4 space-y-4">
-                            <div className="grid gap-3 sm:grid-cols-3">
-                              <div className="rounded-2xl border border-zinc-200 bg-white p-3">
-                                <p className="text-[11px] text-zinc-400">Posts analisados</p>
-                                <p className="mt-1 text-lg font-semibold text-zinc-900">{sourceSnapshot.postsAnalyzed}</p>
-                              </div>
-                              <div className="rounded-2xl border border-zinc-200 bg-white p-3">
-                                <p className="text-[11px] text-zinc-400">Reels / vídeos</p>
-                                <p className="mt-1 text-lg font-semibold text-zinc-900">{sourceSnapshot.reelsAnalyzed}</p>
-                              </div>
-                              <div className="rounded-2xl border border-zinc-200 bg-white p-3">
-                                <p className="text-[11px] text-zinc-400">Feed</p>
-                                <p className="mt-1 text-lg font-semibold text-zinc-900">{sourceSnapshot.feedAnalyzed}</p>
-                              </div>
-                            </div>
-                            {sourceSnapshot.captureNotes.length ? (
-                              <div className="rounded-2xl border border-amber-200 bg-amber-50 p-3 text-xs leading-relaxed text-amber-700">
-                                {sourceSnapshot.captureNotes.join(' ')}
-                              </div>
-                            ) : null}
-                          </div>
-                        </details>
                       </CardContent>
                     </Card>
 
@@ -1714,6 +1849,69 @@ function CompetitorDetailModal({
                           <CardContent className="space-y-4 p-5">
                             <div className="flex flex-wrap items-center justify-between gap-2">
                               <div>
+                                <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-zinc-400">EVIDÊNCIAS</p>
+                                <p className="mt-1 text-sm text-zinc-900">Transcrições, legendas e frases reais que sustentam a leitura.</p>
+                              </div>
+                              <div className="flex flex-wrap items-center gap-2">
+                                <span className={cn('inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-medium', confidenceBadgeClass(overallConfidence))}>
+                                  <span className={cn('h-1.5 w-1.5 rounded-full', confidenceDotClass(overallConfidence))} />
+                                  {confidenceBadgeLabel(overallConfidence)}
+                                </span>
+                                <span className="rounded-full border border-zinc-200 bg-zinc-50 px-2 py-0.5 text-[10px] font-medium text-zinc-500">
+                                  Reels transcritos {totalTranscriptedReels}/{totalVideoReels || sourceSnapshot.reelsAnalyzed}
+                                </span>
+                              </div>
+                            </div>
+
+                            <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+                              <div className="rounded-2xl border border-zinc-200 bg-white p-3">
+                                <p className="text-[11px] text-zinc-400">Posts capturados</p>
+                                <p className="mt-1 text-lg font-semibold text-zinc-900">{sourceSnapshot.postsAnalyzed}</p>
+                              </div>
+                              <div className="rounded-2xl border border-zinc-200 bg-white p-3">
+                                <p className="text-[11px] text-zinc-400">Reels / vídeos</p>
+                                <p className="mt-1 text-lg font-semibold text-zinc-900">{sourceSnapshot.reelsAnalyzed}</p>
+                              </div>
+                              <div className="rounded-2xl border border-zinc-200 bg-white p-3">
+                                <p className="text-[11px] text-zinc-400">Feed</p>
+                                <p className="mt-1 text-lg font-semibold text-zinc-900">{sourceSnapshot.feedAnalyzed}</p>
+                              </div>
+                              <div className="rounded-2xl border border-zinc-200 bg-white p-3">
+                                <p className="text-[11px] text-zinc-400">Captura</p>
+                                <p className="mt-1 text-sm font-semibold text-zinc-900">{formatDateLabel(sourceSnapshot.fetchedAt)}</p>
+                              </div>
+                            </div>
+
+                            <div className="grid gap-3 lg:grid-cols-3">
+                              <EvidenceList
+                                title="Top aberturas reais"
+                                description="Primeiras frases e aberturas recorrentes extraídas da legenda, transcript ou texto detectado."
+                                items={openingEvidence}
+                                emptyLabel="Sem abertura observável suficiente. Use mais legendas ou transcrições reais."
+                                onViewSource={openSourcePreview}
+                              />
+                              <EvidenceList
+                                title="Top CTAs reais"
+                                description="Chamadas para ação que aparecem com mais frequência nas falas e legendas capturadas."
+                                items={ctaEvidence}
+                                emptyLabel="Sem CTA observável suficiente. Tente nova captura ou material manual."
+                                onViewSource={openSourcePreview}
+                              />
+                              <EvidenceList
+                                title="Top frases repetidas"
+                                description="Trechos que mais se repetem e ajudam a entender ritmo, repertório e padrão de linguagem."
+                                items={repeatedPhraseEvidence}
+                                emptyLabel="Sem repetição clara ainda. A amostra está pequena para isso."
+                                onViewSource={openSourcePreview}
+                              />
+                            </div>
+                          </CardContent>
+                        </Card>
+
+                        <Card className="rounded-3xl border-zinc-200">
+                          <CardContent className="space-y-4 p-5">
+                            <div className="flex flex-wrap items-center justify-between gap-2">
+                              <div>
                                 <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-zinc-400">ENGENHARIA DE CONTEÚDO</p>
                                 <p className="mt-1 text-sm text-zinc-900">Métricas, padrões e sinais práticos do perfil.</p>
                               </div>
@@ -1724,24 +1922,34 @@ function CompetitorDetailModal({
                             </div>
                             <div className="grid gap-4 xl:grid-cols-2">
                               <div className="space-y-3">
-                                {engineeringInsights.map((insight) => (
-                                  <InsightCard
-                                    key={insight.id}
-                                    insight={insight}
-                                    onViewSource={insight.sourceUrl ? () => openSourcePreview(insight.sourceUrl, insight.title) : undefined}
-                                    saveable={false}
-                                  />
-                                ))}
+                                {engineeringInsights
+                                  .filter((insight) => !isLowSignalInsight(insight))
+                                  .map((insight) => (
+                                    <InsightCard
+                                      key={insight.id}
+                                      insight={insight}
+                                      onViewSource={insight.sourceUrl ? () => openSourcePreview(insight.sourceUrl, insight.title) : undefined}
+                                      saveable={false}
+                                    />
+                                  ))}
                               </div>
                               <div className="space-y-3">
-                                {patternInsights.map((insight) => (
-                                  <InsightCard
-                                    key={insight.id}
-                                    insight={insight}
-                                    onViewSource={insight.sourceUrl ? () => openSourcePreview(insight.sourceUrl, insight.title) : undefined}
-                                    saveable={false}
-                                  />
-                                ))}
+                                {engineeringInsights.filter(isLowSignalInsight).length ? (
+                                  <div className="rounded-2xl border border-zinc-200 bg-zinc-50 p-4">
+                                    <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-zinc-400">Dados insuficientes</p>
+                                    <div className="mt-3 flex flex-wrap gap-2">
+                                      {engineeringInsights
+                                        .filter(isLowSignalInsight)
+                                        .map((insight) => (
+                                          <CompactSignalPill
+                                            key={insight.id}
+                                            insight={insight}
+                                            onViewSource={insight.sourceUrl ? () => openSourcePreview(insight.sourceUrl, insight.title) : undefined}
+                                          />
+                                        ))}
+                                    </div>
+                                  </div>
+                                ) : null}
                               </div>
                             </div>
                           </CardContent>
@@ -1783,6 +1991,20 @@ function CompetitorDetailModal({
                             </div>
                           </CardContent>
                         </Card>
+
+                        <details className="group rounded-2xl border border-zinc-200 bg-zinc-50 p-4">
+                          <summary className="flex cursor-pointer list-none items-center justify-between gap-3 text-sm font-medium text-zinc-900">
+                            <span>Detalhes técnicos (expandir)</span>
+                            <ChevronDown className="h-4 w-4 text-zinc-400 transition group-open:rotate-180" />
+                          </summary>
+                          <div className="mt-4 space-y-4">
+                            {sourceSnapshot.captureNotes.length ? (
+                              <div className="rounded-2xl border border-amber-200 bg-amber-50 p-3 text-xs leading-relaxed text-amber-700">
+                                {sourceSnapshot.captureNotes.join(' ')}
+                              </div>
+                            ) : null}
+                          </div>
+                        </details>
                       </div>
                     ) : null}
                   </>
