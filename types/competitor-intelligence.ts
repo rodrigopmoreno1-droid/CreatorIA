@@ -11,7 +11,7 @@ export type CompetitorAnalysisStatus =
 
 export type CompetitorDataQuality = 'unknown' | 'insufficient' | 'partial' | 'ready';
 
-export type CompetitorCaptureSource = 'automatic' | 'manual_captions' | 'manual_script';
+export type CompetitorCaptureSource = 'automatic' | 'apify' | 'manual_captions' | 'manual_script';
 
 export type CompetitorContentFormat =
   | 'reels'

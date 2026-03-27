@@ -26,7 +26,7 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
-import { buildReferencePayloadFromInsight } from '@/lib/competitor-intelligence';
+import { buildReferencePayloadFromInsight } from '@/lib/competitor-reference-payload';
 import { cn } from '@/lib/utils';
 import type {
   CompetitorAnalysis,

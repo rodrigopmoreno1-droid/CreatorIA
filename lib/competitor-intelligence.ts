@@ -1,3 +1,5 @@
+import 'server-only';
+
 import type {
   CompetitorAnalysis,
   CompetitorCapturedPost,
@@ -9,6 +11,7 @@ import type {
   CompetitorSourceSnapshot,
   ContentReferenceRecord
 } from '@/types/competitor-intelligence';
+import { fetchApifyInstagramCapture } from '@/services/integrations/apify';
 
 type RawInstagramNode = Record<string, unknown>;
 
@@ -29,6 +32,21 @@ export type CompetitorAnalysisInput = {
   competitor: Pick<CompetitorRecord, 'id' | 'name' | 'handle' | 'website' | 'type' | 'niche' | 'notes' | 'logoUrl' | 'tags'>;
   snapshot: CompetitorSourceSnapshot;
   facts: CompetitorAnalysisFacts;
+};
+
+type InstagramSnapshotData = {
+  handle: string;
+  bio: string;
+  fullName: string;
+  followers: number;
+  following: number;
+  postsCount: number;
+  reelsCount: number;
+  verified: boolean;
+  externalUrl: string;
+  profilePicUrl: string;
+  posts: CompetitorCapturedPost[];
+  captureNotes?: string[];
 };
 
 export type CompetitorDataQualityAssessment = {
@@ -383,6 +401,220 @@ function extractFirstMatch(html: string, regex: RegExp) {
   return normalizeText(match?.[1] ?? '');
 }
 
+function firstNonEmptyText(...values: unknown[]) {
+  for (const value of values) {
+    if (typeof value === 'string' && value.trim()) {
+      return normalizeText(value);
+    }
+    if (typeof value === 'number' && Number.isFinite(value)) {
+      return String(value);
+    }
+  }
+
+  return '';
+}
+
+function pickApifyField(node: RawInstagramNode, keys: string[]) {
+  for (const key of keys) {
+    const value = node[key];
+    if (typeof value === 'string' && value.trim()) {
+      return normalizeText(value);
+    }
+    if (typeof value === 'number' && Number.isFinite(value)) {
+      return String(value);
+    }
+  }
+
+  return '';
+}
+
+function pickApifyNumber(node: RawInstagramNode, keys: string[]) {
+  for (const key of keys) {
+    const value = node[key];
+    if (typeof value === 'number' && Number.isFinite(value)) {
+      return value;
+    }
+    if (typeof value === 'string' && value.trim()) {
+      const parsed = Number(value);
+      if (Number.isFinite(parsed)) {
+        return parsed;
+      }
+    }
+  }
+
+  return 0;
+}
+
+function pickApifyArray(node: RawInstagramNode, keys: string[]) {
+  for (const key of keys) {
+    const value = node[key];
+    if (Array.isArray(value)) {
+      return value;
+    }
+  }
+
+  return [];
+}
+
+function collectApifyText(node: RawInstagramNode) {
+  const texts: string[] = [];
+
+  const caption = firstNonEmptyText(
+    pickApifyField(node, ['caption', 'text', 'description', 'fullDescription', 'mediaCaption', 'title']),
+    getNestedString(node, ['edge_media_to_caption', 'edges', '0', 'node', 'text'])
+  );
+
+  if (caption) {
+    texts.push(caption);
+  }
+
+  const transcript = firstNonEmptyText(
+    pickApifyField(node, ['transcript', 'transcriptText', 'subtitle', 'accessibilityCaption', 'altText']),
+    getNestedString(node, ['accessibility_caption'])
+  );
+
+  if (transcript && transcript !== caption) {
+    texts.push(transcript);
+  }
+
+  const hashtags = pickApifyArray(node, ['hashtags', 'tags']);
+  hashtags.forEach((tag) => {
+    if (typeof tag === 'string' && tag.trim()) {
+      texts.push(tag);
+    }
+  });
+
+  return texts.join('\n');
+}
+
+function inferApifyFormat(node: RawInstagramNode): CompetitorContentFormat {
+  const explicit = normalizeText(
+    pickApifyField(node, ['format', 'postType', 'mediaType', 'contentType', 'type'])
+  ).toLowerCase();
+  const isVideo = Boolean(node.is_video || node.isVideo || node.video_url || node.videoUrl);
+  const shortcode = normalizeText(
+    pickApifyField(node, ['shortcode', 'shortCode', 'code'])
+  );
+
+  if (/(reel|reels|clip|video)/i.test(explicit)) {
+    return explicit.includes('reel') ? 'reels' : 'video';
+  }
+  if (/(carousel|carrossel)/i.test(explicit)) {
+    return 'carrossel';
+  }
+  if (/(image|photo|post|feed)/i.test(explicit)) {
+    return 'image';
+  }
+  if (isVideo) {
+    return shortcode.startsWith('C') ? 'reels' : 'video';
+  }
+  return 'unknown';
+}
+
+function buildApifyPostUrl(shortcode: string, format: CompetitorContentFormat) {
+  if (!shortcode) {
+    return '';
+  }
+
+  if (format === 'reels') {
+    return `https://www.instagram.com/reel/${shortcode}/`;
+  }
+
+  if (format === 'video') {
+    return `https://www.instagram.com/tv/${shortcode}/`;
+  }
+
+  return `https://www.instagram.com/p/${shortcode}/`;
+}
+
+function mapApifyPost(node: RawInstagramNode, overrideFormat?: CompetitorContentFormat): CompetitorCapturedPost | null {
+  if (!node || typeof node !== 'object') {
+    return null;
+  }
+
+  const format = overrideFormat ?? inferApifyFormat(node);
+  const shortcode = normalizeText(
+    pickApifyField(node, ['shortcode', 'shortCode', 'code', 'id', 'mediaCode'])
+  );
+  const caption = normalizeWhitespace(
+    firstNonEmptyText(
+      pickApifyField(node, ['caption', 'text', 'description', 'fullDescription', 'mediaCaption', 'title']),
+      getNestedString(node, ['edge_media_to_caption', 'edges', '0', 'node', 'text'])
+    )
+  );
+  const likes = pickApifyNumber(node, ['likes', 'likeCount', 'likesCount', 'likes_count', 'edge_media_preview_like_count', 'edge_media_preview_like']);
+  const comments = pickApifyNumber(node, ['comments', 'commentCount', 'commentsCount', 'comments_count', 'edge_media_to_comment_count', 'edge_media_to_comment']);
+  const views = pickApifyNumber(node, ['views', 'viewCount', 'video_view_count', 'videoViewCount', 'playCount']);
+  const timestampRaw = pickApifyField(node, ['taken_at_timestamp', 'timestamp', 'takenAtTimestamp', 'createdAt', 'publishedAt', 'date']);
+  const timestamp = Number(timestampRaw);
+  const postedAt = Number.isFinite(timestamp)
+    ? new Date(timestamp > 1_000_000_000_000 ? timestamp : timestamp * 1000).toISOString()
+    : new Date().toISOString();
+  const thumbnailUrl = normalizeText(
+    pickApifyField(node, ['thumbnailUrl', 'thumbnail_url', 'thumbnail', 'displayUrl', 'display_url', 'imageUrl', 'image_url'])
+  );
+  const mediaUrl = normalizeText(
+    pickApifyField(node, ['videoUrl', 'video_url', 'url', 'mediaUrl', 'media_url'])
+  );
+  const sourceUrl = normalizeText(
+    pickApifyField(node, ['url', 'postUrl', 'permalink', 'sourceUrl'])
+  ) || buildApifyPostUrl(shortcode, format);
+  const accessibilityCaption = normalizeWhitespace(
+    firstNonEmptyText(
+      pickApifyField(node, ['transcript', 'transcriptText', 'subtitle', 'accessibilityCaption', 'altText', 'caption']),
+      getNestedString(node, ['accessibility_caption'])
+    )
+  );
+
+  return {
+    id: normalizeText(pickApifyField(node, ['id', 'mediaId', 'pk'])) || shortcode || sourceUrl || buildInsightId('apify', `post-${caption}`),
+    shortcode,
+    sourceUrl,
+    format,
+    caption,
+    captionLead: firstCaptionLine(caption),
+    thumbnailUrl,
+    mediaUrl,
+    postedAt,
+    metrics: {
+      likes,
+      comments,
+      views,
+      engagementScore: computeEngagementScore({ likes, comments, views })
+    },
+    accessibilityCaption,
+    hookPattern: detectHookPattern(collectApifyText(node) || caption),
+    ctaPatterns: detectCtaPatterns(collectApifyText(node) || caption),
+    storytellingPatterns: detectStorytellingPatterns(collectApifyText(node) || caption)
+  };
+}
+
+function mapApifyProfileItem(profile: RawInstagramNode) {
+  const latestPosts = pickApifyArray(profile, ['latest_posts', 'posts', 'latestPosts', 'media']);
+  const nestedPosts = latestPosts
+    .map((entry) => (entry && typeof entry === 'object' ? mapApifyPost(entry as RawInstagramNode) : null))
+    .filter((post): post is CompetitorCapturedPost => Boolean(post));
+
+  return {
+    handle: normalizeText(
+      firstNonEmptyText(
+        pickApifyField(profile, ['username', 'handle']),
+        getNestedString(profile, ['username'])
+      )
+    ),
+    bio: normalizeText(pickApifyField(profile, ['bio', 'biography', 'description'])),
+    fullName: normalizeText(pickApifyField(profile, ['name', 'full_name', 'fullName'])),
+    followers: pickApifyNumber(profile, ['followers', 'follower_count', 'followerCount']),
+    following: pickApifyNumber(profile, ['follows', 'following', 'following_count', 'followingCount']),
+    postsCount: pickApifyNumber(profile, ['posts_count', 'post_count', 'image_count', 'video_count', 'edge_owner_to_timeline_media_count']),
+    reelsCount: pickApifyNumber(profile, ['reels_count', 'reel_count', 'reelsCount']),
+    verified: Boolean(profile.is_verified ?? profile.isVerified),
+    externalUrl: normalizeText(pickApifyField(profile, ['homepage', 'external_url', 'website', 'url'])),
+    profilePicUrl: normalizeText(pickApifyField(profile, ['profile_image', 'profile_pic_url_hd', 'profile_pic_url', 'profilePictureUrl'])),
+    posts: nestedPosts
+  };
+}
+
 async function fetchWebsiteSnapshot(website: string) {
   const normalized = normalizeWebsiteUrl(website);
 
@@ -422,7 +654,7 @@ async function fetchWebsiteSnapshot(website: string) {
   }
 }
 
-async function fetchInstagramSnapshot(handle: string) {
+async function fetchInstagramSnapshot(handle: string): Promise<InstagramSnapshotData | null> {
   const normalized = normalizeInstagramHandle(handle);
 
   if (!normalized) {
@@ -477,6 +709,93 @@ async function fetchInstagramSnapshot(handle: string) {
   } catch {
     return null;
   }
+}
+
+async function fetchInstagramSnapshotFromApify(handle: string): Promise<InstagramSnapshotData | null> {
+  const capture = await fetchApifyInstagramCapture(handle);
+
+  if (!capture) {
+    return null;
+  }
+
+  const profile = capture.profile ? mapApifyProfileItem(capture.profile) : null;
+  const profilePosts = profile?.posts ?? [];
+  const actorPosts = capture.posts
+    .map((item) => mapApifyPost(item))
+    .filter((post): post is CompetitorCapturedPost => Boolean(post));
+  const reelPosts = capture.reels
+    .map((item) => mapApifyPost(item, 'reels'))
+    .filter((post): post is CompetitorCapturedPost => Boolean(post));
+  const mergedPosts = uniquePosts([...profilePosts, ...actorPosts, ...reelPosts])
+    .sort((left, right) => right.postedAt.localeCompare(left.postedAt));
+
+  if (!profile && !mergedPosts.length) {
+    return null;
+  }
+
+  const followers = profile?.followers ?? 0;
+  const following = profile?.following ?? 0;
+  const postsCount = Math.max(
+    profile?.postsCount ?? 0,
+    profilePosts.length,
+    actorPosts.length,
+    mergedPosts.length
+  );
+  const reelsCount = Math.max(
+    profile?.reelsCount ?? 0,
+    reelPosts.length,
+    mergedPosts.filter((post) => post.format === 'reels' || post.format === 'video').length
+  );
+
+  return {
+    handle: profile?.handle ?? normalizeInstagramHandle(handle),
+    bio: profile?.bio ?? '',
+    fullName: profile?.fullName ?? '',
+    followers,
+    following,
+    postsCount,
+    reelsCount,
+    verified: profile?.verified ?? false,
+    externalUrl: profile?.externalUrl ?? '',
+    profilePicUrl: profile?.profilePicUrl ?? '',
+    posts: mergedPosts,
+    captureNotes: [
+      'Captura realizada com Apify.',
+      'Instagram Profile Scraper, Instagram Scraper e Instagram Reel Scraper usados na coleta.',
+      ...capture.notes
+    ]
+  };
+}
+
+function mergeInstagramSnapshots(primary: InstagramSnapshotData | null, fallback: InstagramSnapshotData | null): InstagramSnapshotData | null {
+  if (!primary && !fallback) {
+    return null;
+  }
+
+  if (!primary) {
+    return fallback;
+  }
+
+  if (!fallback) {
+    return primary;
+  }
+
+  const mergedPosts = uniquePosts([...primary.posts, ...fallback.posts]).sort((left, right) => right.postedAt.localeCompare(left.postedAt));
+
+  return {
+    handle: primary.handle || fallback.handle,
+    bio: primary.bio || fallback.bio,
+    fullName: primary.fullName || fallback.fullName,
+    followers: Math.max(primary.followers, fallback.followers),
+    following: Math.max(primary.following, fallback.following),
+    postsCount: Math.max(primary.postsCount, fallback.postsCount, mergedPosts.length),
+    reelsCount: Math.max(primary.reelsCount, fallback.reelsCount, mergedPosts.filter((post) => post.format === 'reels' || post.format === 'video').length),
+    verified: primary.verified || fallback.verified,
+    externalUrl: primary.externalUrl || fallback.externalUrl,
+    profilePicUrl: primary.profilePicUrl || fallback.profilePicUrl,
+    posts: mergedPosts,
+    captureNotes: [...(primary.captureNotes ?? []), ...(fallback.captureNotes ?? [])]
+  };
 }
 
 function tokenize(text: string) {
@@ -794,24 +1113,57 @@ function topPostsForSnapshot(posts: CompetitorCapturedPost[]) {
 }
 
 export async function captureCompetitorSources(competitor: CompetitorAnalysisInput['competitor']) {
-  const [instagram, website] = await Promise.all([
-    competitor.handle ? fetchInstagramSnapshot(competitor.handle) : Promise.resolve(null),
+  const normalizedHandle = normalizeInstagramHandle(competitor.handle);
+  const apifyConfigured = Boolean(process.env.APIFY_API_TOKEN?.trim());
+  const [apifyInstagram, website] = await Promise.all([
+    normalizedHandle ? fetchInstagramSnapshotFromApify(normalizedHandle) : Promise.resolve(null),
     competitor.website ? fetchWebsiteSnapshot(competitor.website) : Promise.resolve(null)
   ]);
+
+  let instagram = apifyInstagram;
+  let captureSource: CompetitorCaptureSource = apifyInstagram ? 'apify' : 'automatic';
+  const captureNotes: string[] = [...(apifyInstagram?.captureNotes ?? [])];
+
+  if (normalizedHandle && !apifyConfigured) {
+    captureNotes.push('APIFY_API_TOKEN nao configurado; usando captura publica direta do Instagram como fallback.');
+  }
+
+  if (normalizedHandle) {
+    const shouldFallbackToInternal =
+      !instagram ||
+      instagram.posts.length < MIN_COMPETITOR_POSTS_FOR_AI ||
+      !instagram.bio ||
+      !instagram.fullName;
+
+    if (shouldFallbackToInternal) {
+      const fallbackInstagram = await fetchInstagramSnapshot(normalizedHandle);
+      instagram = mergeInstagramSnapshots(instagram, fallbackInstagram);
+
+      if (fallbackInstagram) {
+        captureSource = apifyInstagram ? 'apify' : 'automatic';
+        captureNotes.push(
+          apifyInstagram
+            ? 'Fallback publico do Instagram complementou a captura via Apify.'
+            : 'Captura publica direta do Instagram foi usada como fallback.'
+        );
+      } else if (!instagram) {
+        captureNotes.push('Nao foi possivel ler o perfil publico do Instagram informado.');
+      }
+    }
+  }
 
   const instagramPosts = instagram?.posts ?? [];
   const feedAnalyzed = instagramPosts.filter((post) => post.format !== 'reels' && post.format !== 'video').length;
   const reelsAnalyzed = instagramPosts.filter((post) => post.format === 'reels' || post.format === 'video').length;
-  const captureNotes: string[] = [];
 
-  if (!instagram && competitor.handle) {
-    captureNotes.push('Nao foi possivel ler o perfil publico do Instagram informado.');
-  }
   if (!website && competitor.website) {
     captureNotes.push('Nao foi possivel ler o website informado.');
   }
   if (!instagramPosts.length) {
     captureNotes.push('Nenhum post publico foi retornado pelo perfil no momento da captura.');
+  }
+  if (apifyInstagram) {
+    captureNotes.unshift('Apify: Instagram Profile Scraper, Instagram Scraper e Instagram Reel Scraper foram usados na coleta.');
   }
 
   const snapshot: CompetitorSourceSnapshot = {
@@ -839,6 +1191,7 @@ export async function captureCompetitorSources(competitor: CompetitorAnalysisInp
   };
 
   return {
+    source: captureSource,
     snapshot,
     suggestedLogoUrl: website?.logoUrl || website?.iconUrl || instagram?.profilePicUrl || competitor.logoUrl || ''
   };
@@ -1146,37 +1499,5 @@ export function summarizeCompetitorAnalysisInput(input: CompetitorAnalysisInput)
       views: post.metrics.views,
       sourceUrl: post.sourceUrl
     }))
-  };
-}
-
-export function buildReferencePayloadFromInsight(
-  competitor: Pick<CompetitorRecord, 'id' | 'name' | 'niche' | 'type'>,
-  insight: CompetitorInsight
-): Omit<ContentReferenceRecord, 'id' | 'savedAt'> {
-  return {
-    competitorId: competitor.id,
-    competitorName: competitor.name,
-    title: insight.title,
-    content: insight.summary,
-    hookType: insight.hookType || insight.kind,
-    ctaType: insight.ctaType || '',
-    format: insight.format || '',
-    imageUrl: '',
-    notes: insight.rationale,
-    liked: true,
-    category: insight.kind,
-    source: 'analysis',
-    sourceInsightId: insight.id,
-    sourceUrl: insight.sourceUrl,
-    metadata: {
-      origin: 'competitors-analysis',
-      competitorType: competitor.type,
-      niche: competitor.niche,
-      tags: insight.tags,
-      hookType: insight.hookType || insight.kind,
-      ctaType: insight.ctaType || '',
-      format: insight.format || '',
-      referenceType: insight.kind
-    }
   };
 }
